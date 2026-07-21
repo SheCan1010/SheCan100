@@ -1,0 +1,13 @@
+{
+  "name": "shecan-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SheCan - directory of independent Israeli businesswomen",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
