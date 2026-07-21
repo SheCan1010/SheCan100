@@ -10,6 +10,12 @@ const { page, esc, categoryIcon } = require("./layout");
 
 const PORT = process.env.PORT || 4000;
 
+// Small inline WhatsApp glyph (green, matches .whatsapp-link's text color) shown right next
+// to the "WhatsApp" contact-detail link on a freelancer's profile, replacing the generic 💬
+// emoji per explicit request - a single shared constant since it's static markup used in a
+// couple of places (main profile + additional-listing profile).
+const whatsappIconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="#25D366" aria-hidden="true" style="vertical-align:middle;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.148.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12.001 2c-5.514 0-9.999 4.485-9.999 9.999 0 1.762.464 3.464 1.343 4.964L2 22l5.164-1.362a9.955 9.955 0 0 0 4.837 1.239h.005c5.514 0 9.999-4.485 9.999-9.999S17.515 2 12.001 2z"/></svg>`;
+
 // ---------- email (password reset) ----------
 // Sends transactional email via Resend's HTTP API (https://resend.com) using the
 // built-in fetch (no npm dependency needed - Node 18+ ships fetch globally).
@@ -1309,7 +1315,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   // "נעים להכיר" removed entirely in favor of her own description text directly.
   const contactRows = [
     f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
-    (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">💬</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">שלחי ווצאפ</a></div>` : "",
+    (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     f.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(f.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
     f.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
     f.instagram ? `<div class="profile-detail-row"><span class="profile-detail-icon">📸</span><span>${esc(f.instagram)}</span></div>` : "",
@@ -1326,7 +1332,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
           ${profileLocation ? `<div class="profile-header-location">📍 ${esc(profileLocation)}</div>` : ""}
         </div>
       </div>
-      ${contactRows ? `<div class="profile-contact-col">${contactRows}</div>` : ""}
+      ${contactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${contactRows}</div>` : ""}
     </div>
 
     ${isCustomer ? `<form method="post" action="/freelancer/${f.id}/favorite" style="margin-top:10px;"><button class="btn btn-small favorite-btn ${isFav ? "btn" : "btn-outline"}" type="submit">${isFav ? "❤️ שמורה אצלך" : "❤️ הוספה למועדפות"}</button></form>` : ""}
@@ -1410,7 +1416,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   const listingLocation = locationLabel(d, f.cityId, l.offersOnline, l.offersHomeVisit);
   const listingContactRows = [
     f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
-    (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">💬</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">שלחי ווצאפ</a></div>` : "",
+    (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     l.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(l.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
     f.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
     f.instagram ? `<div class="profile-detail-row"><span class="profile-detail-icon">📸</span><span>${esc(f.instagram)}</span></div>` : "",
@@ -1428,7 +1434,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
           ${listingLocation ? `<div class="profile-header-location">📍 ${esc(listingLocation)}</div>` : ""}
         </div>
       </div>
-      ${listingContactRows ? `<div class="profile-contact-col">${listingContactRows}</div>` : ""}
+      ${listingContactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${listingContactRows}</div>` : ""}
     </div>
 
     ${isCustomer ? `<form method="post" action="/freelancer/${f.id}/favorite" style="margin-top:10px;"><input type="hidden" name="listingId" value="${esc(l.id)}" /><button class="btn btn-small favorite-btn ${isFav ? "btn" : "btn-outline"}" type="submit">${isFav ? "❤️ שמורה אצלך" : "❤️ הוספה למועדפות"}</button></form>` : ""}
@@ -2343,7 +2349,7 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
     <div class="referral-source-choice">
       <label style="font-weight:800;font-size:13.5px;">איך שמעת על SheCan?</label>
       ${referrerFreelancer ? `
-      <p class="muted" style="font-size:13px;">הגעת דרך הקישור האישי של <strong>${esc(referrerFreelancer.businessName || referrerFreelancer.name)}</strong> - היא תזכה בנקודה כשתסיימי להירשם 🎉</p>
+      <p class="muted" style="font-size:13px;">הגעת דרך הקישור האישי של <strong>${esc(referrerFreelancer.businessName || referrerFreelancer.name)}</strong> - היא תזכה ב-10 נקודות כשתסיימי להירשם 🎉</p>
       ` : `
       <label><input type="radio" name="howHeardChoice" value="referral" onchange="document.getElementById('scHowHeardBizBox').style.display='block';" /> חברה מהקהילה / בעלת עסק אחרת</label>
       <div id="scHowHeardBizBox" style="display:none;margin-inline-start:22px;">
@@ -2730,7 +2736,7 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
   const referralPromoHtml = d.settings.customerReferralContestActive ? `
   <div class="panel referral-promo-panel">
     <h3 style="margin-top:0;">פינוק שווה על חשבוננו נשמע לך טוב?</h3>
-    <p class="muted">העבירי את הקישור האישי שלך לכמה שיותר חברות - כל אחת שתירשם דרכו תזכה אותך אוטומטית בעוד 3 נקודות, ומי שהביאה הכי הרבה תזכה בפרס השווה!!</p>
+    <p class="muted">העבירי את הקישור האישי שלך לכמה שיותר חברות - כל אחת שתירשם דרכו תזכה אותך אוטומטית בעוד 10 נקודות, ומי שהביאה הכי הרבה תזכה בפרס השווה!!</p>
     <p>${esc(customer.name.split(" ")[0])}, אל דאגה - יש לנו 4 מקומות, איזה מהם שלך?</p>
     <ul class="referral-prize-list">
       <li><span>🥇</span><span>מקום 1: מסאז' מפנק</span></li>
@@ -2762,7 +2768,7 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
       <div class="sc-modal" style="max-width:420px;">
         <button type="button" class="sc-modal-close" onclick="this.closest('.sc-modal-overlay').remove()" aria-label="סגירה">✕</button>
         <h2 style="font-size:21px;">פינוק שווה על חשבוננו נשמע לך טוב?</h2>
-        <p style="text-align:right;font-size:14.5px;">העבירי את הקישור האישי שלך לכמה שיותר חברות - כל אחת שתירשם דרכו תזכה אותך אוטומטית בעוד 3 נקודות, ומי שהביאה הכי הרבה תזכה בפרס השווה!!</p>
+        <p style="text-align:right;font-size:14.5px;">העבירי את הקישור האישי שלך לכמה שיותר חברות - כל אחת שתירשם דרכו תזכה אותך אוטומטית בעוד 10 נקודות, ומי שהביאה הכי הרבה תזכה בפרס השווה!!</p>
         <p style="text-align:right;font-size:14.5px;">${esc(customer.name.split(" ")[0])}, אל דאגה - יש לנו 4 מקומות, איזה מהם שלך?</p>
         <ul class="referral-prize-list">
           <li><span>🥇</span><span>מקום 1: מסאז' מפנק</span></li>
@@ -2891,10 +2897,10 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <div class="sc-modal-overlay" onclick="if(event.target===this) this.remove();">
       <div class="sc-modal" style="max-width:420px;">
         <button type="button" class="sc-modal-close" onclick="this.closest('.sc-modal-overlay').remove()" aria-label="סגירה">✕</button>
-        <h2 style="font-size:22px;">מזל טוב ${esc(f.name.split(" ")[0])}, את בפנים!! 🎉</h2>
+        <h2 style="font-size:22px;">מזל טוב ${esc(f.name.split(" ")[0])}, העסק שלך בפנים!! 🎉</h2>
         ${d.settings.freelancerReferralContestActive ? `
-        <p style="text-align:right;font-size:14.5px;margin-top:10px;"><strong>צרפי חברות וקבלי את המקום הראשון!</strong></p>
-        <p style="text-align:right;font-size:14px;">רוצה לקבל חשיפה מטורפת בדף הבית לחודש? העתיקי את הקישור האישי שלך, שלחי לחברות עצמאיות, וכל מי שתירשם דרכו תעזור לך לטפס לראש העמוד בתור "העסק המוביל" של החודש למשך חודש שלם!!</p>
+        <p style="text-align:right;font-size:14.5px;margin-top:10px;"><strong>מעוניינת לקבל אצלנו חשיפה מטורפת?</strong></p>
+        <p style="text-align:right;font-size:14px;">שלחי את הקישור האישי שלך לעצמאיות שאת מכירה, וכל אחת שמצטרפת דרכך מזכה אותך ב-10 נקודות. זאת שתצבור את מירב הנקודות תזכה בחשיפה מובלטת בדף הבית שלנו למשך חודש שלם! מוכנה לזה?</p>
         <div class="referral-link-row">
           <input type="text" id="scFreelancerRefLinkPopup" value="${esc(freelancerRefLinkPopup)}" readonly />
           <button type="button" class="btn btn-small" onclick="scCopyLink('scFreelancerRefLinkPopup')">העתקת קישור</button>
@@ -2946,7 +2952,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   <div class="panel referral-promo-panel">
     <h3 style="margin-top:0;">צרפי חברות וקבלי את המקום הראשון!</h3>
     <p class="muted">רוצה לקבל חשיפה מטורפת בדף הבית לחודש? העתיקי את הקישור האישי שלך, שלחי לחברות עצמאיות, וכל מי שתירשם דרכו תעזור לך לטפס לראש העמוד בתור "העסק המוביל" של החודש למשך חודש שלם!!</p>
-    <p class="muted">בהרשמת עצמאית דרך הקישור שלך - העסק שלך יופיע אוטומטית בשדה "איך שמעת על SheCan" ותזכי בעוד נקודה בדרך למקום הראשון. העסק שיקבל הכי הרבה נקודות יזכה במקום הראשון.</p>
+    <p class="muted">בהרשמת עצמאית דרך הקישור שלך - העסק שלך יופיע אוטומטית בשדה "איך שמעת על SheCan" ותזכי ב-10 נקודות בדרך למקום הראשון. העסק שיקבל הכי הרבה נקודות יזכה במקום הראשון.</p>
     <div class="referral-link-row">
       <input type="text" id="scFreelancerRefLink" value="${getOrigin(req)}/join?ref=${f.id}" readonly />
       <button type="button" class="btn btn-small" onclick="scCopyLink('scFreelancerRefLink')">העתקת קישור</button>
