@@ -2282,6 +2282,7 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
       <li><span class="bullet-icon">🌸</span><span><strong>קשר ישיר מהרגע הראשון:</strong> לקוחות יוכלו להתכתב איתך ישירות מהאזור האישי שלהן באתר, בלי מיילים מיותרים ובלי תיווכים.</span></li>
       <li><span class="bullet-icon">🌸</span><span><strong>השתתפות פעילה ב"זירה":</strong> תשובות לשאלות לקוחות ופרסום סקרים אישיים – הזדמנות מעולה לבלוט כמומחית, לקבל פידבקים חשובים ולמשוך אליך לקוחות חדשות.</span></li>
     </ul>
+    <p class="muted" style="margin-top:14px;font-size:13.5px;">💡 טיפ: הכרטיסיות שיש להן הכי הרבה דירוגים וחוות דעת מוצגות ראשונות באתר - אז כדאי לעודד לקוחות מרוצות להשאיר לך חוות דעת.</p>
   </div>
 
   <div class="flash flash-ok" style="max-width:680px;">${!charging ? "ההרשמה כעת בחינם לכל המייסדות. לאחר תקופת ההשקה, ההצטרפות תהיה כרוכה בדמי מנוי חודשיים, אך אתן – המייסדות – תיהנו מהנחה קבועה ובלעדית לכל החיים." : "ההצטרפות כרוכה בדמי מנוי חודשיים."}</div>
@@ -2926,6 +2927,11 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ${f.isLeadingBusiness ? `<span class="badge badge-leading">👑 נותנת חסות</span> ` : ""}
     ${f.isAdvertised ? `<span class="badge badge-ad">📣 מודעה פעילה</span> ` : ""}
     <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"} · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}</span>
+  </div>
+
+  <div class="panel">
+    <h3>💡 איך להופיע ראשונה?</h3>
+    <p class="muted">האתר מציג קודם את הכרטיסיות עם הכי הרבה דירוגים וחוות דעת - אז כדאי לעודד כל לקוחה מרוצה להשאיר לך חוות דעת בכרטיסייה שלך. ככל שיהיו לך יותר חוות דעת מאושרות, כך תופיעי גבוה יותר בתוצאות.</p>
   </div>
 
   <div class="panel">
@@ -3767,10 +3773,11 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <p class="muted">"נותנת חסות" - הבלטה מיוחדת וקבועה (למשל לעצמאיות שתרמו הטבה להגרלה). "מודעה" - הבלטה בתשלום שאת מוכרת וסוגרת איתן ישירות. "צפיות" - כמה פעמים נכנסו לעמוד שלה. "צפיות בקופון" - כמה פעמים לחצו "לצפייה בקוד קופון".</p>
     <p class="muted"><a href="/admin/export/freelancers.csv">⬇️ הורדת כל הנתונים כקובץ אקסל (CSV)</a></p>
     <input type="text" id="scAdminFreelancerSearch" placeholder="🔍 חיפוש עצמאית לפי שם עסק..." oninput="scFilterAdminFreelancers(this.value)" style="max-width:320px;margin-bottom:10px;" />
-    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
+    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>תמונות</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
       ${activeFreelancers.map((f) => `<tr>
         <td>${esc(f.businessName)}</td><td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td><td>${f.tier === "premium" ? "מומלצת" : "בסיסית"}</td>
         <td>${esc(f.dealCode || "-")}</td><td>${f.viewCount || 0}</td><td>${f.couponRevealCount || 0}</td>
+        <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-leading"><button class="btn btn-small ${f.isLeadingBusiness ? "" : "btn-outline"}" type="submit">${f.isLeadingBusiness ? "👑 נותנת חסות" : "הפכי לנותנת חסות"}</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-ad"><button class="btn btn-small ${f.isAdvertised ? "" : "btn-outline"}" type="submit">${f.isAdvertised ? "📣 פעילה" : "הפעילי מודעה"}</button></form></td>
         <td>${f.isAdvertised ? `<form method="post" action="/admin/freelancer/${f.id}/mark-ad-paid"><button class="btn btn-small ${f.adPaymentStatus === "paid" ? "" : "btn-outline"}" type="submit">${esc(adPaymentStatusLabel(f.adPaymentStatus))}</button></form>` : `<span class="muted">-</span>`}</td>
@@ -3831,7 +3838,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   <div class="panel">
     <h3>ייבוא עצמאיות בכמות (מאקסל)</h3>
-    <p class="muted">יש לך רשימה של הרבה עצמאיות באקסל? סדרי את העמודות בסדר הזה: שם איש קשר, שם העסק, תחום (בדיוק כפי שכתוב ברשימת התחומים למטה), עיר (בדיוק כפי שכתוב ברשימת הערים), טלפון, תיאור קצר, טקסט ההטבה, אינסטגרם (אופציונלי), אימייל (אופציונלי). אחר כך סמני את השורות באקסל (בלי כותרות), העתיקי (Ctrl+C) והדביקי (Ctrl+V) כאן למטה - זה יעבוד ישירות, שורה לכל עצמאית. כל מי שתיובא תיכנס ישר כמאושרת עם קוד קופון אוטומטי.</p>
+    <p class="muted">יש לך רשימה של הרבה עצמאיות באקסל? סדרי את העמודות בסדר הזה: שם איש קשר, שם העסק, תחום (בדיוק כפי שכתוב ברשימת התחומים למטה), עיר (בדיוק כפי שכתוב ברשימת הערים - אפשר להשאיר ריק אם אין), טלפון, תיאור קצר, טקסט ההטבה, אינסטגרם (אופציונלי), קישור - וואטסאפ או אתר/תיק עבודות (אופציונלי), אימייל (אופציונלי, אבל בלעדיו לא יישלח מייל עם פרטי התחברות). אחר כך סמני את השורות באקסל (בלי כותרות), העתיקי (Ctrl+C) והדביקי (Ctrl+V) כאן למטה - זה יעבוד ישירות, שורה לכל עצמאית. כל מי שתיובא תיכנס ישר כמאושרת עם קוד קופון אוטומטי.</p>
     <form method="post" action="/admin/bulk-import">
       <textarea name="rows" style="min-height:180px;" placeholder="הדביקי כאן ישירות מאקסל..."></textarea>
       <button class="btn btn-small" style="margin-top:10px;" type="submit">ייבוא הרשימה</button>
@@ -4282,14 +4289,19 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
   let imported = 0;
   let unmatched = 0;
   let emailed = 0;
+  const noEmailAccounts = []; // { label, tempPassword } - so Sapir can pass credentials along manually (e.g. WhatsApp) when no email was given
 
   lines.forEach((line) => {
     const cols = line.split("\t").length > 1 ? line.split("\t") : line.split(",");
-    const [name, businessName, categoryName, cityName, phone, description, dealText, instagram, email] = cols.map((c) => (c || "").trim());
+    const [name, businessName, categoryName, cityName, phone, description, dealText, instagram, linkRaw, email] = cols.map((c) => (c || "").trim());
     if (!businessName) return;
     const category = findByNameLoose(d.categories, categoryName);
     const city = findByNameLoose(d.cities, cityName);
     if (!category || !city) unmatched++;
+    // The optional "קישור" column can hold either a WhatsApp link (wa.me / api.whatsapp.com / whatsapp.com)
+    // - in which case we just flip the hasWhatsapp flag and let the site build the wa.me link from the phone -
+    // or any other link, which we store as-is in portfolioUrl ("קישור לתיק עבודות").
+    const isWhatsappLink = /wa\.me|whatsapp\.com/i.test(linkRaw);
     const id = db.nextId("freelancer");
     const tempPassword = generateTempPassword();
     d.freelancers.push({
@@ -4297,7 +4309,9 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
       email: email || `${id}@imported.shecan.co.il`,
       passwordHash: auth.hashPassword(tempPassword),
       categoryId: category ? category.id : "", subcategoryId: "", additionalCategoryIds: [], cityId: city ? city.id : "",
-      phone: phone || "", instagram: instagram || "", portfolioUrl: "", hasWhatsapp: false, availableNow: false,
+      phone: phone || "", instagram: instagram || "",
+      portfolioUrl: (linkRaw && !isWhatsappLink) ? linkRaw : "",
+      hasWhatsapp: isWhatsappLink, availableNow: false,
       offersOnline: false, offersHomeVisit: false, active: true,
       photoDataUri: null, logoDataUri: null, galleryPhotos: [],
       description: description || "", dealText: dealText || "", yearsInField: "", inspirationQuote: "", weeklyTipPublished: false, referredByFreelancerId: null, welcomePopupSeen: false,
@@ -4317,13 +4331,20 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
           <p>יצרנו לך אזור אישי ב-SheCan עבור ${esc(businessName)}. אפשר להתחבר עם הפרטים הבאים:</p>
           <p>אימייל: <strong>${esc(email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong></p>
           <p>מומלץ להתחבר ולהחליף לסיסמה משלך - אפשר גם דרך <a href="${getOrigin(req)}/forgot-password">שכחת סיסמה</a> בכל שלב.</p>
+          <p>השקת האתר לציבור צפויה בשבוע הבא, כך שהוא עדיין לא גלוי לכולן - זה בדיוק הזמן להיכנס ולעדכן את הכרטיסייה שלך (תמונות, תיאור, הטבה) בדיוק כמו שתרצי שהיא תיראה כשהיא תעלה באוויר.</p>
           <p>להתחברות: <a href="${getOrigin(req)}/login">${getOrigin(req)}/login</a></p>
         </div>`
       ).catch(() => {});
+    } else {
+      noEmailAccounts.push({ label: `${businessName}${phone ? ` (${phone})` : ""}`, tempPassword });
     }
   });
   db.save();
-  const msg = `יובאו ${imported} עצמאיות בהצלחה!` + (emailed ? ` נשלח מייל עם פרטי התחברות ל-${emailed} מהן.` : "") + (unmatched ? ` שימי לב - ב-${unmatched} מהן לא הצלחנו להתאים תחום ו/או עיר בדיוק (כנראה כתיב שונה מהרשימה שלנו) - אפשר לתקן אותן ידנית בהמשך.` : "");
+  let msg = `יובאו ${imported} עצמאיות בהצלחה!` + (emailed ? ` נשלח מייל עם פרטי התחברות ל-${emailed} מהן.` : "") + (unmatched ? ` שימי לב - ב-${unmatched} מהן לא הצלחנו להתאים תחום ו/או עיר בדיוק (כנראה כתיב שונה מהרשימה שלנו) - אפשר לתקן אותן ידנית בהמשך.` : "");
+  if (noEmailAccounts.length) {
+    msg += `\n\nל-${noEmailAccounts.length} מהן אין מייל, אז לא נשלחה סיסמה אוטומטית - אלה הסיסמאות הזמניות שלהן, כדאי להעביר לכל אחת ידנית (למשל בוואטסאפ):\n` +
+      noEmailAccounts.map((x) => `${x.label}: ${x.tempPassword}`).join("\n");
+  }
   redirect(res, `/admin?ok=${encodeURIComponent(msg)}`);
 });
 
@@ -4465,6 +4486,54 @@ route("POST", "/admin/freelancer/:id/reject", async (req, res, params, query, ct
   if (f) f.status = "rejected";
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("נדחה.")}`);
+});
+
+// Lets Sapir upload a logo + up to 4 gallery photos on behalf of a freelancer (e.g. one who
+// was bulk-imported from a spreadsheet and never went through the /join upload form herself).
+// Mirrors the same fields/behavior as her own dashboard: a new logo replaces the old one, and
+// uploading any new gallery photo replaces the whole gallery set (not merged one-by-one).
+route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  const body = `
+  <h1 class="section-title">תמונות עבור ${esc(f.businessName || f.name)}</h1>
+  <div class="panel" style="max-width:560px;margin:0 auto;">
+    <h3>לוגו נוכחי</h3>
+    ${f.logoDataUri ? `<img src="${f.logoDataUri}" alt="לוגו" style="width:120px;height:120px;object-fit:cover;border-radius:12px;" />` : `<p class="muted">עדיין אין לוגו.</p>`}
+    <h3 style="margin-top:18px;">גלריה נוכחית</h3>
+    ${(f.galleryPhotos && f.galleryPhotos.length) ? `<div class="gallery-scroll">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />`).join("")}</div>` : `<p class="muted">עדיין אין תמונות גלריה.</p>`}
+    <form method="post" action="/admin/freelancer/${f.id}/photos" enctype="multipart/form-data" style="margin-top:18px;">
+      <label>לוגו חדש ${f.logoDataUri ? "(להחלפה)" : ""}<input type="file" name="logo" accept="image/*" /></label>
+      <label style="margin-top:10px;">תמונות גלריה (עד 4 - העלאת תמונה כאן מחליפה את כל הגלריה הקיימת)
+      <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
+      <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
+      <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
+      <input type="file" name="gallery4" accept="image/*" />
+      <button class="btn" style="margin-top:14px;width:100%;" type="submit">העלאה</button>
+    </form>
+    <p class="muted" style="margin-top:14px;"><a href="/admin">← חזרה לניהול</a></p>
+  </div>
+  `;
+  sendHtml(res, 200, page({ title: `תמונות - ${f.businessName || f.name}`, session: ctx.session, body, query, noSidebars: true }));
+});
+
+route("POST", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/admin/freelancer/${params.id}/photos?err=${encodeURIComponent("התמונות ביחד גדולות מדי - נסי עם פחות תמונות או תמונות קטנות יותר.")}`);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  const newLogo = fileToDataUri(body.files.logo, MAX_UPLOAD_BYTES);
+  if (newLogo) f.logoDataUri = newLogo;
+  const newGallery = ["gallery1", "gallery2", "gallery3", "gallery4"]
+    .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
+    .filter(Boolean);
+  if (newGallery.length) f.galleryPhotos = newGallery;
+  db.save();
+  redirect(res, `/admin/freelancer/${f.id}/photos?ok=${encodeURIComponent("עודכן!")}`);
 });
 
 // Permanent delete - unlike reject (which just hides her from the public site but keeps the

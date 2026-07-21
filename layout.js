@@ -528,7 +528,7 @@ form .field{margin-bottom:6px;}
 .sc-star-input{display:flex;gap:6px;font-size:30px;justify-content:center;margin:8px 0;line-height:1;}
 .sc-star{color:#ddd3c4;cursor:pointer;transition:color .1s;user-select:none;}
 .sc-star.sc-star-filled{color:var(--rose-dark);}
-.flash{max-width:680px;margin:14px auto;padding:12px 18px;border-radius:8px;font-size:14px;text-align:center;}
+.flash{max-width:680px;margin:14px auto;padding:12px 18px;border-radius:8px;font-size:14px;text-align:center;white-space:pre-line;}
 .flash-ok{background:#e9f1e8;color:var(--ok);}
 .flash-err{background:#f6e6e3;color:var(--danger);}
 .panel{background:var(--white);border-radius:14px;padding:22px;margin-bottom:22px;box-shadow:0 2px 10px rgba(0,0,0,.05);}
