@@ -371,6 +371,7 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .bullet-list .bullet-icon{flex-shrink:0;}
 .search-row{display:flex;gap:12px;flex-wrap:wrap;}
 .search-row select, .search-row input{flex:1;min-width:160px;}
+.search-row .city-autocomplete{flex:1;min-width:160px;}
 select, input[type=text], input[type=email], input[type=password], input[type=tel], textarea{
   padding:11px 14px;border:1px solid #ddd3c4;border-radius:8px;font-size:16px;background:var(--white);color:var(--dark);width:100%;font-family:inherit;font-weight:500;
 }
@@ -381,6 +382,11 @@ form .field{margin-bottom:6px;}
 .btn:hover{background:var(--rose-dark);}
 .btn-outline{background:transparent;border:1.5px solid var(--rose);color:var(--rose-dark);}
 .btn-small{padding:7px 16px;font-size:14px;border-radius:18px;}
+.city-autocomplete{position:relative;}
+.city-autocomplete-list{position:absolute;z-index:20;top:100%;right:0;left:0;margin-top:4px;max-height:240px;overflow-y:auto;background:var(--white);border:1px solid #ddd3c4;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.12);}
+.city-autocomplete-item{padding:10px 14px;font-size:15px;cursor:pointer;}
+.city-autocomplete-item:hover,.city-autocomplete-item.active{background:var(--rose);color:var(--white);}
+.city-autocomplete-empty{padding:10px 14px;font-size:14px;color:var(--gray);}
 .section-title{font-size:26px;font-weight:700;letter-spacing:0.5px;margin:44px 0 20px;text-align:center;}
 .cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;}
 .cat-card{background:var(--white);border-radius:10px;padding:18px;text-align:center;font-size:16px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.05);}
@@ -530,8 +536,17 @@ form .field{margin-bottom:6px;}
 .sc-star.sc-star-filled{color:var(--rose-dark);}
 .flash{max-width:680px;margin:14px auto;padding:12px 18px;border-radius:8px;font-size:14px;text-align:center;white-space:pre-line;}
 .flash-ok{background:#e9f1e8;color:var(--ok);}
-.flash-err{background:#f6e6e3;color:var(--danger);}
+.flash-err{background:#f6e6e3;color:var(--danger);border:2px solid var(--danger);font-size:16px;font-weight:700;padding:16px 20px;box-shadow:0 3px 12px rgba(181,69,59,.25);}
+.flash-err::before{content:"⚠️ ";}
+@keyframes scFlashAttention{0%,100%{transform:translateX(0);}20%{transform:translateX(-6px);}40%{transform:translateX(6px);}60%{transform:translateX(-4px);}80%{transform:translateX(4px);}}
+.flash-err.sc-flash-attention{animation:scFlashAttention .5s ease-in-out;}
 .panel{background:var(--white);border-radius:14px;padding:22px;margin-bottom:22px;box-shadow:0 2px 10px rgba(0,0,0,.05);}
+/* Admin dashboard: every top-level panel is collapsible (collapsed by default) so a long
+   section (lots of reviews, lots of pending items) doesn't force endless scrolling - open
+   state is remembered per-panel across visits via localStorage (see scSetupAdminCollapsibles). */
+.sc-admin-page .panel > h3{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.sc-admin-page .sc-panel-toggle{font-size:22px;line-height:1;color:var(--rose-dark);flex-shrink:0;}
+.sc-admin-page .sc-panel-body{margin-top:14px;}
 .founding-badge{background:#EFE1D8;color:var(--rose-dark);font-size:12px;padding:3px 10px;border-radius:12px;}
 /* Referral-contest panels (customer "bring a friend" race + freelancer "bring a business"
    race) - a slightly warmer, bordered panel so the promo stands out a bit from the plain
@@ -592,6 +607,19 @@ function subcatsJsMap() {
   const map = {};
   d.categories.forEach((c) => { map[c.id] = (c.subcategories || []).map((s) => ({ id: s.id, name: s.name })); });
   return map;
+}
+
+// A searchable city text field instead of a giant <select> (100+ cities) - drop-in
+// replacement wherever a city dropdown was used. `fieldName` is the name of the hidden
+// input actually submitted with the form ("cityId" on POST forms, "city" on the GET search
+// filters), `selectedId`/`selectedName` pre-fill it when editing something that already has
+// a city, and `placeholder` is the text shown in the empty field.
+function cityAutocompleteHtml({ fieldName, selectedId, selectedName, placeholder }) {
+  return `<div class="city-autocomplete">
+    <input type="text" class="city-autocomplete-input" placeholder="${esc(placeholder || "הקלידי שם עיר...")}" autocomplete="off" value="${esc(selectedName || "")}" />
+    <input type="hidden" name="${esc(fieldName)}" class="city-autocomplete-hidden" value="${esc(selectedId || "")}" />
+    <div class="city-autocomplete-list" hidden></div>
+  </div>`;
 }
 
 function sidebarCatName(d, id) {
@@ -713,11 +741,107 @@ ${footer()}
   <button type="button" class="sc-lightbox-nav sc-lightbox-next" id="scLightboxNext" onclick="scLightboxStep(event,-1)" style="display:none;" aria-label="התמונה הבאה">‹</button>
 </div>
 <script>
+// ---- Make error messages impossible to miss: scroll straight to the error banner and give
+// it a brief attention "shake" on load - important on long forms (like the freelancer signup)
+// on a phone, where a plain banner at the top can easily go unnoticed if the page doesn't
+// happen to load scrolled all the way up. ----
+document.addEventListener("DOMContentLoaded", function () {
+  var errBanner = document.querySelector(".flash-err");
+  if (!errBanner) return;
+  errBanner.scrollIntoView({ behavior: "smooth", block: "center" });
+  errBanner.classList.add("sc-flash-attention");
+  if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) {} }
+});
+
+// ---- Admin dashboard: make every top-level panel collapsible, collapsed by default, so a
+// section with a long list (lots of reviews, lots of pending items) doesn't force scrolling
+// past it every time - remembers each panel's open/closed state per browser via localStorage,
+// keyed by its title text, so re-opening "מחכות לאישור שלך" once keeps it open on later visits
+// until she closes it again. Only runs on pages that actually have a .sc-admin-page wrapper
+// (the admin dashboard), so it never touches ordinary .panel cards elsewhere on the site. ----
+function scSetupAdminCollapsibles() {
+  var root = document.querySelector(".sc-admin-page");
+  if (!root) return;
+  var panels = root.querySelectorAll(":scope > .panel");
+  panels.forEach(function (panel) {
+    var h3 = panel.querySelector(":scope > h3");
+    if (!h3) return;
+    var key = "scAdminPanelOpen:" + h3.textContent.trim();
+    var bodyWrap = document.createElement("div");
+    bodyWrap.className = "sc-panel-body";
+    var node = h3.nextSibling;
+    var toMove = [];
+    while (node) { toMove.push(node); node = node.nextSibling; }
+    toMove.forEach(function (n) { bodyWrap.appendChild(n); });
+    panel.appendChild(bodyWrap);
+    var toggle = document.createElement("span");
+    toggle.className = "sc-panel-toggle";
+    h3.appendChild(toggle);
+    var isOpen = false;
+    try { isOpen = localStorage.getItem(key) === "1"; } catch (e) {}
+    function applyState(open) {
+      bodyWrap.style.display = open ? "" : "none";
+      toggle.textContent = open ? "−" : "+";
+    }
+    applyState(isOpen);
+    h3.addEventListener("click", function () {
+      isOpen = !isOpen;
+      applyState(isOpen);
+      try { localStorage.setItem(key, isOpen ? "1" : "0"); } catch (e) {}
+    });
+  });
+}
+document.addEventListener("DOMContentLoaded", scSetupAdminCollapsibles);
+
 var SC_SUBCATS = ${JSON.stringify(subcatsJsMap())};
 var SC_CATEGORY_ICONS = ${JSON.stringify(CATEGORY_ICONS)};
 var SC_VAPID_PUBLIC_KEY = ${JSON.stringify(VAPID_PUBLIC_KEY)};
 var SC_LOGGED_IN = ${JSON.stringify(!!session)};
 var SC_WANTS_PUSH = ${JSON.stringify(wantsPush)};
+var SC_CITIES = ${JSON.stringify(d.cities.map((c) => ({ id: c.id, name: c.name })))};
+
+// ---- City picker: a searchable text field instead of a giant dropdown (the cities list
+// has grown to 100+ entries) - types filter a short suggestion list, click/tap picks one and
+// fills the hidden cityId/city field the form actually submits. Falls back gracefully to
+// "no city selected" if she types something that doesn't match anything (same as leaving a
+// plain <select> on its blank option).
+function scSetupCityAutocomplete(wrap) {
+  var input = wrap.querySelector(".city-autocomplete-input");
+  var hidden = wrap.querySelector(".city-autocomplete-hidden");
+  var list = wrap.querySelector(".city-autocomplete-list");
+  function renderList(filterText) {
+    var f = (filterText || "").trim();
+    var matches = f
+      ? SC_CITIES.filter(function (c) { return c.name.indexOf(f) !== -1; }).slice(0, 12)
+      : SC_CITIES.slice(0, 12);
+    if (!matches.length) {
+      list.innerHTML = '<div class="city-autocomplete-empty">לא נמצאה עיר תואמת</div>';
+    } else {
+      list.innerHTML = matches.map(function (c) {
+        return '<div class="city-autocomplete-item" data-id="' + c.id + '" data-name="' + c.name.replace(/"/g, "&quot;") + '">' + c.name + "</div>";
+      }).join("");
+    }
+    list.hidden = false;
+  }
+  input.addEventListener("focus", function () { renderList(input.value); });
+  input.addEventListener("input", function () { hidden.value = ""; renderList(input.value); });
+  // mousedown (not click) fires before the input's blur, so the tap on a suggestion
+  // registers before the list gets hidden - this matters on mobile too, where touches
+  // are reported as mousedown/mouseup as well.
+  list.addEventListener("mousedown", function (e) {
+    var item = e.target.closest(".city-autocomplete-item");
+    if (!item || !item.getAttribute("data-id")) return;
+    input.value = item.getAttribute("data-name");
+    hidden.value = item.getAttribute("data-id");
+    list.hidden = true;
+  });
+  document.addEventListener("click", function (e) {
+    if (!wrap.contains(e.target)) list.hidden = true;
+  });
+}
+document.addEventListener("DOMContentLoaded", function () {
+  document.querySelectorAll(".city-autocomplete").forEach(scSetupCityAutocomplete);
+});
 
 // ---- Installable app (PWA): register the service worker on every page so the site becomes
 // installable and can receive push messages even when no tab is open. ----
@@ -1278,4 +1402,4 @@ function scArenaCopyLink(id, btn){
 </html>`;
 }
 
-module.exports = { page, esc, categoryIcon };
+module.exports = { page, esc, categoryIcon, cityAutocompleteHtml };

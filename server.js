@@ -6,7 +6,7 @@ const { URL } = require("url");
 const db = require("./db");
 const auth = require("./auth");
 const webpush = require("./webpush");
-const { page, esc, categoryIcon } = require("./layout");
+const { page, esc, categoryIcon, cityAutocompleteHtml } = require("./layout");
 
 const PORT = process.env.PORT || 4000;
 
@@ -122,8 +122,8 @@ async function notify(user, { pushTitle, pushBody, url, emailSubject, emailHtml 
 })();
 
 // ---------- helpers ----------
-const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB per individual photo, generous enough for a phone photo
-const MAX_REQUEST_BYTES = 20 * 1024 * 1024; // 20MB total per form submission - covers a logo + a few showcase photos together
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB per individual photo - generous for a full-res phone photo
+const MAX_REQUEST_BYTES = 40 * 1024 * 1024; // 40MB total per form submission - covers a logo + a few showcase photos together
 
 // Reads a request body. For normal forms this returns a URLSearchParams (unchanged
 // behaviour). For multipart/form-data (file uploads) it returns a URLSearchParams-like
@@ -1075,7 +1075,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const siteReviews = d.reviews.filter((r) => r.type === "site" && r.status === "approved").slice(-3).reverse();
 
   const catOptions = d.categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
-  const cityOptions = d.cities.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
 
   const weekly = getWeeklyFeature(d);
   const currentStory = getCurrentStory(d);
@@ -1128,7 +1127,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </div>
         <div class="search-row" style="margin-top:10px;">
           <select name="category"><option value="">איזה תחום מעניין אותך?</option>${catOptions}</select>
-          <select name="city"><option value="">מאיזו עיר?</option>${cityOptions}</select>
+          ${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}
           <button class="btn" type="submit">חפשי</button>
         </div>
         <div class="search-row" style="margin-top:10px;justify-content:space-between;align-items:center;">
@@ -1223,7 +1222,6 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     .sort((a, b) => ((b.tier === "premium") - (a.tier === "premium")) || (b.reviewCount - a.reviewCount));
 
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === category ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const cityOptions = d.cities.map((c) => `<option value="${c.id}" ${c.id === city ? "selected" : ""}>${esc(c.name)}</option>`).join("");
 
   const body = `
   <h1 class="section-title">מי מחכה לך היום?</h1>
@@ -1233,7 +1231,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
         </div>
         <div class="search-row" style="margin-top:10px;">
           <select name="category"><option value="">כל התחומים</option>${catOptions}</select>
-          <select name="city"><option value="">מאיזו עיר?</option>${cityOptions}</select>
+          ${cityAutocompleteHtml({ fieldName: "city", selectedId: city, selectedName: city ? cityName(d, city) : "", placeholder: "מאיזו עיר?" })}
           <button class="btn" type="submit">חפשי</button>
         </div>
         <div class="search-row" style="margin-top:10px;justify-content:space-between;align-items:center;">
@@ -1565,7 +1563,7 @@ route("POST", "/freelancer/:id/review", async (req, res, params, query, ctx) => 
   const body = await readBody(req);
   const listingId = body.get("listingId") || "";
   const backUrl = listingId ? `/freelancer/${params.id}/listing/${listingId}` : `/freelancer/${params.id}`;
-  if (body.tooBig) return redirect(res, `${backUrl}?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `${backUrl}?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
   if (!f) return redirect(res, backUrl);
@@ -1623,7 +1621,7 @@ route("GET", "/reviews", async (req, res, params, query, ctx) => {
 route("POST", "/reviews", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/reviews?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `/reviews?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const d = db.load();
   const customer = d.customers.find((c) => c.id === ctx.session.id);
   const id = db.nextId("review");
@@ -2241,20 +2239,20 @@ route("GET", "/deals", async (req, res, params, query, ctx) => {
   sendHtml(res, 200, page({ title: "הטבות SheCan", session: ctx.session, body, query }));
 });
 
-// ----- Join as freelancer -----
-route("GET", "/join", async (req, res, params, query, ctx) => {
-  const d = db.load();
-  const charging = d.settings.chargingEnabled;
-  const catOptions = d.categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
-  const cityOptions = d.cities.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
-  const storyQuestionsJoin = d.settings.storyQuestions || [];
-  // A visit via another business's referral link (/join?ref=<freelancerId>) - pre-fills and
-  // locks the "how did you hear" field to that business (see POST /join for how the ref is
-  // resolved and credited), only trusted if it actually resolves to a real approved freelancer.
-  const refId = query.get("ref") || "";
-  const referrerFreelancer = refId ? d.freelancers.find((x) => x.id === refId && x.status === "approved") : null;
-  const businessNameDatalist = d.freelancers.filter((x) => x.status === "approved")
-    .map((x) => `<option value="${esc(x.businessName || x.name)}"></option>`).join("");
+// Builds the whole /join form. `prefill` (only set on a POST-validation retry, see POST
+// /join below) repopulates the fields she already filled in so a rejected submission - wrong
+// email format, no city/online/home-visit, photos too big - doesn't force her to retype the
+// entire form from scratch. Passwords and file inputs (logo/gallery/story photo) can never be
+// refilled by a server-rendered page for security/browser reasons, so those two categories are
+// the only things she'd still need to redo; everything else on the main form survives a retry.
+function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameDatalist, storyQuestionsJoin, prefill }) {
+  const p = prefill || {};
+  const isRetry = !!prefill;
+  const catOptions = d.categories.map((c) => `<option value="${c.id}" ${p.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const subcatOptionsForPrefill = (p.categoryId && p.categoryId !== "__other__")
+    ? subcategoriesOf(d, p.categoryId).map((s) => `<option value="${s.id}" ${p.subcategoryId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")
+    : "";
+  const filesNote = isRetry ? ` <span style="color:var(--danger);font-weight:700;">(שימי לב - יש לצרף שוב, קבצים לא נשמרים אוטומטית)</span>` : "";
   const body = `
   ${!charging ? `
   <div class="sc-modal-overlay" id="scWelcomeModal" onclick="if(event.target===this) scCloseModal();">
@@ -2288,42 +2286,43 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
   <div class="flash flash-ok" style="max-width:680px;">${!charging ? "ההרשמה כעת בחינם לכל המייסדות. לאחר תקופת ההשקה, ההצטרפות תהיה כרוכה בדמי מנוי חודשיים, אך אתן – המייסדות – תיהנו מהנחה קבועה ובלעדית לכל החיים." : "ההצטרפות כרוכה בדמי מנוי חודשיים."}</div>
 
   <form class="panel" id="scJoinForm" method="post" action="/join" enctype="multipart/form-data" style="max-width:560px;margin:24px auto;">
-    <label>🌸 שם מלא<input type="text" name="name" required /></label>
-    <label>🌸 שם העסק<input type="text" name="businessName" required /></label>
-    <label>🌸 מייל<input type="email" name="email" required /></label>
+    <label>🌸 שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
+    <label>🌸 שם העסק<input type="text" name="businessName" value="${esc(p.businessName || "")}" required /></label>
+    <label>🌸 מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
     <label>🌸 בחרי סיסמה<input type="password" name="password" required /></label>
+    ${isRetry ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
     <label>🌸 מה התחום שלך?
-    <select name="categoryId" required onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBox');"><option value="">בחרי תחום</option>${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>🌸 תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat"><option value="">בחרי קודם תחום</option></select></label>
-    <div id="scOtherCategoryBox" style="display:none;">
-      <label>🌸 מה שם התחום שלך?<input type="text" name="customCategory" placeholder="למשל: עיצוב אירועים" /></label>
-      <label>🌸 תת-תחום (לא חובה)<input type="text" name="customSubcategory" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    <select name="categoryId" required onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBox');"><option value="">בחרי תחום</option>${catOptions}<option value="__other__" ${p.categoryId === "__other__" ? "selected" : ""}>אחר - התחום שלי לא ברשימה</option></select></label>
+    <label>🌸 תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat">${p.categoryId && p.categoryId !== "__other__" ? subcatOptionsForPrefill : '<option value="">בחרי קודם תחום</option>'}</select></label>
+    <div id="scOtherCategoryBox" style="display:${p.categoryId === "__other__" ? "block" : "none"};">
+      <label>🌸 מה שם התחום שלך?<input type="text" name="customCategory" value="${esc(p.customCategory || "")}" placeholder="למשל: עיצוב אירועים" /></label>
+      <label>🌸 תת-תחום (לא חובה)<input type="text" name="customSubcategory" value="${esc(p.customSubcategory || "")}" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
     </div>
     <label>🌸 כמה שנים את בתחום?
-    <select name="yearsInField" required><option value="">בחרי</option>${yearsInFieldOptionsHtml("")}</select></label>
-    <label>🌸 מאיזו עיר?<select name="cityId"><option value="">בחרי עיר</option>${cityOptions}</select></label>
+    <select name="yearsInField" required><option value="">בחרי</option>${yearsInFieldOptionsHtml(p.yearsInField || "")}</select></label>
+    <label>🌸 מאיזו עיר?${cityAutocompleteHtml({ fieldName: "cityId", selectedId: p.cityId || "", selectedName: p.cityId ? cityName(d, p.cityId) : "", placeholder: "בחרי עיר" })}</label>
     <p class="muted" style="margin:-6px 0 6px;font-size:13px;">לא חובה לציין עיר, כל עוד מסומן למטה שאת נותנת שירות בדיגיטלית או מגיעה עד הלקוחה - אבל חובה לפחות אחד מהשלושה.</p>
-    <label>🌸 טלפון<input type="tel" name="phone" /></label>
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" style="width:auto;" /> יש לי וואטסאפ במספר הזה</label>
+    <label>🌸 טלפון<input type="tel" name="phone" value="${esc(p.phone || "")}" /></label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" ${p.hasWhatsapp ? "checked" : ""} style="width:auto;" /> יש לי וואטסאפ במספר הזה</label>
     <label>🌸 איך את נותנת את השירות? (אפשר לסמן כמה)</label>
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:0;"><input type="checkbox" name="offersOnline" value="1" style="width:auto;" /> 💻 נותנת שירות אונליין / דיגיטלית</label>
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="offersHomeVisit" value="1" style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
-    <label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" /></label>
-    <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" placeholder="https://..." /></label>
-    <label>🌸 לוגו (לא חובה אבל מומלץ)<input type="file" name="logo" accept="image/*" /></label>
-    <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:0;"><input type="checkbox" name="offersOnline" value="1" ${p.offersOnline ? "checked" : ""} style="width:auto;" /> 💻 נותנת שירות אונליין / דיגיטלית</label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="offersHomeVisit" value="1" ${p.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
+    <label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>
+    <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
+    <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" accept="image/*" /></label>
+    <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך${filesNote}
     <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
     <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery4" accept="image/*" />
-    <label>🌸 ספרי לנו בכמה מילים על העסק שלך (עד 500 תווים)<textarea name="description" maxlength="500" placeholder="ספרי לנו מה את עושה ואיך את עוזרת ללקוחות שלך – כתבי את זה כאילו את מספרת לחברה, בצורה ברורה ומדויקת. זה מה שיגרום ללקוחות לבחור דווקא בך."></textarea></label>
+    <label>🌸 ספרי לנו בכמה מילים על העסק שלך (עד 500 תווים)<textarea name="description" maxlength="500" placeholder="ספרי לנו מה את עושה ואיך את עוזרת ללקוחות שלך – כתבי את זה כאילו את מספרת לחברה, בצורה ברורה ומדויקת. זה מה שיגרום ללקוחות לבחור דווקא בך.">${esc(p.description || "")}</textarea></label>
     <label>🌸 תני ללקוחות סיבה טובה לבחור בך (עד 200 תווים) *</label>
     <p class="muted" style="margin:0 0 6px;font-size:13px;">* עסק בלי הטבה ללקוחות לא יאושר לפרסום - זה בדיוק מה שמושך אליך לקוחות חדשות.</p>
-    <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן." required></textarea>
+    <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן." required>${esc(p.dealText || "")}</textarea>
     <label>🌸 איזו רמה מתאימה לך?
-    <select name="tier"><option value="basic">בסיסית</option><option value="premium">מומלצת</option></select></label>
+    <select name="tier"><option value="basic" ${p.tier !== "premium" ? "selected" : ""}>בסיסית</option><option value="premium" ${p.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
 
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
     <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לך (בזירה או במסר), כשלקוחה מתעניינת פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בזירה בתחום שלך.</p>
 
     <div class="muted" style="margin-top:16px;background:var(--cream);border-radius:8px;padding:12px 14px;font-size:14px;">
@@ -2333,6 +2332,7 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
     <div class="panel" style="background:var(--cream);margin-top:16px;">
       <h4 style="margin-top:0;">מתעסקת בעוד תחום? הוסיפי גם אותו למאגר</h4>
       <p class="muted" style="font-size:14px;">כל תחום נוסף מקבל כרטיסייה משלו - שם עסק, לוגו, תמונות, הטבה ותיאור נפרדים. פרטי הקשר והעיר משותפים לפרופיל הראשי שלך.</p>
+      ${isRetry ? `<p class="muted" style="font-size:13px;color:var(--danger);">שימי לב - אם מילאת כאן תחום נוסף, יש למלא אותו מחדש.</p>` : ""}
       ${[0, 1, 2].map((i) => `<div id="scExtraListing${i}" style="display:none;border-top:1px solid #e5ddd0;margin-top:14px;padding-top:14px;">${extraListingFormBlock(d, "extra", i)}</div>`).join("")}
       <button type="button" class="btn btn-outline btn-small" id="scAddExtraListingBtn" style="margin-top:14px;" onclick="scAddExtraListing()">➕ הוספת תחום</button>
     </div>
@@ -2341,6 +2341,7 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
       <button type="button" onclick="var p=document.getElementById('scJoinStoryPanel');if(p)p.style.display='none';" aria-label="לא רלוונטי בשבילי" title="לא רלוונטי בשבילי" style="position:absolute;top:12px;left:14px;background:none;border:none;font-size:20px;color:var(--gray);cursor:pointer;">✕</button>
       <h4 style="margin-top:0;">רוצה כבר עכשיו לכתוב את הסיפור שלך? (לא חובה)</h4>
       <p class="muted" style="font-size:14px;">הסיפור שלך הוא ריאיון אישי קצר שמוצג בעמוד "SheCan Stories" - כרטיס ביקור רגשי שמספר מי את ואיך הגעת לאן שהגעת. כל שבוע מוצגת עצמאית אחת, לפי סדר ההרשמה שלכן לקהילה - כך שגם הסיפור שלך יקבל את הבמה שלו בזמן. אפשר גם לדלג ולמלא את זה מאוחר יותר באזור האישי שלך, או פשוט לסגור את התיבה הזו עם ה-X אם זה לא בשבילך כרגע.</p>
+      ${isRetry ? `<p class="muted" style="font-size:13px;color:var(--danger);">שימי לב - אם מילאת כאן משהו, יש למלא אותו מחדש.</p>` : ""}
       <label>🌸 תמונה שלך לסיפור (לא חובה)
       <input type="file" name="storyPhoto" accept="image/*" /></label>
       ${storyQuestionsJoin.map((q, i) => `<label>🌸 ${esc(q)}<textarea name="storyAnswer${i}" maxlength="800"></textarea></label>`).join("")}
@@ -2352,12 +2353,12 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
       ${referrerFreelancer ? `
       <p class="muted" style="font-size:13px;">הגעת דרך הקישור האישי של <strong>${esc(referrerFreelancer.businessName || referrerFreelancer.name)}</strong> - היא תזכה ב-10 נקודות כשתסיימי להירשם 🎉</p>
       ` : `
-      <label><input type="radio" name="howHeardChoice" value="referral" onchange="document.getElementById('scHowHeardBizBox').style.display='block';" /> חברה מהקהילה / בעלת עסק אחרת</label>
-      <div id="scHowHeardBizBox" style="display:none;margin-inline-start:22px;">
-        <input type="text" name="howHeardBusinessName" list="scBusinessNameList" placeholder="הקלידי לחיפוש..." />
+      <label><input type="radio" name="howHeardChoice" value="referral" ${p.howHeardChoice === "referral" ? "checked" : ""} onchange="document.getElementById('scHowHeardBizBox').style.display='block';" /> חברה מהקהילה / בעלת עסק אחרת</label>
+      <div id="scHowHeardBizBox" style="display:${p.howHeardChoice === "referral" ? "block" : "none"};margin-inline-start:22px;">
+        <input type="text" name="howHeardBusinessName" value="${esc(p.howHeardBusinessName || "")}" list="scBusinessNameList" placeholder="הקלידי לחיפוש..." />
         <datalist id="scBusinessNameList">${businessNameDatalist}</datalist>
       </div>
-      <label><input type="radio" name="howHeardChoice" value="social" onchange="document.getElementById('scHowHeardBizBox').style.display='none';" /> רשתות חברתיות / חיפוש ברשת</label>
+      <label><input type="radio" name="howHeardChoice" value="social" ${p.howHeardChoice === "social" ? "checked" : ""} onchange="document.getElementById('scHowHeardBizBox').style.display='none';" /> רשתות חברתיות / חיפוש ברשת</label>
       `}
     </div>
 
@@ -2380,20 +2381,62 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
     </div>
   </div>
   `;
+  return body;
+}
+
+// A validation failure in POST /join (below) re-renders this same form instead of a redirect,
+// so she can fix just the one thing that was wrong without losing everything else she typed.
+function joinFormRenderContext(d, body, req) {
+  const refId = (body ? body.get("ref") : "") || "";
+  const referrerFreelancer = refId ? d.freelancers.find((x) => x.id === refId && x.status === "approved") : null;
+  const businessNameDatalist = d.freelancers.filter((x) => x.status === "approved")
+    .map((x) => `<option value="${esc(x.businessName || x.name)}"></option>`).join("");
+  const storyQuestionsJoin = d.settings.storyQuestions || [];
+  return { charging: d.settings.chargingEnabled, refId, referrerFreelancer, businessNameDatalist, storyQuestionsJoin };
+}
+
+route("GET", "/join", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  // A visit via another business's referral link (/join?ref=<freelancerId>) is only trusted
+  // here as a query param - see joinFormRenderContext for the equivalent lookup from a POST body.
+  const ctxData = joinFormRenderContext(d, { get: (k) => (k === "ref" ? query.get("ref") : "") }, req);
+  const body = joinFormBody(d, { ...ctxData, prefill: null });
   sendHtml(res, 200, page({ title: "הצטרפות כעצמאית", session: ctx.session, body, query }));
 });
 
 route("POST", "/join", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/join?err=${encodeURIComponent("התמונות ביחד גדולות מדי - נסי עם פחות תמונות או תמונות קטנות יותר.")}`);
+  // On any validation failure below, re-render the same form (200, not a redirect) with
+  // everything she already typed filled back in - see joinFormBody's `prefill` handling.
+  const rerenderWithError = (d, errMsg) => {
+    const ctxData = joinFormRenderContext(d, body, req);
+    const prefill = {
+      name: body.get("name"), businessName: body.get("businessName"), email: body.get("email"),
+      categoryId: body.get("categoryId"), subcategoryId: body.get("subcategoryId"),
+      customCategory: body.get("customCategory"), customSubcategory: body.get("customSubcategory"),
+      yearsInField: body.get("yearsInField"), cityId: body.get("cityId"), phone: body.get("phone"),
+      hasWhatsapp: body.get("hasWhatsapp") === "1", offersOnline: body.get("offersOnline") === "1",
+      offersHomeVisit: body.get("offersHomeVisit") === "1", instagram: body.get("instagram"),
+      portfolioUrl: body.get("portfolioUrl"), description: body.get("description"), dealText: body.get("dealText"),
+      tier: body.get("tier"), wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+      howHeardChoice: body.get("howHeardChoice"), howHeardBusinessName: body.get("howHeardBusinessName"),
+    };
+    const formBody = joinFormBody(d, { ...ctxData, prefill });
+    const errQuery = new URLSearchParams({ err: errMsg });
+    return sendHtml(res, 200, page({ title: "הצטרפות כעצמאית", session: ctx.session, body: formBody, query: errQuery }));
+  };
+  if (body.tooBig) {
+    const d = db.load();
+    return rerenderWithError(d, "התמונות ביחד גדולות מדי - נסי עם פחות תמונות או תמונות קטנות יותר, ותצרפי אותן שוב.");
+  }
   const d = db.load();
   if (d.freelancers.find((f) => f.email === body.get("email"))) {
-    return redirect(res, `/join?err=${encodeURIComponent("כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום.")}`);
+    return rerenderWithError(d, "כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום.");
   }
   // City is optional now, but she must give customers SOME way to reach her - either a city,
   // or an online/digital service, or a home-visit service. At least one of the three.
   if (!body.get("cityId") && body.get("offersOnline") !== "1" && body.get("offersHomeVisit") !== "1") {
-    return redirect(res, `/join?err=${encodeURIComponent("צריך לציין עיר, או לסמן שאת נותנת שירות בדיגיטלית / מגיעה עד הלקוחה - לפחות אחד מהשלושה.")}`);
+    return rerenderWithError(d, "צריך לציין עיר, או לסמן שאת נותנת שירות בדיגיטלית / מגיעה עד הלקוחה - לפחות אחד מהשלושה.");
   }
   const id = db.nextId("freelancer");
   const charging = d.settings.chargingEnabled;
@@ -2866,7 +2909,6 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved");
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === f.categoryId ? "selected" : ""}>${esc(c.name)}</option>`).join("");
   const subcatOptions = subcategoriesOf(d, f.categoryId).map((s) => `<option value="${s.id}" ${s.id === f.subcategoryId ? "selected" : ""}>${esc(s.name)}</option>`).join("");
-  const cityOptions = d.cities.map((c) => `<option value="${c.id}" ${c.id === f.cityId ? "selected" : ""}>${esc(c.name)}</option>`).join("");
   const statusLabel = paymentStatusLabel(f.paymentStatus);
   const matchingCustomer = d.customers.find((c) => c.email === f.email);
   const profileUrl = `${getOrigin(req)}/freelancer/${f.id}`;
@@ -3013,7 +3055,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
       <label>מה שם התחום שלך?<input type="text" name="customCategory" placeholder="למשל: עיצוב אירועים" /></label>
       <label>תת-תחום (לא חובה)<input type="text" name="customSubcategory" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
     </div>
-    <label>עיר<select name="cityId">${cityOptions}</select></label>
+    <label>עיר${cityAutocompleteHtml({ fieldName: "cityId", selectedId: f.cityId, selectedName: f.cityId ? cityName(d, f.cityId) : "" })}</label>
     <label>טלפון<input type="tel" name="phone" value="${esc(f.phone || "")}" /></label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" ${f.hasWhatsapp ? "checked" : ""} style="width:auto;" /> יש לי וואטסאפ במספר הזה</label>
     <label>איך את נותנת את השירות? (אפשר לסמן כמה)</label>
@@ -3153,7 +3195,7 @@ route("POST", "/freelancer-dashboard/story", async (req, res, params, query, ctx
     return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("כבר שלחת סיפור - אי אפשר לשלוח עוד אחד.")}`);
   }
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const storyQuestions = d.settings.storyQuestions || [];
   const answers = storyQuestions
     .map((q, i) => ({ question: q, answer: clip((body.get(`answer${i}`) || "").trim(), 800) }))
@@ -3191,7 +3233,7 @@ route("POST", "/freelancer-dashboard/story/edit", async (req, res, params, query
   const story = (d.stories || []).find((s) => s.freelancerId === f.id && s.status === "pending");
   if (!story) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("אין לך כרגע סיפור ממתין לעריכה - אם הוא כבר פורסם, אי אפשר לערוך אותו יותר.")}`);
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const storyQuestions = d.settings.storyQuestions || [];
   const answers = storyQuestions
     .map((q, i) => ({ question: q, answer: clip((body.get(`answer${i}`) || "").trim(), 800) }))
@@ -3371,6 +3413,29 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   const body = `
   <h1 class="section-title">הבמה שלך 👑</h1>
+  <p class="muted" style="text-align:center;margin-top:-14px;">💡 לוחצים על כותרת של כל אזור כדי לפתוח או לסגור אותו.</p>
+  <div class="sc-admin-page">
+  <div class="panel">
+    <h3>מספרים כלליים</h3>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;">
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${d.customers.length}</div>
+        <div class="muted" style="margin-top:4px;">לקוחות רשומות</div>
+      </div>
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${d.freelancers.length}</div>
+        <div class="muted" style="margin-top:4px;">עצמאיות סה"כ</div>
+      </div>
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${activeFreelancers.length}</div>
+        <div class="muted" style="margin-top:4px;">עצמאיות מאושרות ופעילות</div>
+      </div>
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingFreelancers.length}</div>
+        <div class="muted" style="margin-top:4px;">ממתינות לאישור</div>
+      </div>
+    </div>
+  </div>
 
   <div class="panel">
     <h3>כתובת המייל שלך להתחברות</h3>
@@ -3853,6 +3918,17 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <button class="btn btn-small" style="margin-top:10px;" type="submit">הוספה</button>
     </form>
   </div>
+
+  <div class="panel">
+    <h3>הערים באתר (${d.cities.length})</h3>
+    <p class="muted">חסרה עיר ברשימה? אפשר להוסיף אותה כאן - היא תופיע מיד גם בטופס ההרשמה וגם בייבוא באלק.</p>
+    <div class="cat-grid" style="max-height:220px;overflow-y:auto;">${d.cities.map((c) => `<div class="cat-card">${esc(c.name)}</div>`).join("")}</div>
+    <form method="post" action="/admin/city" style="margin-top:14px;max-width:360px;">
+      <input type="text" name="name" placeholder="עיר/יישוב חדש" required />
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">הוספה</button>
+    </form>
+  </div>
+  </div>
   `;
   sendHtml(res, 200, page({ title: "ניהול", session: ctx.session, body, query, noSidebars: true }));
 });
@@ -3935,7 +4011,7 @@ route("POST", "/admin/change-email", async (req, res, params, query, ctx) => {
 route("POST", "/admin/logo", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const d = db.load();
   const dataUri = fileToDataUri(body.files.logo, MAX_UPLOAD_BYTES);
   if (dataUri) d.settings.siteLogoDataUri = dataUri;
@@ -3954,7 +4030,7 @@ route("POST", "/admin/logo/remove", async (req, res, params, query, ctx) => {
 route("POST", "/admin/top-banner", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const d = db.load();
   const dataUri = fileToDataUri(body.files.banner, MAX_UPLOAD_BYTES);
   if (dataUri) d.settings.topBannerDataUri = dataUri;
@@ -3973,7 +4049,7 @@ route("POST", "/admin/top-banner/remove", async (req, res, params, query, ctx) =
 route("POST", "/admin/background", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const d = db.load();
   const dataUri = fileToDataUri(body.files.background, MAX_UPLOAD_BYTES);
   if (dataUri) d.settings.siteBackgroundImageDataUri = dataUri;
@@ -4083,7 +4159,7 @@ route("POST", "/admin/magazine/:id/delete", async (req, res, params, query, ctx)
 route("POST", "/admin/story", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
-  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 4MB) - נסי תמונה קטנה יותר.")}`);
+  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
   const d = db.load();
   const id = db.nextId("story");
   d.stories = d.stories || [];
@@ -4391,6 +4467,20 @@ route("POST", "/admin/category", async (req, res, params, query, ctx) => {
   d.categories.push({ id, name: body.get("name") });
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("נוסף בהצלחה.")}`);
+});
+
+route("POST", "/admin/city", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const name = (body.get("name") || "").trim();
+  if (!name) return redirect(res, `/admin?err=${encodeURIComponent("לא הוזן שם עיר.")}`);
+  const dup = findByNameLoose(d.cities, name);
+  if (dup) return redirect(res, `/admin?err=${encodeURIComponent("העיר הזו כבר קיימת ברשימה.")}`);
+  const id = String(d.cities.length + 1) + "-" + Date.now();
+  d.cities.push({ id, name });
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("נוספה בהצלחה.")}`);
 });
 
 route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, ctx) => {
