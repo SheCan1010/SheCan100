@@ -3838,7 +3838,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   <div class="panel">
     <h3>ייבוא עצמאיות בכמות (מאקסל)</h3>
-    <p class="muted">יש לך רשימה של הרבה עצמאיות באקסל? סדרי את העמודות בסדר הזה: שם איש קשר, שם העסק, תחום (בדיוק כפי שכתוב ברשימת התחומים למטה), עיר (בדיוק כפי שכתוב ברשימת הערים - אפשר להשאיר ריק אם אין), טלפון, תיאור קצר, טקסט ההטבה, אינסטגרם (אופציונלי), קישור - וואטסאפ או אתר/תיק עבודות (אופציונלי), אימייל (אופציונלי, אבל בלעדיו לא יישלח מייל עם פרטי התחברות). אחר כך סמני את השורות באקסל (בלי כותרות), העתיקי (Ctrl+C) והדביקי (Ctrl+V) כאן למטה - זה יעבוד ישירות, שורה לכל עצמאית. כל מי שתיובא תיכנס ישר כמאושרת עם קוד קופון אוטומטי.</p>
+    <p class="muted">יש לך רשימה של הרבה עצמאיות באקסל? סדרי את העמודות בסדר הזה: שם איש קשר, שם העסק, תחום (בדיוק כפי שכתוב ברשימת התחומים למטה), תת-תחום (אופציונלי, בדיוק כפי שכתוב ברשימת תתי-התחומים של אותו תחום), עיר (בדיוק כפי שכתוב ברשימת הערים - אפשר להשאיר ריק אם אין), טלפון, תיאור קצר, טקסט ההטבה, אינסטגרם (אופציונלי), קישור - וואטסאפ או אתר/תיק עבודות (אופציונלי), אימייל (אופציונלי, אבל בלעדיו לא יישלח מייל עם פרטי התחברות). אחר כך סמני את השורות באקסל (בלי כותרות), העתיקי (Ctrl+C) והדביקי (Ctrl+V) כאן למטה - זה יעבוד ישירות, שורה לכל עצמאית. כל מי שתיובא תיכנס ישר כמאושרת עם קוד קופון אוטומטי.</p>
     <form method="post" action="/admin/bulk-import">
       <textarea name="rows" style="min-height:180px;" placeholder="הדביקי כאן ישירות מאקסל..."></textarea>
       <button class="btn btn-small" style="margin-top:10px;" type="submit">ייבוא הרשימה</button>
@@ -4293,9 +4293,10 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
 
   lines.forEach((line) => {
     const cols = line.split("\t").length > 1 ? line.split("\t") : line.split(",");
-    const [name, businessName, categoryName, cityName, phone, description, dealText, instagram, linkRaw, email] = cols.map((c) => (c || "").trim());
+    const [name, businessName, categoryName, subcategoryName, cityName, phone, description, dealText, instagram, linkRaw, email] = cols.map((c) => (c || "").trim());
     if (!businessName) return;
     const category = findByNameLoose(d.categories, categoryName);
+    const subcategory = category ? findByNameLoose(subcategoriesOf(d, category.id), subcategoryName) : null;
     const city = findByNameLoose(d.cities, cityName);
     if (!category || !city) unmatched++;
     // The optional "קישור" column can hold either a WhatsApp link (wa.me / api.whatsapp.com / whatsapp.com)
@@ -4308,7 +4309,7 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
       id, name: name || businessName, businessName,
       email: email || `${id}@imported.shecan.co.il`,
       passwordHash: auth.hashPassword(tempPassword),
-      categoryId: category ? category.id : "", subcategoryId: "", additionalCategoryIds: [], cityId: city ? city.id : "",
+      categoryId: category ? category.id : "", subcategoryId: subcategory ? subcategory.id : "", additionalCategoryIds: [], cityId: city ? city.id : "",
       phone: phone || "", instagram: instagram || "",
       portfolioUrl: (linkRaw && !isWhatsappLink) ? linkRaw : "",
       hasWhatsapp: isWhatsappLink, availableNow: false,
@@ -4327,12 +4328,15 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
       emailed++;
       sendEmail(email, "האזור האישי שלך ב-SheCan מוכן",
         `<div dir="rtl" style="font-family:Arial,sans-serif;">
-          <p>היי ${esc(name || businessName)},</p>
-          <p>יצרנו לך אזור אישי ב-SheCan עבור ${esc(businessName)}. אפשר להתחבר עם הפרטים הבאים:</p>
-          <p>אימייל: <strong>${esc(email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong></p>
-          <p>מומלץ להתחבר ולהחליף לסיסמה משלך - אפשר גם דרך <a href="${getOrigin(req)}/forgot-password">שכחת סיסמה</a> בכל שלב.</p>
-          <p>השקת האתר לציבור צפויה בשבוע הבא, כך שהוא עדיין לא גלוי לכולן - זה בדיוק הזמן להיכנס ולעדכן את הכרטיסייה שלך (תמונות, תיאור, הטבה) בדיוק כמו שתרצי שהיא תיראה כשהיא תעלה באוויר.</p>
-          <p>להתחברות: <a href="${getOrigin(req)}/login">${getOrigin(req)}/login</a></p>
+          <p>היי ${esc(name || businessName)}, ✨</p>
+          <p>זוכרת שמילאת את טופס ההרשמה למאגר העצמאיות של SheCan? אז אנחנו כל כך מתרגשות לבשר שהאתר החדש נבנה ונולד במיוחד בשבילכן!</p>
+          <p>יצרנו לעסק שלך כרטיסייה אישית מהממת עם כל הפרטים ששלחת אלינו.</p>
+          <p>🔑 פרטי ההתחברות לאזור האישי שלך:<br/>אימייל: <strong>${esc(email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong><br/>קישור להתחברות: <a href="${getOrigin(req)}/login">${getOrigin(req)}/login</a></p>
+          <p>חשוב - בכניסה הראשונה כדאי לא לשכוח להחליף את הסיסמה הזמנית לסיסמה משלך.</p>
+          <p>את מוזמנת להיכנס, להתרשם מהכרטיסייה שלך, ותמיד להוסיף, לשנות ולעדכן תמונות ונתונים בדיוק איך שאת אוהבת.</p>
+          <p>האתר עדיין לא פתוח לקהל הרחב. פתחנו אותו קודם כל במיוחד עבורכן – נבחרת המייסדות שלנו – כדי שתוכלו לסדר, ללטש ולהעלות את כל מה שצריך בשקט ובנחת לפני שכולן מגיעות. ההשקה הרשמית תהיה ממש בשבוע הבא! 🚀</p>
+          <p>אם יש לך שאלות, באגים קטנים שצריך לסדר או סתם בא לך לדבר איתנו, את מוזמנת לשלוח מייל לכתובת: <a href="mailto:Shecan.office@gmail.com">Shecan.office@gmail.com</a></p>
+          <p>מחכות לראות אותך בפנים,<br/>צוות SheCan 🌸</p>
         </div>`
       ).catch(() => {});
     } else {
