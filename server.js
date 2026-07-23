@@ -384,7 +384,7 @@ function extraListingFormBlock(d, prefix, idx, listing) {
     <label>שם העסק בתחום הזה<input type="text" name="${prefix}BusinessName${idx}" value="${esc(l.businessName || "")}" /></label>
     <label>תחום<select name="${prefix}CategoryId${idx}" onchange="scUpdateSubcats(this, document.getElementById('${subSelId}'), '')"><option value="">בחרי תחום</option>${catOptions}</select></label>
     <label>תת-תחום (לא חובה)<select name="${prefix}SubcategoryId${idx}" id="${subSelId}"><option value="">בחרי קודם תחום</option>${subOptions}</select></label>
-    <label>לוגו (לא חובה)<input type="file" name="${prefix}Logo${idx}" accept="image/*" /></label>
+    <label>לוגו (לא חובה)<input type="file" name="${prefix}Logo${idx}" accept="image/*" data-sc-crop="1" /></label>
     <label>תמונות להתרשמות (עד 4, לא חובה)
     <input type="file" name="${prefix}Gallery1_${idx}" accept="image/*" style="margin-bottom:8px;" /></label>
     <input type="file" name="${prefix}Gallery2_${idx}" accept="image/*" style="margin-bottom:8px;" />
@@ -2309,7 +2309,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="offersHomeVisit" value="1" ${p.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
     <label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
-    <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" accept="image/*" /></label>
+    <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
     <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך${filesNote}
     <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
     <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
@@ -3046,7 +3046,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <h3>הפרופיל שלך</h3>
     ${avatarUri(f) ? `<div style="margin-bottom:10px;">${photoOrInitials(avatarUri(f), f.businessName, "profile-photo")}</div>` : ""}
     <label>תמונת פרופיל ${f.photoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="photo" accept="image/*" /></label>
-    <label>לוגו העסק ${f.logoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="logo" accept="image/*" /></label>
+    <label>לוגו העסק ${f.logoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
     <label>שם העסק<input type="text" name="businessName" value="${esc(f.businessName)}" required /></label>
     <label>תחום
     <select name="categoryId" onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
@@ -3411,6 +3411,20 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   });
   const unreadMessages = (d.contactMessages || []).filter((m) => !m.read).length;
 
+  // Site-visit numbers for the "מספרים כלליים" panel - counted by trackSiteVisit() on every
+  // real page load (see near the bottom of the file). Last-7-days breakdown built from
+  // siteStats.dailyVisits so Sapir can see a trend, not just one flat lifetime total.
+  const siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {} };
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayVisits = siteStats.dailyVisits[todayKey] || 0;
+  const last7Days = [];
+  for (let i = 6; i >= 0; i--) {
+    const dt = new Date();
+    dt.setDate(dt.getDate() - i);
+    const key = dt.toISOString().slice(0, 10);
+    last7Days.push({ key, count: siteStats.dailyVisits[key] || 0 });
+  }
+
   const body = `
   <h1 class="section-title">הבמה שלך 👑</h1>
   <p class="muted" style="text-align:center;margin-top:-14px;">💡 לוחצים על כותרת של כל אזור כדי לפתוח או לסגור אותו.</p>
@@ -3434,7 +3448,28 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingFreelancers.length}</div>
         <div class="muted" style="margin-top:4px;">ממתינות לאישור</div>
       </div>
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.totalVisits || 0}</div>
+        <div class="muted" style="margin-top:4px;">כניסות לאתר (סה"כ)</div>
+      </div>
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${todayVisits}</div>
+        <div class="muted" style="margin-top:4px;">כניסות היום</div>
+      </div>
     </div>
+    <p class="muted" style="margin-top:16px;margin-bottom:6px;">כניסות ב-7 הימים האחרונים:</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${last7Days.map((day) => `<div style="flex:1;min-width:70px;background:var(--white);border:1px solid var(--rose);border-radius:8px;padding:8px 4px;text-align:center;">
+        <div style="font-size:18px;font-weight:700;color:var(--rose-dark);">${day.count}</div>
+        <div class="muted" style="font-size:11px;margin-top:2px;">${day.key.slice(5)}</div>
+      </div>`).join("")}
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>גיבוי נתונים</h3>
+    <p class="muted">מורידה קובץ אחד שמכיל את כל הנתונים באתר - כל העצמאיות, הלקוחות, הביקורות, הסיפורים וכל התמונות (כולל לוגואים) - בדיוק כפי שהם שמורים כרגע. שווה לשמור עותק כזה מדי פעם (בגוגל דרייב למשל) בנוסף לגיבוי האוטומטי שיש כבר ב-Render.</p>
+    <p><a class="btn btn-small" href="/admin/backup/download">⬇️ הורדת גיבוי מלא</a></p>
   </div>
 
   <div class="panel">
@@ -4443,6 +4478,25 @@ route("GET", "/admin/export/freelancers.csv", async (req, res, params, query, ct
   res.end(csv);
 });
 
+// Full-database backup download, per explicit request - lets Sapir keep her own independent
+// copy of everything (freelancers, customers, reviews, stories, settings, and every embedded
+// photo/logo as base64) outside of Render's own automatic disk snapshots. Reads straight off
+// disk (the same file db.save() writes to) rather than re-serializing the in-memory cache, so
+// what she downloads is guaranteed to match exactly what's actually persisted.
+route("GET", "/admin/backup/download", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  db.load();
+  let raw;
+  try {
+    raw = fs.readFileSync(db.DB_PATH, "utf8");
+  } catch (e) {
+    return redirect(res, `/admin?err=${encodeURIComponent("לא הצלחתי לקרוא את קובץ הנתונים לגיבוי.")}`);
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="shecan-backup-${stamp}.json"` });
+  res.end(raw);
+});
+
 route("POST", "/admin/charging-toggle", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -4599,7 +4653,7 @@ route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx
     <h3 style="margin-top:18px;">גלריה נוכחית</h3>
     ${(f.galleryPhotos && f.galleryPhotos.length) ? `<div class="gallery-scroll">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />`).join("")}</div>` : `<p class="muted">עדיין אין תמונות גלריה.</p>`}
     <form method="post" action="/admin/freelancer/${f.id}/photos" enctype="multipart/form-data" style="margin-top:18px;">
-      <label>לוגו חדש ${f.logoDataUri ? "(להחלפה)" : ""}<input type="file" name="logo" accept="image/*" /></label>
+      <label>לוגו חדש ${f.logoDataUri ? "(להחלפה)" : ""}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
       <label style="margin-top:10px;">תמונות גלריה (עד 4 - העלאת תמונה כאן מחליפה את כל הגלריה הקיימת)
       <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
       <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
@@ -4903,12 +4957,32 @@ route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
 });
 
 // ---------- server ----------
+// Site-visit tracking, per explicit request - counts real page loads only (skips the admin
+// area itself, the freelancer dashboard, static/asset routes and anything that isn't a GET),
+// so the number reflects actual site traffic rather than admin/dashboard activity. Kept as a
+// simple hit counter (not unique visitors) to match how per-freelancer f.viewCount already
+// works elsewhere in the app - same trade-off, same reasoning.
+const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/icons/", "/push/"];
+const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/logout"]);
+function trackSiteVisit(method, pathname) {
+  if (method !== "GET") return;
+  if (SITE_VISIT_SKIP_EXACT.has(pathname)) return;
+  if (SITE_VISIT_SKIP_PREFIXES.some((p) => pathname.startsWith(p))) return;
+  const d = db.load();
+  d.siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {} };
+  d.siteStats.totalVisits = (d.siteStats.totalVisits || 0) + 1;
+  const today = new Date().toISOString().slice(0, 10);
+  d.siteStats.dailyVisits[today] = (d.siteStats.dailyVisits[today] || 0) + 1;
+  db.save();
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url, `http://${req.headers.host}`);
     const { session, sid } = getSession(req);
     const match = routes.find((r) => r.method === req.method && r.regex.test(u.pathname));
     if (!match) return sendHtml(res, 404, page({ title: "לא נמצא", session, body: "<p>הדף הזה לא קיים - בואי נחזור <a href=\"/\">הביתה</a> ❤️</p>" }));
+    trackSiteVisit(req.method, u.pathname);
     const m = u.pathname.match(match.regex);
     const params = {};
     match.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));

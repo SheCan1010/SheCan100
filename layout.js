@@ -93,7 +93,7 @@ function nav(session) {
     : ``;
   return `
   <div class="bsd-strip">בס"ד</div>
-  ${settings.topBannerDataUri ? `<div class="top-banner-wrap"><img src="${settings.topBannerDataUri}" alt="SheCan" class="top-banner" /></div>` : ""}
+  ${settings.topBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${settings.topBannerDataUri}" alt="SheCan" class="top-banner" /></a></div>` : ""}
   <div class="site-header-sticky">
     <header class="site-header" role="banner">
       <div class="container header-inner">
@@ -155,7 +155,7 @@ a{color:inherit;text-decoration:none;}
 .brand .heart{color:var(--dark);font-size:20px;vertical-align:middle;}
 .brand-logo{height:34px;display:block;}
 .top-banner-wrap{position:relative;overflow:hidden;}
-.top-banner{width:100%;display:block;max-height:120px;object-fit:cover;}
+.top-banner{width:100%;display:block;max-height:120px;object-fit:cover;cursor:pointer;}
 .unread-badge{display:inline-block;background:var(--danger);color:var(--white);border-radius:10px;font-size:11px;font-weight:800;padding:1px 6px;margin-inline-start:4px;vertical-align:middle;}
 .whatsapp-link{display:inline-flex;align-items:center;gap:4px;color:#25D366;font-weight:700;text-decoration:none;font-size:14px;}
 .chat-thread{max-height:320px;overflow-y:auto;margin-bottom:14px;}
@@ -547,6 +547,19 @@ form .field{margin-bottom:6px;}
 .sc-admin-page .panel > h3{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .sc-admin-page .sc-panel-toggle{font-size:22px;line-height:1;color:var(--rose-dark);flex-shrink:0;}
 .sc-admin-page .sc-panel-body{margin-top:14px;}
+/* Logo cropper modal - shown right after picking a logo file, so freelancers can position/zoom
+   into a clean square before it's saved, instead of a stretched/padded source image (e.g. a
+   whole A4 page) ending up as-is in their profile. See scSetupLogoCropper. */
+.sc-crop-overlay{position:fixed;inset:0;background:rgba(30,20,15,.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;}
+.sc-crop-modal{background:var(--white);border-radius:16px;padding:20px;max-width:360px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.3);}
+.sc-crop-modal h4{margin:0 0 4px;}
+.sc-crop-modal p.muted{margin:0 0 14px;font-size:14px;}
+.sc-crop-canvas-wrap{width:280px;height:280px;margin:0 auto;border-radius:14px;overflow:hidden;background:#eee;cursor:grab;touch-action:none;box-shadow:inset 0 0 0 2px var(--rose);}
+.sc-crop-canvas-wrap:active{cursor:grabbing;}
+.sc-crop-zoom{width:100%;margin:16px 0 6px;}
+.sc-crop-actions{display:flex;gap:10px;margin-top:14px;}
+.sc-crop-actions .btn{flex:1;}
+.sc-crop-skip{display:block;margin-top:12px;font-size:13px;color:var(--gray);text-decoration:underline;background:none;border:none;cursor:pointer;padding:0;}
 .founding-badge{background:#EFE1D8;color:var(--rose-dark);font-size:12px;padding:3px 10px;border-radius:12px;}
 /* Referral-contest panels (customer "bring a friend" race + freelancer "bring a business"
    race) - a slightly warmer, bordered panel so the promo stands out a bit from the plain
@@ -842,6 +855,147 @@ function scSetupCityAutocomplete(wrap) {
 document.addEventListener("DOMContentLoaded", function () {
   document.querySelectorAll(".city-autocomplete").forEach(scSetupCityAutocomplete);
 });
+
+// ---- Logo cropper: any <input type="file" data-sc-crop="1"> (freelancer logo uploads, on
+// every form that has one - join, dashboard edit, admin on-behalf-of, extra-listing panels)
+// opens a small square crop/zoom modal right after a file is picked, instead of uploading the
+// raw source image as-is. Fixes logos that look bad in the round/square profile frame because
+// the original file is a whole page (e.g. A4) with lots of empty background around the mark.
+// Pure canvas + vanilla JS, no libraries - stays in line with the rest of the app.
+function scSetupLogoCropper() {
+  var CROP_BOX = 280; // on-screen crop square, css px
+  var OUT_SIZE = 640; // exported square logo resolution, px
+  document.querySelectorAll('input[type="file"][data-sc-crop]').forEach(function (input) {
+    input.addEventListener("change", function () {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var img = new Image();
+        img.onload = function () { scOpenCropModal(img, input, CROP_BOX, OUT_SIZE); };
+        img.onerror = function () { /* not a readable image - just let the original file upload as-is */ };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  });
+}
+
+function scOpenCropModal(img, input, boxSize, outSize) {
+  var overlay = document.createElement("div");
+  overlay.className = "sc-crop-overlay";
+  overlay.innerHTML =
+    '<div class="sc-crop-modal">' +
+    "<h4>התאימי את הלוגו למסגרת</h4>" +
+    '<p class="muted">גררי כדי למקם, השתמשי במחוון כדי להתקרב/להתרחק</p>' +
+    '<div class="sc-crop-canvas-wrap"><canvas width="' + boxSize + '" height="' + boxSize + '"></canvas></div>' +
+    '<input type="range" class="sc-crop-zoom" min="1" max="3" step="0.01" value="1" />' +
+    '<div class="sc-crop-actions">' +
+    '<button type="button" class="btn btn-small btn-outline sc-crop-cancel">ביטול</button>' +
+    '<button type="button" class="btn btn-small sc-crop-confirm">אישור</button>' +
+    "</div>" +
+    '<button type="button" class="sc-crop-skip">דלגי והשתמשי בתמונה המקורית כמו שהיא</button>' +
+    "</div>";
+  document.body.appendChild(overlay);
+
+  var canvas = overlay.querySelector("canvas");
+  var ctx = canvas.getContext("2d");
+  var zoomSlider = overlay.querySelector(".sc-crop-zoom");
+  var baseScale = Math.max(boxSize / img.width, boxSize / img.height);
+  var scale = baseScale;
+  var offsetX = (boxSize - img.width * scale) / 2;
+  var offsetY = (boxSize - img.height * scale) / 2;
+
+  function clampOffsets() {
+    var w = img.width * scale, h = img.height * scale;
+    var minX = Math.min(0, boxSize - w), maxX = 0;
+    var minY = Math.min(0, boxSize - h), maxY = 0;
+    offsetX = Math.max(minX, Math.min(maxX, offsetX));
+    offsetY = Math.max(minY, Math.min(maxY, offsetY));
+  }
+  function draw() {
+    ctx.clearRect(0, 0, boxSize, boxSize);
+    ctx.drawImage(img, offsetX, offsetY, img.width * scale, img.height * scale);
+  }
+  clampOffsets();
+  draw();
+
+  zoomSlider.addEventListener("input", function () {
+    var cx = boxSize / 2, cy = boxSize / 2;
+    // keep the same point of the image centered under the box while zooming
+    var imgX = (cx - offsetX) / scale, imgY = (cy - offsetY) / scale;
+    scale = baseScale * parseFloat(zoomSlider.value);
+    offsetX = cx - imgX * scale;
+    offsetY = cy - imgY * scale;
+    clampOffsets();
+    draw();
+  });
+
+  var dragging = false, lastX = 0, lastY = 0;
+  function pointerPos(e) {
+    if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    return { x: e.clientX, y: e.clientY };
+  }
+  function onDown(e) {
+    dragging = true;
+    var p = pointerPos(e);
+    lastX = p.x; lastY = p.y;
+  }
+  function onMove(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    var p = pointerPos(e);
+    offsetX += p.x - lastX;
+    offsetY += p.y - lastY;
+    lastX = p.x; lastY = p.y;
+    clampOffsets();
+    draw();
+  }
+  function onUp() { dragging = false; }
+  var wrap = overlay.querySelector(".sc-crop-canvas-wrap");
+  wrap.addEventListener("mousedown", onDown);
+  wrap.addEventListener("touchstart", onDown, { passive: true });
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("touchmove", onMove, { passive: false });
+  window.addEventListener("mouseup", onUp);
+  window.addEventListener("touchend", onUp);
+
+  function cleanup() {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("touchmove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    window.removeEventListener("touchend", onUp);
+    overlay.remove();
+  }
+
+  overlay.querySelector(".sc-crop-cancel").addEventListener("click", function () {
+    input.value = "";
+    cleanup();
+  });
+  overlay.querySelector(".sc-crop-skip").addEventListener("click", function () {
+    // leave input.files untouched - the originally-picked file uploads as-is
+    cleanup();
+  });
+  overlay.querySelector(".sc-crop-confirm").addEventListener("click", function () {
+    var out = document.createElement("canvas");
+    out.width = outSize; out.height = outSize;
+    var octx = out.getContext("2d");
+    var ratio = outSize / boxSize;
+    octx.drawImage(img, offsetX * ratio, offsetY * ratio, img.width * scale * ratio, img.height * scale * ratio);
+    out.toBlob(function (blob) {
+      if (blob && window.DataTransfer) {
+        try {
+          var dt = new DataTransfer();
+          var origName = (input.files && input.files[0] && input.files[0].name) || "logo.png";
+          dt.items.add(new File([blob], origName.replace(/\.[^.]+$/, "") + "-cropped.png", { type: "image/png" }));
+          input.files = dt.files;
+        } catch (err) { /* unsupported - original file stays as picked */ }
+      }
+      cleanup();
+    }, "image/png");
+  });
+}
+document.addEventListener("DOMContentLoaded", scSetupLogoCropper);
 
 // ---- Installable app (PWA): register the service worker on every page so the site becomes
 // installable and can receive push messages even when no tab is open. ----

@@ -174,6 +174,10 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     },
     contactMessages: [], // הודעות שהושארו בעמוד "צרי קשר"
     couponRevealEvents: [], // לוג גלובלי של כל לחיצה על "לצפייה בקוד קופון" - freelancerId + date
+    // מונה כניסות לאתר - נספר בכל טעינת עמוד ציבורית (לא כולל אזור ניהול/דשבורד עצמאית/API
+    // פנימי). totalVisits הוא הסה"כ המצטבר, dailyVisits הוא מיפוי תאריך (YYYY-MM-DD) -> מספר
+    // כניסות באותו יום, כדי שאפשר יהיה להציג גם מגמה של הימים האחרונים ולא רק מספר אחד יבש.
+    siteStats: { totalVisits: 0, dailyVisits: {} },
     chatMessages: [], // התכתבויות ישירות בין לקוחות לעצמאיות - { id, freelancerId, customerId, fromRole, text, date, read }
     // עמוד "הזירה" - חלק 1: "אתן שואלות, המומחיות עונות". לקוחה שואלת שאלה בתחום/תת-תחום
     // נבחר, השאלה עוברת אישור אדמין, ולאחר אישור נשלח מייל לכל העצמאיות המאושרות באותו
@@ -272,6 +276,9 @@ function migrate(data) {
   if (!Array.isArray(data.arenaQuestions)) { data.arenaQuestions = []; changed = true; }
   if (!Array.isArray(data.consultations)) { data.consultations = []; changed = true; }
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
+  if (!data.siteStats || typeof data.siteStats !== "object") { data.siteStats = { totalVisits: 0, dailyVisits: {} }; changed = true; }
+  if (typeof data.siteStats.totalVisits !== "number") { data.siteStats.totalVisits = 0; changed = true; }
+  if (!data.siteStats.dailyVisits || typeof data.siteStats.dailyVisits !== "object") { data.siteStats.dailyVisits = {}; changed = true; }
   if (!("magazine" in data.nextId)) { data.nextId.magazine = 1; changed = true; }
   if (!("coupon" in data.nextId)) { data.nextId.coupon = 110; changed = true; }
   if (!("message" in data.nextId)) { data.nextId.message = 1; changed = true; }
