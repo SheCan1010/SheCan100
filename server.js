@@ -225,6 +225,16 @@ function sessionCookie(sid) {
 }
 const clearCookie = "sid=; HttpOnly; Path=/; Max-Age=0";
 
+// Long-lived identity cookie, separate from the session cookie ("sid") above and NOT cleared
+// on logout - per explicit request to count a registered customer/freelancer's visits even
+// when she's just browsing without being logged in. Set/refreshed every time she establishes
+// a session (see the login route and the two persona-switch routes below); read back on every
+// page load in trackSiteVisit() to attribute the visit to her account. Admin logins deliberately
+// don't get one - admin visits already aren't counted at all (see trackSiteVisit).
+function identityCookie(role, id) {
+  return `scUid=${encodeURIComponent(role + ":" + id)}; HttpOnly; Path=/; Max-Age=31536000`;
+}
+
 function getSession(req) {
   const cookies = auth.parseCookies(req);
   return { session: auth.getSession(cookies.sid), sid: cookies.sid };
@@ -2479,6 +2489,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     viewCount: 0, couponRevealCount: 0, pushSubscriptions: [],
     referredByFreelancerId, welcomePopupSeen: false,
     status: "pending", createdAt: new Date().toISOString(),
+    siteVisitCount: 0,
   });
   db.save();
 
@@ -2581,7 +2592,8 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
     return redirect(res, `/login?err=${encodeURIComponent("עוד רגע סבלנות - הפרופיל שלך ממתין לאישור, ונעדכן אותך ברגע שהוא יאושר.")}${nextQS}`);
   }
   const sid = auth.createSession(role, user.id);
-  redirect(res, next || (role === "admin" ? "/admin" : role === "freelancer" ? "/freelancer-dashboard" : "/account"), sessionCookie(sid));
+  const loginCookies = role === "admin" ? sessionCookie(sid) : [sessionCookie(sid), identityCookie(role, user.id)];
+  redirect(res, next || (role === "admin" ? "/admin" : role === "freelancer" ? "/freelancer-dashboard" : "/account"), loginCookies);
 });
 
 // ----- Forgot / reset password -----
@@ -2723,6 +2735,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
     referredByCustomerId: referrer ? referrer.id : null,
     referralPopupSeen: false,
+    siteVisitCount: 0,
   });
   db.save();
   const sid = auth.createSession("customer", id);
@@ -2732,7 +2745,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
   const link = `${getOrigin(req)}/verify-email?token=${emailVerifyToken}`;
   await sendEmail(email, "אימות כתובת המייל שלך ב-SheCan",
     `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(name || "")},</p><p>תודה שהצטרפת ל-SheCan! רק נשאר לאמת את כתובת המייל שלך - לחצי על הקישור הבא:</p><p><a href="${link}">${link}</a></p><p>אם לא נרשמת אצלנו, אפשר פשוט להתעלם מהמייל.</p></div>`);
-  redirect(res, "/account", sessionCookie(sid));
+  redirect(res, "/account", [sessionCookie(sid), identityCookie("customer", id)]);
 });
 
 route("GET", "/logout", async (req, res, params, query, ctx) => {
@@ -3157,7 +3170,7 @@ route("POST", "/freelancer-dashboard/switch-to-customer", async (req, res, param
   const customer = f && d.customers.find((c) => c.email === f.email);
   if (!customer) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("עדיין אין לך חשבון לקוחה עם המייל הזה.")}`);
   const sid = auth.createSession("customer", customer.id);
-  redirect(res, "/account", sessionCookie(sid));
+  redirect(res, "/account", [sessionCookie(sid), identityCookie("customer", customer.id)]);
 });
 
 // Mirror of the above, for a customer who's also a registered (approved) freelancer - lets
@@ -3170,7 +3183,7 @@ route("POST", "/account/switch-to-freelancer", async (req, res, params, query, c
   const f = customer && d.freelancers.find((x) => x.email === customer.email && x.status === "approved");
   if (!f) return redirect(res, `/account?err=${encodeURIComponent("עדיין אין לך חשבון עצמאית מאושר עם המייל הזה.")}`);
   const sid = auth.createSession("freelancer", f.id);
-  redirect(res, "/freelancer-dashboard", sessionCookie(sid));
+  redirect(res, "/freelancer-dashboard", [sessionCookie(sid), identityCookie("freelancer", f.id)]);
 });
 
 route("POST", "/account/resend-verification", async (req, res, params, query, ctx) => {
@@ -3424,6 +3437,16 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     const key = dt.toISOString().slice(0, 10);
     last7Days.push({ key, count: siteStats.dailyVisits[key] || 0 });
   }
+  // Per-registered-user breakdown ("מי נכנסה וכמה פעמים") - only covers customers/freelancers
+  // who logged in at least once since this was added (see identityCookie()/trackSiteVisit()) -
+  // older visits weren't attributed to anyone, so this starts from zero and grows from here.
+  const userVisits = []
+    .concat(d.customers.map((c) => ({ name: c.name || c.email, roleLabel: "לקוחה", count: c.siteVisitCount || 0 })))
+    .concat(d.freelancers.map((f) => ({ name: f.businessName || f.name, roleLabel: "עצמאית", count: f.siteVisitCount || 0 })))
+    .filter((u) => u.count > 0)
+    .sort((a, b) => b.count - a.count);
+  const USER_VISITS_SHOW_MAX = 100;
+  const userVisitsShown = userVisits.slice(0, USER_VISITS_SHOW_MAX);
 
   const body = `
   <h1 class="section-title">הבמה שלך 👑</h1>
@@ -3470,6 +3493,15 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <h3>גיבוי נתונים</h3>
     <p class="muted">מורידה קובץ אחד שמכיל את כל הנתונים באתר - כל העצמאיות, הלקוחות, הביקורות, הסיפורים וכל התמונות (כולל לוגואים) - בדיוק כפי שהם שמורים כרגע. שווה לשמור עותק כזה מדי פעם (בגוגל דרייב למשל) בנוסף לגיבוי האוטומטי שיש כבר ב-Render.</p>
     <p><a class="btn btn-small" href="/admin/backup/download">⬇️ הורדת גיבוי מלא</a></p>
+  </div>
+
+  <div class="panel">
+    <h3>כניסות לפי משתמשת (${userVisits.length})</h3>
+    <p class="muted">נספרות רק כניסות של לקוחות ועצמאיות שהתחברו לפחות פעם אחת מאז שהתכונה הזו נוספה - זה כולל גם כניסות בלי להיות מחוברת באותו רגע, כל עוד היא נכנסה מאותו דפדפן שבו התחברה בעבר. הרשימה לא כוללת מבקרות שמעולם לא נרשמו/התחברו.</p>
+    ${userVisitsShown.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>סוג</th><th>כניסות</th></tr>
+      ${userVisitsShown.map((u) => `<tr><td>${esc(u.name)}</td><td>${u.roleLabel}</td><td>${u.count}</td></tr>`).join("")}
+    </table></div>
+    ${userVisits.length > USER_VISITS_SHOW_MAX ? `<p class="muted" style="margin-top:8px;">מוצגות ${USER_VISITS_SHOW_MAX} המובילות מתוך ${userVisits.length} - השאר נשמרות בנתונים אבל לא מוצגות כאן.</p>` : ""}` : `<p class="muted">עדיין אין נתוני כניסות למשתמשות רשומות - זה ייאסף מכאן והלאה, בכל פעם שלקוחה או עצמאית מתחברות.</p>`}
   </div>
 
   <div class="panel">
@@ -4433,6 +4465,7 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
       isLeadingBusiness: false, isAdvertised: false, adPaymentStatus: "none",
       viewCount: 0, couponRevealCount: 0, pushSubscriptions: [],
       status: "approved", createdAt: new Date().toISOString(),
+      siteVisitCount: 0,
     });
     imported++;
     if (email) {
@@ -4966,7 +4999,7 @@ route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
 // f.viewCount already works elsewhere in the app - same trade-off, same reasoning.
 const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/icons/", "/push/"];
 const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/logout"]);
-function trackSiteVisit(method, pathname, session) {
+function trackSiteVisit(method, pathname, session, req) {
   if (method !== "GET") return;
   if (session && session.role === "admin") return;
   if (SITE_VISIT_SKIP_EXACT.has(pathname)) return;
@@ -4976,6 +5009,17 @@ function trackSiteVisit(method, pathname, session) {
   d.siteStats.totalVisits = (d.siteStats.totalVisits || 0) + 1;
   const today = new Date().toISOString().slice(0, 10);
   d.siteStats.dailyVisits[today] = (d.siteStats.dailyVisits[today] || 0) + 1;
+  // Per-registered-user visit count, via the long-lived scUid identity cookie (see
+  // identityCookie() above) - works whether or not she's currently logged in, as long as she's
+  // logged in at least once on this browser before. Silently no-ops for anyone without the
+  // cookie (never logged in, or a plain anonymous visitor) - nothing to attribute the visit to.
+  const scUid = (auth.parseCookies(req).scUid || "").split(":");
+  if (scUid.length === 2) {
+    const [uRole, uId] = scUid;
+    const list = uRole === "customer" ? d.customers : uRole === "freelancer" ? d.freelancers : null;
+    const user = list && list.find((x) => x.id === uId);
+    if (user) user.siteVisitCount = (user.siteVisitCount || 0) + 1;
+  }
   db.save();
 }
 
@@ -4985,7 +5029,7 @@ const server = http.createServer(async (req, res) => {
     const { session, sid } = getSession(req);
     const match = routes.find((r) => r.method === req.method && r.regex.test(u.pathname));
     if (!match) return sendHtml(res, 404, page({ title: "לא נמצא", session, body: "<p>הדף הזה לא קיים - בואי נחזור <a href=\"/\">הביתה</a> ❤️</p>" }));
-    trackSiteVisit(req.method, u.pathname, session);
+    trackSiteVisit(req.method, u.pathname, session, req);
     const m = u.pathname.match(match.regex);
     const params = {};
     match.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));

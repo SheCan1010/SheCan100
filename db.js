@@ -304,6 +304,7 @@ function migrate(data) {
   (data.freelancers || []).forEach((f) => {
     if (typeof f.viewCount !== "number") { f.viewCount = 0; changed = true; }
     if (typeof f.couponRevealCount !== "number") { f.couponRevealCount = 0; changed = true; }
+    if (typeof f.siteVisitCount !== "number") { f.siteVisitCount = 0; changed = true; }
     if (!f.adPaymentStatus) { f.adPaymentStatus = f.isAdvertised ? "pending_payment" : "none"; changed = true; }
     if (!("logoDataUri" in f)) { f.logoDataUri = null; changed = true; }
     if (!Array.isArray(f.galleryPhotos)) { f.galleryPhotos = []; changed = true; }
@@ -355,6 +356,7 @@ function migrate(data) {
     // Customers who already existed before the referral popup shipped haven't seen it
     // either - they get it once too, the next time they land on their account page.
     if (!("referralPopupSeen" in c)) { c.referralPopupSeen = false; changed = true; }
+    if (typeof c.siteVisitCount !== "number") { c.siteVisitCount = 0; changed = true; }
   });
   (data.admins || []).forEach((a) => {
     if (!Array.isArray(a.pushSubscriptions)) { a.pushSubscriptions = []; changed = true; }
