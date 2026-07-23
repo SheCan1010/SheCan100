@@ -4959,13 +4959,16 @@ route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
 // ---------- server ----------
 // Site-visit tracking, per explicit request - counts real page loads only (skips the admin
 // area itself, the freelancer dashboard, static/asset routes and anything that isn't a GET),
-// so the number reflects actual site traffic rather than admin/dashboard activity. Kept as a
-// simple hit counter (not unique visitors) to match how per-freelancer f.viewCount already
-// works elsewhere in the app - same trade-off, same reasoning.
+// so the number reflects actual site traffic rather than admin/dashboard activity. Also skips
+// anyone browsing while logged in as admin (Sapir's own visits to the public pages), per her
+// follow-up request, so the number reflects real visitor traffic rather than her own testing/
+// browsing. Kept as a simple hit counter (not unique visitors) to match how per-freelancer
+// f.viewCount already works elsewhere in the app - same trade-off, same reasoning.
 const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/icons/", "/push/"];
 const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/logout"]);
-function trackSiteVisit(method, pathname) {
+function trackSiteVisit(method, pathname, session) {
   if (method !== "GET") return;
+  if (session && session.role === "admin") return;
   if (SITE_VISIT_SKIP_EXACT.has(pathname)) return;
   if (SITE_VISIT_SKIP_PREFIXES.some((p) => pathname.startsWith(p))) return;
   const d = db.load();
@@ -4982,7 +4985,7 @@ const server = http.createServer(async (req, res) => {
     const { session, sid } = getSession(req);
     const match = routes.find((r) => r.method === req.method && r.regex.test(u.pathname));
     if (!match) return sendHtml(res, 404, page({ title: "לא נמצא", session, body: "<p>הדף הזה לא קיים - בואי נחזור <a href=\"/\">הביתה</a> ❤️</p>" }));
-    trackSiteVisit(req.method, u.pathname);
+    trackSiteVisit(req.method, u.pathname, session);
     const m = u.pathname.match(match.regex);
     const params = {};
     match.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
