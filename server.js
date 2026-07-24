@@ -1648,7 +1648,7 @@ route("POST", "/reviews", async (req, res, params, query, ctx) => {
 // ----- Magazine -----
 route("GET", "/magazine", async (req, res, params, query, ctx) => {
   if (!ctx.session) {
-    return redirect(res, `/signup?err=${encodeURIComponent("מגזין SheCan פתוח רק לרשומות באתר - נרשמות זה לוקח פחות מדקה.")}`);
+    return redirect(res, `/signup?err=${encodeURIComponent("מגזין SheCan פתוח רק לרשומות האתר, הרשמי למטה ותהני ממגזין איכותי")}`);
   }
   const d = db.load();
   const issues = (d.magazines || []).slice().reverse();
