@@ -168,7 +168,10 @@ a{color:inherit;text-decoration:none;}
 .review-response{background:var(--cream);border-radius:8px;padding:10px 14px;margin-top:10px;font-size:14px;}
 .sc-zoomable{cursor:zoom-in;}
 .gallery-thumb{width:150px;height:150px;border-radius:10px;flex-shrink:0;background-color:var(--cream);background-repeat:no-repeat;}
-.sc-lightbox-overlay{position:fixed;inset:0;background:rgba(30,28,26,.88);display:none;align-items:center;justify-content:center;z-index:200;padding:24px;cursor:zoom-out;}
+/* Was a dark/near-black overlay - per explicit request, switched to the site's own cream tone
+   so a photo that doesn't exactly fill the frame (different aspect ratio than the screen)
+   shows warm cream letterboxing around it instead of stark black bars. */
+.sc-lightbox-overlay{position:fixed;inset:0;background:rgba(243,237,232,.97);display:none;align-items:center;justify-content:center;z-index:200;padding:24px;cursor:zoom-out;}
 .sc-lightbox-overlay img{max-width:92vw;max-height:92vh;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.4);}
 .profile-detail{text-align:right;max-width:520px;margin:0 auto;}
 .profile-detail p, .profile-detail .muted{text-align:right;}

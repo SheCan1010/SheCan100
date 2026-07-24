@@ -3905,11 +3905,12 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <p class="muted">"נותנת חסות" - הבלטה מיוחדת וקבועה (למשל לעצמאיות שתרמו הטבה להגרלה). "מודעה" - הבלטה בתשלום שאת מוכרת וסוגרת איתן ישירות. "צפיות" - כמה פעמים נכנסו לעמוד שלה. "צפיות בקופון" - כמה פעמים לחצו "לצפייה בקוד קופון".</p>
     <p class="muted"><a href="/admin/export/freelancers.csv">⬇️ הורדת כל הנתונים כקובץ אקסל (CSV)</a></p>
     <input type="text" id="scAdminFreelancerSearch" placeholder="🔍 חיפוש עצמאית לפי שם עסק..." oninput="scFilterAdminFreelancers(this.value)" style="max-width:320px;margin-bottom:10px;" />
-    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>תמונות</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
+    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>תמונות</th><th>פרטי התחברות</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
       ${activeFreelancers.map((f) => `<tr>
         <td>${esc(f.businessName)}</td><td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td><td>${f.tier === "premium" ? "מומלצת" : "בסיסית"}</td>
         <td>${esc(f.dealCode || "-")}</td><td>${f.viewCount || 0}</td><td>${f.couponRevealCount || 0}</td>
         <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a></td>
+        <td><form method="post" action="/admin/freelancer/${f.id}/resend-credentials" onsubmit="return confirm('זה ייצור סיסמה זמנית חדשה ל' + ${JSON.stringify(f.businessName || f.name)} + ' וישלח אותה במייל (הסיסמה הישנה שלה תפסיק לעבוד). להמשיך?');"><button class="btn btn-small btn-outline" type="submit">📧 שליחת פרטי התחברות</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-leading"><button class="btn btn-small ${f.isLeadingBusiness ? "" : "btn-outline"}" type="submit">${f.isLeadingBusiness ? "👑 נותנת חסות" : "הפכי לנותנת חסות"}</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-ad"><button class="btn btn-small ${f.isAdvertised ? "" : "btn-outline"}" type="submit">${f.isAdvertised ? "📣 פעילה" : "הפעילי מודעה"}</button></form></td>
         <td>${f.isAdvertised ? `<form method="post" action="/admin/freelancer/${f.id}/mark-ad-paid"><button class="btn btn-small ${f.adPaymentStatus === "paid" ? "" : "btn-outline"}" type="submit">${esc(adPaymentStatusLabel(f.adPaymentStatus))}</button></form>` : `<span class="muted">-</span>`}</td>
@@ -4431,8 +4432,14 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
   const lines = raw.split(/\r?\n/).filter((l) => l.trim());
   let imported = 0;
   let unmatched = 0;
-  let emailed = 0;
   const noEmailAccounts = []; // { label, tempPassword } - so Sapir can pass credentials along manually (e.g. WhatsApp) when no email was given
+  // Per explicit request, after several freelancers reported never getting their credentials
+  // email - the old code counted an email as "sent" the instant it queued the send, without
+  // ever checking whether Resend actually accepted it (and didn't wait for the result at all).
+  // Now every send is awaited and its real result recorded here, so the summary message below
+  // reflects what actually happened, and anyone whose send failed still gets a manual fallback
+  // (same as someone with no email at all) instead of silently falling through the cracks.
+  const pendingEmails = []; // { to, subject, html, label, tempPassword }
 
   lines.forEach((line) => {
     const cols = line.split("\t").length > 1 ? line.split("\t") : line.split(",");
@@ -4469,9 +4476,11 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
     });
     imported++;
     if (email) {
-      emailed++;
-      sendEmail(email, "האזור האישי שלך ב-SheCan מוכן",
-        `<div dir="rtl" style="font-family:Arial,sans-serif;">
+      pendingEmails.push({
+        to: email,
+        label: `${businessName}${phone ? ` (${phone})` : ""}`,
+        tempPassword,
+        html: `<div dir="rtl" style="font-family:Arial,sans-serif;">
           <p>היי ${esc(name || businessName)}, ✨</p>
           <p>זוכרת שמילאת את טופס ההרשמה למאגר העצמאיות של SheCan? אז אנחנו כל כך מתרגשות לבשר שהאתר החדש נבנה ונולד במיוחד בשבילכן!</p>
           <p>יצרנו לעסק שלך כרטיסייה אישית מהממת עם כל הפרטים ששלחת אלינו.</p>
@@ -4481,17 +4490,32 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
           <p>האתר עדיין לא פתוח לקהל הרחב. פתחנו אותו קודם כל במיוחד עבורכן – נבחרת המייסדות שלנו – כדי שתוכלו לסדר, ללטש ולהעלות את כל מה שצריך בשקט ובנחת לפני שכולן מגיעות. ההשקה הרשמית תהיה ממש בשבוע הבא! 🚀</p>
           <p>אם יש לך שאלות, באגים קטנים שצריך לסדר או סתם בא לך לדבר איתנו, את מוזמנת לשלוח מייל לכתובת: <a href="mailto:Shecan.office@gmail.com">Shecan.office@gmail.com</a></p>
           <p>מחכות לראות אותך בפנים,<br/>צוות SheCan 🌸</p>
-        </div>`
-      ).catch(() => {});
+        </div>`,
+      });
     } else {
       noEmailAccounts.push({ label: `${businessName}${phone ? ` (${phone})` : ""}`, tempPassword });
     }
   });
   db.save();
-  let msg = `יובאו ${imported} עצמאיות בהצלחה!` + (emailed ? ` נשלח מייל עם פרטי התחברות ל-${emailed} מהן.` : "") + (unmatched ? ` שימי לב - ב-${unmatched} מהן לא הצלחנו להתאים תחום ו/או עיר בדיוק (כנראה כתיב שונה מהרשימה שלנו) - אפשר לתקן אותן ידנית בהמשך.` : "");
-  if (noEmailAccounts.length) {
-    msg += `\n\nל-${noEmailAccounts.length} מהן אין מייל, אז לא נשלחה סיסמה אוטומטית - אלה הסיסמאות הזמניות שלהן, כדאי להעביר לכל אחת ידנית (למשל בוואטסאפ):\n` +
-      noEmailAccounts.map((x) => `${x.label}: ${x.tempPassword}`).join("\n");
+
+  // Send every queued credentials email in parallel and actually wait for + check each result,
+  // instead of the old fire-and-forget approach that reported success the instant a send was
+  // merely queued.
+  const emailResults = await Promise.all(pendingEmails.map(async (item) => {
+    const result = await sendEmail(item.to, "האזור האישי שלך ב-SheCan מוכן", item.html).catch(() => ({ ok: false, reason: "send_failed" }));
+    return { ...item, ok: !!(result && result.ok) };
+  }));
+  const emailedOk = emailResults.filter((r) => r.ok);
+  const emailedFailed = emailResults.filter((r) => !r.ok);
+
+  let msg = `יובאו ${imported} עצמאיות בהצלחה!` + (emailedOk.length ? ` נשלח מייל עם פרטי התחברות ל-${emailedOk.length} מהן.` : "") + (unmatched ? ` שימי לב - ב-${unmatched} מהן לא הצלחנו להתאים תחום ו/או עיר בדיוק (כנראה כתיב שונה מהרשימה שלנו) - אפשר לתקן אותן ידנית בהמשך.` : "");
+  const manualFallback = noEmailAccounts.concat(emailedFailed.map((x) => ({ label: x.label, tempPassword: x.tempPassword })));
+  if (emailedFailed.length) {
+    msg += `\n\n⚠️ שימו לב - ל-${emailedFailed.length} מהן היה מייל אבל השליחה נכשלה (יכול להיות שירות המייל לא מוגדר כמו שצריך, כדאי לבדוק). הפרטים שלהן נמצאים ברשימה הידנית למטה.`;
+  }
+  if (manualFallback.length) {
+    msg += `\n\nל-${manualFallback.length} מהן לא נשלחה סיסמה אוטומטית בהצלחה - אלה הסיסמאות הזמניות שלהן, כדאי להעביר לכל אחת ידנית (למשל בוואטסאפ):\n` +
+      manualFallback.map((x) => `${x.label}: ${x.tempPassword}`).join("\n");
   }
   redirect(res, `/admin?ok=${encodeURIComponent(msg)}`);
 });
@@ -4600,6 +4624,42 @@ route("POST", "/admin/freelancer/:id/toggle-leading", async (req, res, params, q
   if (f) f.isLeadingBusiness = !f.isLeadingBusiness;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(f && f.isLeadingBusiness ? "היא עכשיו נותנת חסות - תופיע בהבלטה בדף הבית." : "הוסרה מרשימת נותנות החסות.")}`);
+});
+
+// Manual re-send of the "your area is ready" credentials email, per explicit request after
+// several bulk-imported freelancers turned out to have never actually received theirs (the
+// bulk-import route used to count a send as successful the moment it was queued, without
+// checking whether it actually went out - see the fix in /admin/bulk-import above). Since the
+// original temp password only ever existed as a hash, this issues a brand-new one (invalidating
+// whatever she had) rather than trying to recover the old one, and falls back to showing the
+// password right here in the admin panel if the email send itself fails again.
+route("POST", "/admin/freelancer/:id/resend-credentials", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  const tempPassword = generateTempPassword();
+  f.passwordHash = auth.hashPassword(tempPassword);
+  db.save();
+  const isRealEmail = f.email && !/@imported\.shecan\.co\.il$/.test(f.email);
+  if (!isRealEmail) {
+    return redirect(res, `/admin?ok=${encodeURIComponent(`ל${f.businessName || f.name} אין כתובת מייל אמיתית רשומה - הסיסמה הזמנית החדשה שלה היא: ${tempPassword} (כדאי להעביר ידנית, למשל בוואטסאפ).`)}`);
+  }
+  const result = await sendEmail(f.email, "האזור האישי שלך ב-SheCan מוכן",
+    `<div dir="rtl" style="font-family:Arial,sans-serif;">
+      <p>היי ${esc(f.name || f.businessName)}, ✨</p>
+      <p>הנה שוב פרטי ההתחברות לאזור האישי שלך ב-SheCan:</p>
+      <p>🔑 אימייל: <strong>${esc(f.email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong><br/>קישור להתחברות: <a href="${getOrigin(req)}/login">${getOrigin(req)}/login</a></p>
+      <p>חשוב - בכניסה הראשונה כדאי לא לשכוח להחליף את הסיסמה הזמנית לסיסמה משלך.</p>
+      <p>אם יש לך שאלות, את מוזמנת לשלוח מייל לכתובת: <a href="mailto:Shecan.office@gmail.com">Shecan.office@gmail.com</a></p>
+      <p>מחכות לראות אותך בפנים,<br/>צוות SheCan 🌸</p>
+    </div>`
+  ).catch(() => ({ ok: false }));
+  if (result && result.ok) {
+    redirect(res, `/admin?ok=${encodeURIComponent(`נשלח מייל עם פרטי התחברות חדשים ל${f.businessName || f.name}.`)}`);
+  } else {
+    redirect(res, `/admin?err=${encodeURIComponent(`השליחה למייל של ${f.businessName || f.name} נכשלה שוב. הסיסמה הזמנית החדשה שלה היא: ${tempPassword} - כדאי להעביר לה ידנית (למשל בוואטסאפ) ולבדוק את הגדרות שירות המייל.`)}`);
+  }
 });
 
 route("POST", "/admin/freelancer/:id/toggle-active", async (req, res, params, query, ctx) => {
