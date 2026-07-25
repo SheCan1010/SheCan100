@@ -1056,6 +1056,48 @@ function scSetupPasswordToggles() {
 }
 document.addEventListener("DOMContentLoaded", scSetupPasswordToggles);
 
+// ---- Draft autosave - nothing typed into a text field/textarea anywhere on the site is lost
+// if she navigates away, closes the tab, or the page reloads by accident. Sparked by losing a
+// half-written "story", but applied generally to every typed field per explicit request. Every
+// keystroke is mirrored into localStorage and restored automatically next time the exact same
+// form loads (only into fields that are still empty, so it never overwrites a value the server
+// itself filled in - e.g. an edit form's existing data, or a retry-after-error prefill).
+// Deliberately excluded: password fields (never cache a password client-side) and file inputs
+// (browsers don't allow restoring those anyway) - both keep needing to be retyped/reattached as
+// before. A field's saved draft is cleared the moment its form is actually submitted, so a
+// successful submission doesn't leave stale text sitting around to reappear later.
+function scSetupFormAutosave() {
+  var STORAGE_PREFIX = "scDraft::";
+  function draftKey(field) {
+    var form = field.closest("form");
+    var formKey = form ? (form.getAttribute("action") || form.id || "") : "";
+    return STORAGE_PREFIX + location.pathname + "::" + formKey + "::" + (field.name || field.id);
+  }
+  var fields = document.querySelectorAll(
+    'textarea, input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input:not([type])'
+  );
+  fields.forEach(function (field) {
+    if (field.hasAttribute("readonly") || (!field.name && !field.id)) return;
+    var key = draftKey(field);
+    if (!field.value) {
+      var saved = localStorage.getItem(key);
+      if (saved !== null) field.value = saved;
+    }
+    field.addEventListener("input", function () {
+      if (field.value) localStorage.setItem(key, field.value);
+      else localStorage.removeItem(key);
+    });
+  });
+  document.querySelectorAll("form").forEach(function (form) {
+    form.addEventListener("submit", function () {
+      Array.prototype.forEach.call(form.querySelectorAll("textarea, input"), function (field) {
+        if (field.name || field.id) localStorage.removeItem(draftKey(field));
+      });
+    });
+  });
+}
+document.addEventListener("DOMContentLoaded", scSetupFormAutosave);
+
 // ---- Installable app (PWA): register the service worker on every page so the site becomes
 // installable and can receive push messages even when no tab is open. ----
 if ("serviceWorker" in navigator) {

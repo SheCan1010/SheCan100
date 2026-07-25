@@ -2352,7 +2352,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <div class="panel" style="background:var(--cream);margin-top:16px;">
       <h4 style="margin-top:0;">מתעסקת בעוד תחום? הוסיפי גם אותו למאגר</h4>
       <p class="muted" style="font-size:14px;">כל תחום נוסף מקבל כרטיסייה משלו - שם עסק, לוגו, תמונות, הטבה ותיאור נפרדים. פרטי הקשר והעיר משותפים לפרופיל הראשי שלך.</p>
-      ${isRetry ? `<p class="muted" style="font-size:13px;color:var(--danger);">שימי לב - אם מילאת כאן תחום נוסף, יש למלא אותו מחדש.</p>` : ""}
+      ${isRetry ? `<p class="muted" style="font-size:13px;color:var(--danger);">שימי לב - אם מילאת כאן תחום נוסף, התמונות ובחירות מהרשימות (תחום, שנות ותק, רמה) צריך לבחור מחדש - מה שהקלדת בשדות הטקסט נשמר.</p>` : ""}
       ${[0, 1, 2].map((i) => `<div id="scExtraListing${i}" style="display:none;border-top:1px solid #e5ddd0;margin-top:14px;padding-top:14px;">${extraListingFormBlock(d, "extra", i)}</div>`).join("")}
       <button type="button" class="btn btn-outline btn-small" id="scAddExtraListingBtn" style="margin-top:14px;" onclick="scAddExtraListing()">➕ הוספת תחום</button>
     </div>
@@ -2361,7 +2361,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <button type="button" onclick="var p=document.getElementById('scJoinStoryPanel');if(p)p.style.display='none';" aria-label="לא רלוונטי בשבילי" title="לא רלוונטי בשבילי" style="position:absolute;top:12px;left:14px;background:none;border:none;font-size:20px;color:var(--gray);cursor:pointer;">✕</button>
       <h4 style="margin-top:0;">רוצה כבר עכשיו לכתוב את הסיפור שלך? (לא חובה)</h4>
       <p class="muted" style="font-size:14px;">הסיפור שלך הוא ריאיון אישי קצר שמוצג בעמוד "SheCan Stories" - כרטיס ביקור רגשי שמספר מי את ואיך הגעת לאן שהגעת. כל שבוע מוצגת עצמאית אחת, לפי סדר ההרשמה שלכן לקהילה - כך שגם הסיפור שלך יקבל את הבמה שלו בזמן. אפשר גם לדלג ולמלא את זה מאוחר יותר באזור האישי שלך, או פשוט לסגור את התיבה הזו עם ה-X אם זה לא בשבילך כרגע.</p>
-      ${isRetry ? `<p class="muted" style="font-size:13px;color:var(--danger);">שימי לב - אם מילאת כאן משהו, יש למלא אותו מחדש.</p>` : ""}
+      ${isRetry ? `<p class="muted" style="font-size:13px;color:var(--danger);">שימי לב - אם צירפת כאן תמונה, יש לצרף אותה מחדש - מה שכתבת בתשובות עצמן נשמר.</p>` : ""}
       <label>🌸 תמונה שלך לסיפור (לא חובה)
       <input type="file" name="storyPhoto" accept="image/*" /></label>
       ${storyQuestionsJoin.map((q, i) => `<label>🌸 ${esc(q)}<textarea name="storyAnswer${i}" maxlength="800"></textarea></label>`).join("")}
