@@ -7,6 +7,7 @@ const db = require("./db");
 const auth = require("./auth");
 const webpush = require("./webpush");
 const { page, esc, categoryIcon, cityAutocompleteHtml } = require("./layout");
+const { buildFlyerPdfBuffer, FLYER_FILE_TITLE } = require("./flyer");
 
 const PORT = process.env.PORT || 4000;
 
@@ -25,7 +26,9 @@ const whatsappIconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="#
 //                        (needs that domain verified in Resend first)
 // If RESEND_API_KEY isn't set yet, sendEmail logs a warning and returns { ok: false }
 // instead of crashing, so the site keeps working while email isn't configured.
-async function sendEmail(to, subject, html) {
+// `attachments` (optional) is Resend's own format: [{ filename, content: <base64 string> }] -
+// used for the QR-flyer PDF on freelancer approval (see /admin/freelancer/:id/approve).
+async function sendEmail(to, subject, html, attachments) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL || "SheCan <onboarding@resend.dev>";
   if (!apiKey) {
@@ -33,10 +36,12 @@ async function sendEmail(to, subject, html) {
     return { ok: false, reason: "not_configured" };
   }
   try {
+    const payload = { from, to, subject, html };
+    if (attachments && attachments.length) payload.attachments = attachments;
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to, subject, html }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       console.warn("[email] Resend API error", res.status, await res.text().catch(() => ""));
@@ -969,7 +974,7 @@ function pollCardHtml(poll, voterKey, redirectTarget, shareUrl, canManage) {
   <div id="poll-${poll.id}" class="arena-card">
     ${poll.closed ? `<span class="badge badge-outline" style="margin-bottom:6px;display:inline-block;">🔒 סגור להצבעות</span>` : ""}
     <p style="margin:0 0 4px;font-weight:800;font-size:17px;">${esc(poll.question)}</p>
-    <p class="muted" style="margin:0 0 8px;font-size:13px;">מאת ${esc(poll.freelancerName)} · ${totalVotes} הצבעות בסה"כ</p>
+    <p class="muted" style="margin:0 0 8px;font-size:13px;">מאת ${esc(poll.freelancerName)} · בסה"כ ${totalVotes} הצבעות</p>
     ${optionsHtml}
     <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span class="muted" style="font-size:13px;" id="pollShareUrl-${poll.id}">${esc(shareUrl)}</span>
@@ -1365,7 +1370,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     </div>
   </div>` : ""}
 
-  <div class="panel profile-detail">
+  <div class="panel profile-detail" id="scReview">
     <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
     ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
     ${isCustomer ? reviewFormHtml(f.businessName || f.name, `/freelancer/${f.id}/review`, "", myExistingReview) : `<p class="muted"><a href="${loginUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לכתוב המלצה.</p>`}
@@ -2549,10 +2554,11 @@ function safeNextUrl(next) {
   return next;
 }
 
-route("GET", "/login", async (req, res, params, query, ctx) => {
-  const next = safeNextUrl(query.get("next"));
-  const roleParam = query.get("role");
-  const body = `
+// A validation failure in POST /login (below) re-renders this same form instead of a redirect,
+// so whatever she already typed (role + email - never the password, for security) stays filled
+// in and she can just fix the one thing that was wrong - same pattern as joinFormBody/join.
+function loginFormBody({ next, roleParam, emailPrefill }) {
+  return `
   <h1 class="section-title">שמחות לראות אותך שוב</h1>
   <form class="panel" method="post" action="/login" style="max-width:420px;margin:0 auto;">
     ${next ? `<input type="hidden" name="next" value="${esc(next)}" />` : ""}
@@ -2562,13 +2568,19 @@ route("GET", "/login", async (req, res, params, query, ctx) => {
       <option value="freelancer" ${roleParam === "freelancer" ? "selected" : ""}>עצמאית</option>
       <option value="admin" ${roleParam === "admin" ? "selected" : ""}>מנהלת</option>
     </select></label>
-    <label>מייל<input type="email" name="email" required /></label>
+    <label>מייל<input type="email" name="email" value="${esc(emailPrefill || "")}" required /></label>
     <label>סיסמה<input type="password" name="password" required /></label>
     <button class="btn" style="margin-top:16px;width:100%;" type="submit">כניסה</button>
   </form>
   <p class="muted" style="text-align:center;margin-top:14px;"><a href="/forgot-password">שכחת סיסמה?</a></p>
   <p class="muted" style="text-align:center;margin-top:6px;">עוד לא איתנו? <a href="/signup">עדיין לא נרשמתי</a> או <a href="/join">יש לי עסק</a></p>
   `;
+}
+
+route("GET", "/login", async (req, res, params, query, ctx) => {
+  const next = safeNextUrl(query.get("next"));
+  const roleParam = query.get("role");
+  const body = loginFormBody({ next, roleParam, emailPrefill: query.get("email") || "" });
   sendHtml(res, 200, page({ title: "כניסה", session: ctx.session, body, query }));
 });
 
@@ -2578,18 +2590,22 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
   const email = body.get("email");
   const password = body.get("password");
   const next = safeNextUrl(body.get("next"));
-  const nextQS = next ? `&next=${encodeURIComponent(next)}` : "";
   const d = db.load();
   let user, list;
   if (role === "customer") list = d.customers;
   else if (role === "freelancer") list = d.freelancers;
   else list = d.admins;
   user = list.find((u) => u.email === email);
+  const rerenderLoginError = (errMsg) => {
+    const formBody = loginFormBody({ next, roleParam: role, emailPrefill: email });
+    const errQuery = new URLSearchParams({ err: errMsg });
+    return sendHtml(res, 200, page({ title: "כניסה", session: ctx.session, body: formBody, query: errQuery }));
+  };
   if (!user || !auth.verifyPassword(password, user.passwordHash)) {
-    return redirect(res, `/login?err=${encodeURIComponent("משהו לא הסתדר - בדקי את האימייל והסיסמה ונסי שוב.")}${nextQS}`);
+    return rerenderLoginError("משהו לא הסתדר - בדקי את האימייל והסיסמה ונסי שוב.");
   }
   if (role === "freelancer" && user.status !== "approved") {
-    return redirect(res, `/login?err=${encodeURIComponent("עוד רגע סבלנות - הפרופיל שלך ממתין לאישור, ונעדכן אותך ברגע שהוא יאושר.")}${nextQS}`);
+    return rerenderLoginError("עוד רגע סבלנות - הפרופיל שלך ממתין לאישור, ונעדכן אותך ברגע שהוא יאושר.");
   }
   const sid = auth.createSession(role, user.id);
   const loginCookies = role === "admin" ? sessionCookie(sid) : [sessionCookie(sid), identityCookie(role, user.id)];
@@ -2677,14 +2693,12 @@ route("GET", "/verify-email", async (req, res, params, query, ctx) => {
   redirect(res, `${target}?ok=${encodeURIComponent("כתובת המייל שלך אומתה בהצלחה! 🎉")}`);
 });
 
-route("GET", "/signup", async (req, res, params, query, ctx) => {
-  const d = db.load();
-  // A visit via a friend's referral link (/signup?ref=<customerId>) - kept through the form
-  // as a hidden field so POST /signup can credit the right person, and only trusted if it
-  // actually resolves to a real customer (garbage/old ids are silently ignored).
-  const refId = query.get("ref") || "";
-  const referrer = refId ? d.customers.find((c) => c.id === refId) : null;
-  const body = `
+// A validation failure in POST /signup (below) re-renders this same form instead of a
+// redirect, so whatever she already typed (name/email/notifications - never the password)
+// stays filled in - same pattern as loginFormBody/joinFormBody above.
+function signupFormBody(d, { refId, referrer, prefill }) {
+  const p = prefill || {};
+  return `
   <h1 class="section-title">ההרשמה לוקחת דקה!</h1>
   <div style="max-width:520px;margin:0 auto;text-align:center;font-size:15px;color:var(--gray);">
     ${referrer ? `<p class="muted" style="color:var(--rose-dark);font-weight:700;">${esc(referrer.name.split(" ")[0])} הזמינה אותך להצטרף ל-SheCan ❤️</p>` : ""}
@@ -2702,14 +2716,25 @@ route("GET", "/signup", async (req, res, params, query, ctx) => {
 
   <form class="panel" method="post" action="/signup" style="max-width:420px;margin:24px auto 0;">
     <input type="hidden" name="ref" value="${esc(refId)}" />
-    <label>שם מלא<input type="text" name="name" required /></label>
-    <label>מייל<input type="email" name="email" required /></label>
+    <label>שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
+    <label>מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
     <label>בחרי סיסמה<input type="password" name="password" required /></label>
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="wantsPushNotifications" value="1" style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
+    ${prefill ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
     <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לשאלה או להתייעצות שלך בזירה, או כשעצמאית עונה להודעה שכתבת לה.</p>
     <button class="btn" style="margin-top:16px;width:100%;" type="submit">צרפי אותי</button>
   </form>
   `;
+}
+
+route("GET", "/signup", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  // A visit via a friend's referral link (/signup?ref=<customerId>) - kept through the form
+  // as a hidden field so POST /signup can credit the right person, and only trusted if it
+  // actually resolves to a real customer (garbage/old ids are silently ignored).
+  const refId = query.get("ref") || "";
+  const referrer = refId ? d.customers.find((c) => c.id === refId) : null;
+  const body = signupFormBody(d, { refId, referrer, prefill: null });
   sendHtml(res, 200, page({ title: "הרשמה", session: ctx.session, body, query }));
 });
 
@@ -2717,7 +2742,15 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
   const d = db.load();
   if (d.customers.find((c) => c.email === body.get("email"))) {
-    return redirect(res, `/signup?err=${encodeURIComponent("כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום.")}`);
+    const refId = body.get("ref") || "";
+    const referrer = refId ? d.customers.find((c) => c.id === refId) : null;
+    const prefill = {
+      name: body.get("name"), email: body.get("email"),
+      wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+    };
+    const formBody = signupFormBody(d, { refId, referrer, prefill });
+    const errQuery = new URLSearchParams({ err: "כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום." });
+    return sendHtml(res, 200, page({ title: "הרשמה", session: ctx.session, body: formBody, query: errQuery }));
   }
   const id = db.nextId("customer");
   const emailVerifyToken = crypto.randomBytes(24).toString("hex");
@@ -4602,16 +4635,40 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
     f.status = "approved";
     if (f.paymentStatus === "pending_payment") f.paymentStatus = "active";
     const profileUrl = `${getOrigin(req)}/freelancer/${f.id}`;
-    notify(f, {
-      pushTitle: "את באוויר! הפרופיל שלך אושר", pushBody: "הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉", url: `/freelancer/${f.id}`,
-      emailSubject: "את באוויר! הפרופיל שלך אושר ב-SheCan",
-      emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;">
-        <p>היי ${esc(f.name || "")},</p>
-        <p>יש! הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉</p>
-        <p>אפשר לראות אותו כאן: <a href="${profileUrl}">${esc(profileUrl)}</a></p>
-        <p>מוזמנת לשתף את קוד הקופון שלך (<strong>${esc(f.dealCode || "")}</strong>) עם הלקוחות שלך, ולהזמין אותן לכתוב לך המלצה ישירות בכרטיסייה - זה מה שיעזור לך להתחיל להיראות ולהתבלט בקהילה.</p>
-      </div>`,
-    }).catch(() => {});
+    // A quick push heads-up if she has notifications enabled (unchanged from before) - this
+    // can't carry a file attachment, so unlike the general notify() helper (push OR email), the
+    // approval email below is always sent too, regardless of push, since it's the only way to
+    // deliver the QR-flyer attachment (see buildFlyerPdfBuffer / flyer.js).
+    sendPushToUser(f, { title: "את באוויר! הפרופיל שלך אושר", body: "הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉", url: `/freelancer/${f.id}` }).catch(() => {});
+    if (f.email) {
+      // The QR links straight to her review section (#scReview) rather than just the bare
+      // profile, so a customer who scans it lands ready to write the review.
+      const reviewUrl = `${profileUrl}#scReview`;
+      let attachments = [];
+      try {
+        const qrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(reviewUrl)}`);
+        if (!qrRes.ok) throw new Error(`qrserver responded ${qrRes.status}`);
+        const qrBuf = Buffer.from(await qrRes.arrayBuffer());
+        const qrDataUrl = `data:image/png;base64,${qrBuf.toString("base64")}`;
+        const pdfBuffer = await buildFlyerPdfBuffer({ qrDataUrl, businessName: f.businessName || f.name });
+        attachments = [{ filename: `${FLYER_FILE_TITLE}.pdf`, content: pdfBuffer.toString("base64") }];
+      } catch (e) {
+        // Safe to skip silently (logged only) - most likely cause is Chromium not being
+        // available yet on this server (see the Render build-command note in flyer.js) - the
+        // approval itself, and the rest of this email, must never be blocked by this.
+        console.warn("[flyer] could not build QR flyer PDF - sending approval email without it:", e.message);
+      }
+      await sendEmail(f.email, "את באוויר! הפרופיל שלך אושר ב-SheCan",
+        `<div dir="rtl" style="font-family:Arial,sans-serif;">
+          <p>היי ${esc(f.name || "")},</p>
+          <p>יש! הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉</p>
+          <p>אפשר לראות אותו כאן: <a href="${profileUrl}">${esc(profileUrl)}</a></p>
+          <p>מוזמנת לשתף את קוד הקופון שלך (<strong>${esc(f.dealCode || "")}</strong>) עם הלקוחות שלך, ולהזמין אותן לכתוב לך המלצה ישירות בכרטיסייה - זה מה שיעזור לך להתחיל להיראות ולהתבלט בקהילה.</p>
+          ${attachments.length ? `<p>צירפנו לך גם קובץ מוכן להדפסה עם קוד QR אישי - אפשר להדביק אותו בעסק כדי שלקוחות יסרקו ויכתבו לך ביקורת ישירות 📎</p>` : ""}
+        </div>`,
+        attachments
+      ).catch(() => {});
+    }
   }
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("אושרה! היא כבר באוויר.")}`);

@@ -125,6 +125,7 @@ function footer() {
 
 const CSS = `
 :root{
+  color-scheme: light;
   --cream:#F3EDE8; --rose:#c1b2a1; --rose-dark:#9a8e81;
   --dark:#5D5E56; --gray:#5D5E56; --white:#FBF8F4; --danger:#B5453B; --ok:#5C7A5A;
   --brand-font:"Heebo","Egul","Rubik","Assistant","Futura","Century Gothic","Poppins",sans-serif;
@@ -254,8 +255,15 @@ body.sc-a11y-contrast .nav-btn, body.sc-a11y-contrast .btn{background:#000 !impo
 body.sc-a11y-underline a{text-decoration:underline !important;}
 body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:none !important;scroll-behavior:auto !important;}
 /* "Add to home screen" install banner - fixed bar at the bottom of the screen, above the
-   accessibility widget so the two never overlap. */
-#scInstallBanner{position:fixed;bottom:0;left:0;right:0;background:var(--white);border-top:1px solid #e5ddd0;box-shadow:0 -4px 16px rgba(0,0,0,.12);padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;z-index:600;font-size:14px;text-align:center;}
+   accessibility widget so the two never overlap. Made large/bold on purpose (thick rose top
+   border, big emoji, bold text, roomy padding) so it's impossible to miss - per explicit
+   request, it only ever shows once per browser (see scShowInstallBannerOnce in the script
+   below), so being this prominent doesn't turn into a recurring annoyance. */
+#scInstallBanner{position:fixed;bottom:0;left:0;right:0;background:var(--white);border-top:5px solid var(--rose-dark);box-shadow:0 -6px 22px rgba(0,0,0,.18);padding:18px 22px;display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;z-index:600;font-size:17px;font-weight:700;text-align:center;line-height:1.5;animation:scInstallBannerIn .35s ease-out;}
+#scInstallBanner .sc-install-emoji{font-size:26px;line-height:1;}
+#scInstallBanner button[data-sc-install]{font-size:16px;padding:10px 24px;}
+#scInstallBanner button[data-sc-dismiss]{font-size:22px;}
+@keyframes scInstallBannerIn{from{transform:translateY(100%);}to{transform:translateY(0);}}
 /* Cookie consent banner - fixed bar, shown once until a choice is made (stored in
    localStorage). Sits above the install banner (higher z-index) so the two can't overlap. */
 #scCookieBanner{position:fixed;bottom:0;left:0;right:0;background:var(--dark);color:var(--white);box-shadow:0 -4px 16px rgba(0,0,0,.2);padding:14px 20px;display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;z-index:700;font-size:14px;text-align:center;}
@@ -373,12 +381,25 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .bullet-list li{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;}
 .bullet-list .bullet-icon{flex-shrink:0;}
 .search-row{display:flex;gap:12px;flex-wrap:wrap;}
-.search-row select, .search-row input{flex:1;min-width:160px;}
+/* :not([type=checkbox]) - without this, the home-visit filter checkbox (a plain <input
+   type=checkbox> sitting inside a .search-row alongside the real search/select inputs) was
+   also picking up flex:1;min-width:160px meant for the text/select fields, stretching the
+   checkbox itself far wider than its native size and pushing a big visible gap between it and
+   its own label text - per explicit bug report. */
+.search-row select, .search-row input:not([type=checkbox]){flex:1;min-width:160px;}
 .search-row .city-autocomplete{flex:1;min-width:160px;}
 select, input[type=text], input[type=email], input[type=password], input[type=tel], textarea{
   padding:11px 14px;border:1px solid #ddd3c4;border-radius:8px;font-size:16px;background:var(--white);color:var(--dark);width:100%;font-family:inherit;font-weight:500;
 }
 textarea{min-height:90px;}
+/* "Show password" toggle - injected automatically around every password field site-wide by
+   scSetupPasswordToggles() below, so this one CSS block covers all of them with no per-form
+   changes needed. .sc-pw-wrap stays block-level (matches the label's own block layout) so the
+   input keeps its normal width:100%; the toggle button is absolutely positioned over its
+   end-side padding (left, in this RTL site) so it never overlaps the typed text. */
+.sc-pw-wrap{display:block;position:relative;}
+.sc-pw-toggle{position:absolute;left:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;line-height:1;padding:6px;cursor:pointer;color:var(--gray);}
+.sc-pw-toggle:hover{opacity:.75;}
 label{display:block;font-size:16px;color:var(--dark);margin:16px 0 6px;font-weight:800;}
 form .field{margin-bottom:6px;}
 .btn{display:inline-block;background:var(--rose);color:var(--white);padding:12px 26px;border-radius:24px;border:1.5px solid var(--rose-dark);font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(173,125,104,.25);}
@@ -734,6 +755,12 @@ ${searchEngineVisible ? "" : '<meta name="robots" content="noindex, nofollow" />
      ignores the manifest for some of this and needs its own tags to behave like an app when
      added to the home screen). -->
 <link rel="manifest" href="/manifest.json" />
+<!-- Tells the browser this site is light-only, so Android Chrome/Samsung Internet's automatic
+     "force dark" mode doesn't try to auto-invert colors on unstyled/gap areas (a very common
+     cause of light backgrounds - especially in the corner gaps around a border-radius photo -
+     rendering as black on some phones, even though no black is ever set anywhere in our own
+     CSS). See matching color-scheme rule in :root below. -->
+<meta name="color-scheme" content="light" />
 <meta name="theme-color" content="#9a8e81" />
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1000,6 +1027,35 @@ function scOpenCropModal(img, input, boxSize, outSize) {
 }
 document.addEventListener("DOMContentLoaded", scSetupLogoCropper);
 
+// ---- "Show password" toggle, applied automatically to every password field on the site ----
+// A single generic function instead of editing each of the 7 password forms individually
+// (join/login/reset-password/signup/admin change-email/freelancer-dashboard change-password) -
+// it runs once on load and wraps whatever password inputs happen to be on the current page.
+function scSetupPasswordToggles() {
+  document.querySelectorAll('input[type="password"]').forEach(function (input) {
+    if (input.dataset.scPwWrapped) return;
+    input.dataset.scPwWrapped = "1";
+    var wrap = document.createElement("span");
+    wrap.className = "sc-pw-wrap";
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    input.style.paddingInlineEnd = "38px";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sc-pw-toggle";
+    btn.setAttribute("aria-label", "הצג סיסמה");
+    btn.textContent = "👁️";
+    btn.addEventListener("click", function () {
+      var nowShowing = input.type === "password";
+      input.type = nowShowing ? "text" : "password";
+      btn.textContent = nowShowing ? "🙈" : "👁️";
+      btn.setAttribute("aria-label", nowShowing ? "הסתר סיסמה" : "הצג סיסמה");
+    });
+    wrap.appendChild(btn);
+  });
+}
+document.addEventListener("DOMContentLoaded", scSetupPasswordToggles);
+
 // ---- Installable app (PWA): register the service worker on every page so the site becomes
 // installable and can receive push messages even when no tab is open. ----
 if ("serviceWorker" in navigator) {
@@ -1064,6 +1120,9 @@ function scRestackBottomBanners(){
 // iOS Safari never fires that event (and has no programmatic install API), so there we show a
 // one-time hint instead, explaining the manual "Share -> Add to Home Screen" steps.
 (function(){
+  // Shows again every 14 days after being dismissed (back to this per explicit request - an
+  // earlier version of this showed only once ever, but that turned out to be too easy to miss
+  // permanently, so it now reappears periodically until she actually installs the app).
   var DISMISS_KEY = "scInstallBannerDismissedAt";
   var DISMISS_DAYS = 14;
   function recentlyDismissed(){
@@ -1097,9 +1156,9 @@ function scRestackBottomBanners(){
     e.preventDefault();
     deferredPrompt = e;
     showBanner(
-      '<span>💗 אפשר להתקין את SheCan כאפליקציה על המסך הראשי שלך</span>' +
-      '<button type="button" data-sc-install class="btn-arena" style="padding:6px 16px;">התקנה</button>' +
-      '<button type="button" data-sc-dismiss aria-label="סגירה" style="background:none;border:none;font-size:18px;cursor:pointer;">✕</button>',
+      '<span><span class="sc-install-emoji">💗📲</span> אפשר להתקין את SheCan כאפליקציה על המסך הראשי שלך!</span>' +
+      '<button type="button" data-sc-install class="btn-arena" style="padding:10px 24px;">התקנה</button>' +
+      '<button type="button" data-sc-dismiss aria-label="סגירה" style="background:none;border:none;cursor:pointer;">✕</button>',
       function(){
         if (!deferredPrompt) return;
         deferredPrompt.prompt();
@@ -1116,8 +1175,8 @@ function scRestackBottomBanners(){
   var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   if (isIos && !isStandalone()) {
     showBanner(
-      '<span>💗 כדי להתקין את SheCan כאפליקציה: לחצי על כפתור השיתוף ⬆️ ואז "הוספה למסך הבית"</span>' +
-      '<button type="button" data-sc-dismiss aria-label="סגירה" style="background:none;border:none;font-size:18px;cursor:pointer;">✕</button>'
+      '<span><span class="sc-install-emoji">💗📲</span> כדי להתקין את SheCan כאפליקציה: לחצי על כפתור השיתוף ⬆️ ואז "הוספה למסך הבית"</span>' +
+      '<button type="button" data-sc-dismiss aria-label="סגירה" style="background:none;border:none;cursor:pointer;">✕</button>'
     );
   }
 })();
