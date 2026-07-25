@@ -974,7 +974,7 @@ function pollCardHtml(poll, voterKey, redirectTarget, shareUrl, canManage) {
   <div id="poll-${poll.id}" class="arena-card">
     ${poll.closed ? `<span class="badge badge-outline" style="margin-bottom:6px;display:inline-block;">🔒 סגור להצבעות</span>` : ""}
     <p style="margin:0 0 4px;font-weight:800;font-size:17px;">${esc(poll.question)}</p>
-    <p class="muted" style="margin:0 0 8px;font-size:13px;">מאת ${esc(poll.freelancerName)} · בסה"כ ${totalVotes} הצבעות</p>
+    <p class="muted" style="margin:0 0 8px;font-size:13px;">מאת <a href="/freelancer/${poll.freelancerId}" style="color:var(--arena-dark);font-weight:800;text-decoration:underline;">${esc(poll.freelancerName)}</a> · בסה"כ ${totalVotes} הצבעות</p>
     ${optionsHtml}
     <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span class="muted" style="font-size:13px;" id="pollShareUrl-${poll.id}">${esc(shareUrl)}</span>
@@ -1838,7 +1838,7 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
       ${answers.length ? `
         <button type="button" class="arena-toggle" onclick="scArenaToggle('arena-ans-${q.id}', this)" data-show="+ הצגת ${answers.length} תשובות" data-hide="- הסתרת תשובות">+ הצגת ${answers.length} תשובות</button>
         <div class="arena-answers" id="arena-ans-${q.id}">
-          ${answers.map((a) => `<div class="arena-answer"><span class="arena-answer-author">${esc(a.freelancerName)}</span><span class="arena-meta">${new Date(a.createdAt).toLocaleString("he-IL")}</span><p class="arena-answer-text">${esc(a.text)}</p></div>`).join("")}
+          ${answers.map((a) => `<div class="arena-answer"><a class="arena-answer-author" href="/freelancer/${a.freelancerId}" style="text-decoration:underline;">${esc(a.freelancerName)}</a><span class="arena-meta">${new Date(a.createdAt).toLocaleString("he-IL")}</span><p class="arena-answer-text">${esc(a.text)}</p></div>`).join("")}
         </div>
       ` : `<p class="muted" style="font-size:13px;">עוד אין תשובות - המומחיות בתחום קיבלו הודעה ובקרוב תגענה תשובות.</p>`}
       ${isMatch ? `
@@ -1884,9 +1884,14 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
       ${replies.length ? replies.map((r) => {
         const replyName = r.authorRole === "customer" ? reviewDisplayName({ authorName: r.authorName, isAnonymous: false }) : r.authorName;
         const roleLabel = r.authorRole === "customer" ? "לקוחה" : "עצמאית";
+        // Only a freelancer's name links to her profile - a customer replying here doesn't
+        // have a public profile page to link to, so hers stays plain text.
+        const replyNameHtml = r.authorRole === "freelancer"
+          ? `<a class="arena-answer-author" href="/freelancer/${r.authorId}" style="text-decoration:underline;">${esc(replyName)}</a>`
+          : `<span class="arena-answer-author">${esc(replyName)}</span>`;
         return `
         <div class="arena-answer">
-          <span class="arena-answer-author">${esc(replyName)}</span> <span class="muted" style="font-size:12px;">(${roleLabel})</span><span class="arena-meta">${new Date(r.createdAt).toLocaleString("he-IL")}</span><p class="arena-answer-text">${esc(r.text)}</p>
+          ${replyNameHtml} <span class="muted" style="font-size:12px;">(${roleLabel})</span><span class="arena-meta">${new Date(r.createdAt).toLocaleString("he-IL")}</span><p class="arena-answer-text">${esc(r.text)}</p>
           ${ctx.session && ctx.session.role === "admin" ? `<form method="post" action="/admin/consultation/${c.id}/reply/${r.id}/delete" style="margin-top:6px;"><button type="submit" class="btn btn-small btn-outline">מחיקת התגובה הזו</button></form>` : ""}
         </div>`;
       }).join("") : `<p class="muted" style="font-size:13px;">עוד אין תגובות - מוזמנות לענות ולעזור.</p>`}

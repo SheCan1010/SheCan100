@@ -1510,6 +1510,17 @@ function scArenaShowTab(n, btn){
   for (var j = 0; j < btns.length; j++) btns[j].classList.remove("active");
   var activeBtn = btn || btns[n - 1];
   if (activeBtn) activeBtn.classList.add("active");
+  // On a phone, the hero text + 3 tab buttons above fill most (or all) of the screen, so
+  // picking a tab used to leave its content sitting below the fold - she'd have to notice and
+  // scroll down herself to realize anything happened. This brings the freshly-opened section
+  // into view automatically (only when a real tap triggered it, i.e. btn is set - not on the
+  // initial deep-link-into-a-specific-card load a few lines below, which already does its own
+  // scrollIntoView). The tab buttons themselves are untouched and stay reachable by scrolling
+  // back up, so switching between tabs still works exactly as before.
+  if (btn && window.innerWidth <= 640) {
+    var shownSec = document.getElementById("arenaTab" + n);
+    if (shownSec) setTimeout(function(){ shownSec.scrollIntoView({ behavior: "smooth", block: "start" }); }, 30);
+  }
 }
 (function(){
   if (!document.getElementById("arenaTab1")) return; // not on the arena page
