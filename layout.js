@@ -69,6 +69,30 @@ function badge(count) {
   return count > 0 ? `<span class="unread-badge">${count > 9 ? "9+" : count}</span>` : "";
 }
 
+// Green version of badge() (vs. the red "unread" one above), used only on the admin's own
+// "ניהול" nav link - a quick, always-visible signal that something is waiting on her, without
+// needing to actually open /admin to find out. Per explicit request.
+function pendingBadge(count) {
+  return count > 0 ? `<span class="pending-badge">${count > 9 ? "9+" : count}</span>` : "";
+}
+
+// Every category of thing that sits in an admin moderation queue somewhere on /admin - kept in
+// sync BY HAND with the pending* variables computed in the GET /admin route in server.js (that
+// route can't reuse this directly without a circular require, since server.js already requires
+// layout.js) - if a new pending-approval category is ever added there, add it here too.
+function pendingAdminCount() {
+  const d = db.load();
+  const pendingFreelancers = d.freelancers.filter((f) => f.status === "pending").length;
+  const pendingReviews = d.reviews.filter((r) => r.status === "pending").length;
+  const pendingStories = (d.stories || []).filter((s) => s.status === "pending").length;
+  const pendingArenaQuestions = (d.arenaQuestions || []).filter((q) => q.status === "pending").length;
+  const pendingConsultations = (d.consultations || []).filter((c) => c.status === "pending").length;
+  const unreadMessages = (d.contactMessages || []).filter((m) => !m.read).length;
+  let pendingListings = 0;
+  d.freelancers.forEach((f) => (f.additionalListings || []).forEach((l) => { if (l.status === "pending") pendingListings++; }));
+  return pendingFreelancers + pendingReviews + pendingStories + pendingArenaQuestions + pendingConsultations + unreadMessages + pendingListings;
+}
+
 function nav(session) {
   const d = db.load();
   const settings = d.settings;
@@ -83,7 +107,7 @@ function nav(session) {
   } else if (session && session.role === "freelancer") {
     right = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "admin") {
-    right = `<a class="nav-link" href="/admin">ניהול</a><a class="nav-link" href="/logout">יציאה</a>`;
+    right = `<a class="nav-link" href="/admin" title="ניהול">ניהול${pendingBadge(pendingAdminCount())}</a><a class="nav-link" href="/logout">יציאה</a>`;
   }
   // Per explicit request, the top nav no longer shows the "SheCan" wordmark or heart as a
   // text fallback - only a custom uploaded logo image is shown there; without one, the brand
@@ -158,6 +182,7 @@ a{color:inherit;text-decoration:none;}
 .top-banner-wrap{position:relative;overflow:hidden;}
 .top-banner{width:100%;display:block;max-height:120px;object-fit:cover;cursor:pointer;}
 .unread-badge{display:inline-block;background:var(--danger);color:var(--white);border-radius:10px;font-size:11px;font-weight:800;padding:1px 6px;margin-inline-start:4px;vertical-align:middle;}
+.pending-badge{display:inline-block;background:var(--ok);color:var(--white);border-radius:10px;font-size:11px;font-weight:800;padding:1px 6px;margin-inline-start:4px;vertical-align:middle;}
 .whatsapp-link{display:inline-flex;align-items:center;gap:4px;color:#25D366;font-weight:700;text-decoration:none;font-size:14px;}
 .chat-thread{max-height:320px;overflow-y:auto;margin-bottom:14px;}
 .chat-msg{padding:10px 14px;border-radius:12px;margin-bottom:8px;max-width:80%;}

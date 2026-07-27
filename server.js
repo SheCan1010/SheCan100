@@ -2519,6 +2519,20 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     </div>`
   ).catch(() => {});
 
+  // Notify Sapir automatically about every new freelancer signup, so she finds out the moment
+  // one is waiting on her rather than only when she happens to open /admin - same push-first,
+  // email-fallback pattern already used for a new story submission (see /freelancer-dashboard/story
+  // above). Per explicit request.
+  {
+    const notifyAdmin = d.admins[0];
+    const notifyTo = d.settings.contactEmail || notifyAdmin.email;
+    sendPushToUser(notifyAdmin, { title: "עצמאית חדשה נרשמה!", body: `${body.get("businessName") || body.get("name")} נרשמה וממתינה לאישור.`, url: "/admin" })
+      .then((pushed) => { if (!pushed) sendEmail(notifyTo, `עצמאית חדשה נרשמה - ${body.get("businessName") || body.get("name")}`,
+        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(body.get("businessName") || body.get("name") || "")} (${esc(body.get("name") || "")}) נרשמה כעצמאית חדשה וממתינה לאישור שלך.</p><p>אפשר לעבור עליה ולאשר אותה בפאנל הניהול.</p></div>`
+      ).catch(() => {}); })
+      .catch(() => {});
+  }
+
   // She could also write her inspiration-story answers right here at signup instead of
   // having to come back to the dashboard later - same pending/approval flow either way.
   const joinStoryQuestions = d.settings.storyQuestions || [];
