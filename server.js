@@ -1106,6 +1106,14 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const catOptions = d.categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
 
   const weekly = getWeeklyFeature(d);
+  // Anyone (not just registered customers/freelancers) can like the weekly quote - a small
+  // heart icon + running total next to it. The like is attributed to whichever freelancer's
+  // quote is currently live (weeklyQuoteLikeCount on her own record), or to a shared
+  // settings counter when the default admin message is showing instead (no freelancer picked
+  // yet). Duplicate-like prevention is client-side only (localStorage), same simplicity level
+  // as the rest of the site's anonymous interactions (e.g. story-notice dismissal).
+  const weeklyLikeKey = weekly.freelancer ? String(weekly.freelancer.id) : "default";
+  const weeklyLikeCount = weekly.freelancer ? (weekly.freelancer.weeklyQuoteLikeCount || 0) : (d.settings.weeklyMessageLikeCount || 0);
   const currentStory = getCurrentStory(d);
   const currentStoryFreelancer = currentStory ? d.freelancers.find((x) => x.id === currentStory.freelancerId) : null;
 
@@ -1144,6 +1152,9 @@ route("GET", "/", async (req, res, params, query, ctx) => {
       <div class="weekly-tip">
         <span class="weekly-tip-kicker">From the Pros | טיפ שבועי מהמומחית</span>
         <p class="weekly-tip-quote">${esc(weekly.text)}</p>
+        <button type="button" class="weekly-tip-like" id="scWeeklyLike" data-like-key="${esc(weeklyLikeKey)}" onclick="scLikeWeeklyQuote(this)" aria-label="סמני לייק למשפט השבוע">
+          <span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${weeklyLikeCount}</span>
+        </button>
         ${weekly.freelancer ? `
         <div class="weekly-tip-attr">${esc(weekly.freelancer.businessName || weekly.freelancer.name)} | ${esc(subcatName(d, weekly.freelancer.categoryId, weekly.freelancer.subcategoryId) || catName(d, weekly.freelancer.categoryId))}</div>
         <a class="weekly-tip-btn" href="/freelancer/${weekly.freelancer.id}">לצפייה בפרופיל שלה</a>
@@ -1575,6 +1586,25 @@ route("POST", "/freelancer/:id/reveal-coupon", async (req, res, params, query, c
     }
     db.save();
   }
+  res.writeHead(204);
+  res.end();
+});
+
+// Anonymous "like" for the homepage weekly quote - open to anyone, not just registered
+// customers/freelancers, per explicit request. Recomputes which freelancer's quote (or the
+// default admin message) is currently live the same way the homepage does, and bumps that
+// entity's own running like counter. The client already updates the count optimistically and
+// remembers the like in localStorage (see scLikeWeeklyQuote in layout.js), so this route
+// doesn't need to return anything beyond a plain 204.
+route("POST", "/weekly-quote/like", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const weekly = getWeeklyFeature(d);
+  if (weekly.freelancer) {
+    weekly.freelancer.weeklyQuoteLikeCount = (weekly.freelancer.weeklyQuoteLikeCount || 0) + 1;
+  } else {
+    d.settings.weeklyMessageLikeCount = (d.settings.weeklyMessageLikeCount || 0) + 1;
+  }
+  db.save();
   res.writeHead(204);
   res.end();
 });
@@ -2505,7 +2535,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     description: clip(body.get("description"), 500), dealText: clip(body.get("dealText"), 200), dealCode,
     yearsInField: body.get("yearsInField") || "",
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
-    inspirationQuote: "", weeklyTipPublished: false,
+    inspirationQuote: "", weeklyTipPublished: false, weeklyQuoteLikeCount: 0,
     tier: body.get("tier") === "premium" ? "premium" : "basic",
     joinType: charging ? "regular" : "founding",
     paymentStatus: charging ? "pending_payment" : "free",
@@ -4539,7 +4569,7 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
       hasWhatsapp: isWhatsappLink, availableNow: false,
       offersOnline: false, offersHomeVisit: false, active: true,
       photoDataUri: null, logoDataUri: null, galleryPhotos: [],
-      description: description || "", dealText: dealText || "", yearsInField: "", inspirationQuote: "", weeklyTipPublished: false, referredByFreelancerId: null, welcomePopupSeen: false,
+      description: description || "", dealText: dealText || "", yearsInField: "", inspirationQuote: "", weeklyTipPublished: false, weeklyQuoteLikeCount: 0, referredByFreelancerId: null, welcomePopupSeen: false,
       dealCode: generateCouponCode(),
       tier: "basic", joinType: d.settings.chargingEnabled ? "regular" : "founding",
       paymentStatus: d.settings.chargingEnabled ? "pending_payment" : "free",

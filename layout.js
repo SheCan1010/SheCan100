@@ -322,6 +322,13 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .weekly-tip-attr{position:absolute;bottom:12px;left:18px;font-size:11.5px;color:var(--gray);font-weight:700;}
 .weekly-tip-btn{display:inline-block;background:var(--rose);color:#fff !important;font-weight:700;padding:5px 16px;border-radius:20px;font-size:12.5px;}
 .weekly-tip-btn:hover{background:var(--rose-dark);}
+/* Small "like the weekly quote" button - a tiny heart icon + running count, open to any
+   visitor (not just logged-in customers/freelancers). Sits right under the quote text, in
+   normal document flow (unlike .weekly-tip-attr/.weekly-tip-btn which are pinned to corners). */
+.weekly-tip-like{display:inline-flex;align-items:center;gap:4px;background:transparent;border:1px solid var(--rose);border-radius:16px;padding:3px 12px;margin:2px 0 4px;font-size:13px;font-weight:700;color:var(--rose-dark);cursor:pointer;}
+.weekly-tip-like:disabled{cursor:default;opacity:.9;}
+.weekly-tip-like.liked{background:#FBF3EC;}
+.weekly-tip-like-icon{font-size:15px;line-height:1;}
 /* "הזירה" - עמוד קהילה מודגש: כותרת בגרדיאנט בולט, וכל אחד מ-3 החלקים הגדולים מסומן
    בפס עליון עבה בצבע הזירה, כדי שהעמוד יבלוט בבירור מול שאר האתר הרך יותר. */
 /* Hero box shrunk down significantly (it used to be a huge, mostly-empty block) and given
@@ -1557,6 +1564,40 @@ function scRevealCoupon(id, btn, listingId){
   var body = listingId ? ("listingId=" + encodeURIComponent(listingId)) : "";
   fetch("/freelancer/" + id + "/reveal-coupon", { method: "POST", body: body }).catch(function(){});
 }
+// Like button for the homepage weekly quote - open to any visitor, not just registered
+// customers/freelancers. Updates the visible count optimistically (heart fills in, count +1)
+// and remembers the like in localStorage (keyed by whichever freelancer's quote it was, or
+// "default" for the admin's fallback message) so the same browser can't like it again, even
+// across page reloads or if her quote comes up again in a future rotation. The actual POST is
+// fire-and-forget, same pattern as scRevealCoupon above.
+function scLikeWeeklyQuote(btn) {
+  var key = btn.getAttribute("data-like-key") || "default";
+  var storageKey = "scWeeklyLiked::" + key;
+  var already = false;
+  try { already = localStorage.getItem(storageKey) === "1"; } catch (e) {}
+  if (already || btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add("liked");
+  var iconEl = btn.querySelector(".weekly-tip-like-icon");
+  if (iconEl) iconEl.textContent = "❤️";
+  var countEl = btn.querySelector(".weekly-tip-like-count");
+  if (countEl) countEl.textContent = String((parseInt(countEl.textContent, 10) || 0) + 1);
+  try { localStorage.setItem(storageKey, "1"); } catch (e) {}
+  fetch("/weekly-quote/like", { method: "POST" }).catch(function () {});
+}
+document.addEventListener("DOMContentLoaded", function () {
+  var btn = document.getElementById("scWeeklyLike");
+  if (!btn) return;
+  var key = btn.getAttribute("data-like-key") || "default";
+  var already = false;
+  try { already = localStorage.getItem("scWeeklyLiked::" + key) === "1"; } catch (e) {}
+  if (already) {
+    btn.disabled = true;
+    btn.classList.add("liked");
+    var iconEl = btn.querySelector(".weekly-tip-like-icon");
+    if (iconEl) iconEl.textContent = "❤️";
+  }
+});
 // Turns each ".sc-star-input" widget (a row of star spans plus a hidden "rating" input)
 // into a clickable rating picker - runs immediately since this script tag sits at the end
 // of the body, so every star widget already exists in the DOM by the time this executes.
