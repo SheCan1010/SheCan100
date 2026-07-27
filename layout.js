@@ -327,9 +327,10 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .weekly-tip-btn{display:inline-block;background:var(--rose);color:#fff !important;font-weight:700;padding:5px 16px;border-radius:20px;font-size:12.5px;}
 .weekly-tip-btn:hover{background:var(--rose-dark);}
 /* Small "like the weekly quote" button - a tiny heart icon + running count, open to any
-   visitor (not just logged-in customers/freelancers). Sits right under the quote text, in
-   normal document flow (unlike .weekly-tip-attr/.weekly-tip-btn which are pinned to corners). */
-.weekly-tip-like{display:inline-flex;align-items:center;gap:4px;background:transparent;border:1px solid var(--rose);border-radius:16px;padding:3px 12px;margin:2px 0 4px;font-size:13px;font-weight:700;color:var(--rose-dark);cursor:pointer;}
+   visitor (not just logged-in customers/freelancers). Pinned to the bottom-right corner of
+   the card (mirroring .weekly-tip-attr's bottom-left placement), per explicit request - out
+   of normal document flow so it doesn't get pushed around by quote length. */
+.weekly-tip-like{position:absolute;bottom:12px;right:18px;display:inline-flex;align-items:center;gap:4px;background:transparent;border:1px solid var(--rose);border-radius:16px;padding:3px 12px;font-size:13px;font-weight:700;color:var(--rose-dark);cursor:pointer;}
 .weekly-tip-like:disabled{cursor:default;opacity:.9;}
 .weekly-tip-like.liked{background:#FBF3EC;}
 .weekly-tip-like-icon{font-size:15px;line-height:1;}
