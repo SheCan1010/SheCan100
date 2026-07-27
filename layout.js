@@ -306,8 +306,11 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
    specific freelancer attached). */
 /* Shrunk down further, per explicit request, so it doesn't push the search box below the
    fold - tighter padding/margins throughout and a smaller quote, while keeping the same
-   "floating card with avatar+name, quote, and a button" shape. */
-.weekly-tip{position:relative;background:var(--white);border:1px solid #eee2d8;border-radius:14px;padding:32px 20px 30px;max-width:680px;margin:6px auto 10px;text-align:center;box-shadow:0 6px 18px rgba(154,142,129,.18);}
+   "floating card with avatar+name, quote, and a button" shape. Bottom padding bumped back up
+   (per a later explicit request) to give the absolutely-positioned attribution/like corner
+   elements about two lines of breathing room under the quote instead of sitting right under
+   it - the box just grows a bit taller to fit, nothing else moved. */
+.weekly-tip{position:relative;background:var(--white);border:1px solid #eee2d8;border-radius:14px;padding:32px 20px 66px;max-width:680px;margin:6px auto 10px;text-align:center;box-shadow:0 6px 18px rgba(154,142,129,.18);}
 /* Kicker moved into the top-right corner of the box as a plain colored label (no pill/
    background behind it anymore), sized up slightly - per explicit request. */
 .weekly-tip-kicker{position:absolute;top:12px;right:18px;font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--rose-dark);}

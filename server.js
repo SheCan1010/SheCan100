@@ -104,6 +104,17 @@ async function sendPushToUser(user, { title, body, url }) {
   return delivered;
 }
 
+// Bulk-imported freelancers with no real email on file get a placeholder address
+// (id@imported.shecan.co.il - see /admin/bulk-import) purely so the rest of the code can keep
+// treating `email` as always-present, NOT a real mailbox anyone can send to. Every place that
+// decides whether to attempt an email send needs to treat that placeholder as "no email", the
+// same way /admin/freelancer/:id/resend-credentials already does - centralized here so every
+// caller (notify() below, and any direct sendEmail(f.email, ...) call) shares one definition
+// instead of duplicating (and risking drifting) the same regex.
+function hasRealEmail(user) {
+  return !!(user && user.email && !/@imported\.shecan\.co\.il$/.test(user.email));
+}
+
 // The single place every notification in the app should go through: try a push notification
 // first (if this user has an active subscription on at least one device), and only send the
 // email as a fallback when push isn't available for her yet (hasn't installed the app / hasn't
@@ -112,7 +123,7 @@ async function sendPushToUser(user, { title, body, url }) {
 // unless we actually need to send it.
 async function notify(user, { pushTitle, pushBody, url, emailSubject, emailHtml }) {
   const pushed = await sendPushToUser(user, { title: pushTitle, body: pushBody, url });
-  if (!pushed && user && user.email) {
+  if (!pushed && hasRealEmail(user)) {
     await sendEmail(user.email, emailSubject, emailHtml()).catch(() => {});
   }
 }
@@ -2550,7 +2561,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   // in hand for networking even before an admin gets to approve the profile itself.
   const newProfileUrl = `${getOrigin(req)}/freelancer/${id}`;
   const newQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(newProfileUrl)}`;
-  sendEmail(body.get("email"), "ברוכה הבאה ל-SheCan - הקוד האישי שלך מוכן",
+  const welcomeEmailResult = await sendEmail(body.get("email"), "ברוכה הבאה ל-SheCan - הקוד האישי שלך מוכן",
     `<div dir="rtl" style="font-family:Arial,sans-serif;">
       <p>היי ${esc(body.get("name") || "")},</p>
       <p>תודה שהצטרפת ל-SheCan! קיבלנו את הפרופיל שלך ונעבור עליו בקרוב לאישור.</p>
@@ -2560,7 +2571,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       <p style="text-align:center;"><img src="${newQrUrl}" alt="QR לכרטיסייה שלך" width="200" height="200" /></p>
       <p>ברגע שהפרופיל יאושר, הקישור הזה יהיה פעיל לכולן: ${esc(newProfileUrl)}</p>
     </div>`
-  ).catch(() => {});
+  ).catch(() => ({ ok: false, reason: "send_failed" }));
 
   // Notify Sapir automatically about every new freelancer signup, so she finds out the moment
   // one is waiting on her rather than only when she happens to open /admin - same push-first,
@@ -2569,9 +2580,10 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   {
     const notifyAdmin = d.admins[0];
     const notifyTo = d.settings.contactEmail || notifyAdmin.email;
-    sendPushToUser(notifyAdmin, { title: "עצמאית חדשה נרשמה!", body: `${body.get("businessName") || body.get("name")} נרשמה וממתינה לאישור.`, url: "/admin" })
+    const welcomeFailedNote = welcomeEmailResult.ok ? "" : " שימי לב - מייל הברוכה הבאה שלה נכשל בשליחה.";
+    sendPushToUser(notifyAdmin, { title: "עצמאית חדשה נרשמה!", body: `${body.get("businessName") || body.get("name")} נרשמה וממתינה לאישור.${welcomeFailedNote}`, url: "/admin" })
       .then((pushed) => { if (!pushed) sendEmail(notifyTo, `עצמאית חדשה נרשמה - ${body.get("businessName") || body.get("name")}`,
-        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(body.get("businessName") || body.get("name") || "")} (${esc(body.get("name") || "")}) נרשמה כעצמאית חדשה וממתינה לאישור שלך.</p><p>אפשר לעבור עליה ולאשר אותה בפאנל הניהול.</p></div>`
+        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(body.get("businessName") || body.get("name") || "")} (${esc(body.get("name") || "")}) נרשמה כעצמאית חדשה וממתינה לאישור שלך.</p><p>אפשר לעבור עליה ולאשר אותה בפאנל הניהול.</p>${welcomeEmailResult.ok ? "" : `<p>שימי לב - מייל הברוכה הבאה שנשלח אליה (עם קוד הקופון וה-QR) נכשל. כדאי לבדוק את שירות המייל, ואפשר גם לשלוח לה פרטי התחברות מחדש דרך פאנל הניהול לאחר שהיא תאושר.</p>`}</div>`
       ).catch(() => {}); })
       .catch(() => {});
   }
@@ -4007,9 +4019,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <p class="muted">"נותנת חסות" - הבלטה מיוחדת וקבועה (למשל לעצמאיות שתרמו הטבה להגרלה). "מודעה" - הבלטה בתשלום שאת מוכרת וסוגרת איתן ישירות. "צפיות" - כמה פעמים נכנסו לעמוד שלה. "צפיות בקופון" - כמה פעמים לחצו "לצפייה בקוד קופון".</p>
     <p class="muted"><a href="/admin/export/freelancers.csv">⬇️ הורדת כל הנתונים כקובץ אקסל (CSV)</a></p>
     <input type="text" id="scAdminFreelancerSearch" placeholder="🔍 חיפוש עצמאית לפי שם עסק..." oninput="scFilterAdminFreelancers(this.value)" style="max-width:320px;margin-bottom:10px;" />
-    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>תמונות</th><th>פרטי התחברות</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
+    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>אימייל רשום</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>תמונות</th><th>פרטי התחברות</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
       ${activeFreelancers.map((f) => `<tr>
-        <td>${esc(f.businessName)}</td><td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td><td>${f.tier === "premium" ? "מומלצת" : "בסיסית"}</td>
+        <td>${esc(f.businessName)}</td>
+        <td><form method="post" action="/admin/freelancer/${f.id}/update-email" style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
+          <input type="email" name="email" value="${hasRealEmail(f) ? esc(f.email) : ""}" placeholder="${hasRealEmail(f) ? "" : "אין מייל אמיתי"}" style="width:150px;font-size:12px;padding:4px 6px;" />
+          <button class="btn btn-small btn-outline" type="submit" style="padding:4px 8px;font-size:12px;white-space:nowrap;">שמירה</button>
+        </form></td>
+        <td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td><td>${f.tier === "premium" ? "מומלצת" : "בסיסית"}</td>
         <td>${esc(f.dealCode || "-")}</td><td>${f.viewCount || 0}</td><td>${f.couponRevealCount || 0}</td>
         <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/resend-credentials" onsubmit="return confirm('זה ייצור סיסמה זמנית חדשה ל' + ${JSON.stringify(f.businessName || f.name)} + ' וישלח אותה במייל (הסיסמה הישנה שלה תפסיק לעבוד). להמשיך?');"><button class="btn btn-small btn-outline" type="submit">📧 שליחת פרטי התחברות</button></form></td>
@@ -4718,7 +4735,12 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
     // approval email below is always sent too, regardless of push, since it's the only way to
     // deliver the QR-flyer attachment (see buildFlyerPdfBuffer / flyer.js).
     sendPushToUser(f, { title: "את באוויר! הפרופיל שלך אושר", body: "הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉", url: `/freelancer/${f.id}` }).catch(() => {});
-    if (f.email) {
+    // hasRealEmail (not the raw f.email truthiness check this used to be) so a bulk-imported
+    // freelancer with no real address on file - who has the id@imported.shecan.co.il
+    // placeholder instead - doesn't silently "succeed" at emailing a mailbox that doesn't
+    // exist. In practice bulk-imported freelancers are created already-approved and never hit
+    // this route, but this keeps the check correct if that ever changes.
+    if (hasRealEmail(f)) {
       // The QR links straight to her review section (#scReview) rather than just the bare
       // profile, so a customer who scans it lands ready to write the review.
       const reviewUrl = `${profileUrl}#scReview`;
@@ -4736,7 +4758,11 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
         // approval itself, and the rest of this email, must never be blocked by this.
         console.warn("[flyer] could not build QR flyer PDF - sending approval email without it:", e.message);
       }
-      await sendEmail(f.email, "את באוויר! הפרופיל שלך אושר ב-SheCan",
+      // Per explicit request after freelancers reported never getting this email - the send
+      // result is now actually checked (like /admin/bulk-import and resend-credentials already
+      // do) so a failure shows up right here in the admin message instead of vanishing into a
+      // server log nobody's watching.
+      const emailResult = await sendEmail(f.email, "את באוויר! הפרופיל שלך אושר ב-SheCan",
         `<div dir="rtl" style="font-family:Arial,sans-serif;">
           <p>היי ${esc(f.name || "")},</p>
           <p>יש! הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉</p>
@@ -4745,7 +4771,11 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
           ${attachments.length ? `<p>צירפנו לך גם קובץ מוכן להדפסה עם קוד QR אישי - אפשר להדביק אותו בעסק כדי שלקוחות יסרקו ויכתבו לך ביקורת ישירות 📎</p>` : ""}
         </div>`,
         attachments
-      ).catch(() => {});
+      ).catch(() => ({ ok: false, reason: "send_failed" }));
+      if (!emailResult.ok) {
+        db.save();
+        return redirect(res, `/admin?ok=${encodeURIComponent(`אושרה! היא כבר באוויר. ⚠️ שימי לב - שליחת מייל האישור אליה נכשלה (${f.email}) - כדאי לבדוק את הגדרות שירות המייל, או ללחוץ "📧 שליחת פרטי התחברות" כדי לנסות שוב.`)}`);
+      }
     }
   }
   db.save();
@@ -4759,6 +4789,31 @@ route("POST", "/admin/freelancer/:id/toggle-leading", async (req, res, params, q
   if (f) f.isLeadingBusiness = !f.isLeadingBusiness;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(f && f.isLeadingBusiness ? "היא עכשיו נותנת חסות - תופיע בהבלטה בדף הבית." : "הוסרה מרשימת נותנות החסות.")}`);
+});
+
+// Lets Sapir see and fix the email address on file for any freelancer, right from the admin
+// table - per explicit request, after a bulk-imported freelancer turned out to have no real
+// address saved at all, and a separate one suspected a typo was the reason her password-reset
+// email never arrived. Doubles as the fix for a bulk-imported freelancer who originally had no
+// real email (the id@imported.shecan.co.il placeholder - see hasRealEmail): typing a real
+// address here and saving makes every future notification (approval, messages, password
+// resets, etc.) actually reach her instead of silently targeting a mailbox that doesn't exist.
+route("POST", "/admin/freelancer/:id/update-email", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  const newEmail = (body.get("email") || "").trim().toLowerCase();
+  if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+    return redirect(res, `/admin?err=${encodeURIComponent("כתובת המייל לא תקינה - נסי שוב.")}`);
+  }
+  if (d.freelancers.some((x) => x.id !== f.id && x.email === newEmail)) {
+    return redirect(res, `/admin?err=${encodeURIComponent("כתובת המייל הזו כבר בשימוש אצל עצמאית אחרת.")}`);
+  }
+  f.email = newEmail;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`כתובת המייל של ${f.businessName || f.name} עודכנה ל-${newEmail}.`)}`);
 });
 
 // Manual re-send of the "your area is ready" credentials email, per explicit request after
@@ -4776,8 +4831,7 @@ route("POST", "/admin/freelancer/:id/resend-credentials", async (req, res, param
   const tempPassword = generateTempPassword();
   f.passwordHash = auth.hashPassword(tempPassword);
   db.save();
-  const isRealEmail = f.email && !/@imported\.shecan\.co\.il$/.test(f.email);
-  if (!isRealEmail) {
+  if (!hasRealEmail(f)) {
     return redirect(res, `/admin?ok=${encodeURIComponent(`ל${f.businessName || f.name} אין כתובת מייל אמיתית רשומה - הסיסמה הזמנית החדשה שלה היא: ${tempPassword} (כדאי להעביר ידנית, למשל בוואטסאפ).`)}`);
   }
   const result = await sendEmail(f.email, "האזור האישי שלך ב-SheCan מוכן",
