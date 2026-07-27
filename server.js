@@ -1156,8 +1156,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${weeklyLikeCount}</span>
         </button>
         ${weekly.freelancer ? `
-        <div class="weekly-tip-attr">${esc(weekly.freelancer.businessName || weekly.freelancer.name)} | ${esc(subcatName(d, weekly.freelancer.categoryId, weekly.freelancer.subcategoryId) || catName(d, weekly.freelancer.categoryId))}</div>
-        <a class="weekly-tip-btn" href="/freelancer/${weekly.freelancer.id}">לצפייה בפרופיל שלה</a>
+        <a class="weekly-tip-attr" href="/freelancer/${weekly.freelancer.id}">${esc(weekly.freelancer.businessName || weekly.freelancer.name)} | ${esc(subcatName(d, weekly.freelancer.categoryId, weekly.freelancer.subcategoryId) || catName(d, weekly.freelancer.categoryId))}</a>
         ` : `<a class="weekly-tip-btn" href="/arena">מעבר לזירה</a>`}
       </div>` : ""}
 

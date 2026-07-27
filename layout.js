@@ -318,8 +318,12 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .weekly-tip-quote::before{content:"“";font-size:26px;font-family:Georgia,"Times New Roman",serif;color:var(--rose-dark);opacity:.5;position:absolute;top:-8px;right:-2px;line-height:1;}
 .weekly-tip-quote::after{content:"”";font-size:26px;font-family:Georgia,"Times New Roman",serif;color:var(--rose-dark);opacity:.5;position:absolute;bottom:-14px;left:-2px;line-height:1;}
 /* Attribution (business name | field) moved into the bottom-left corner - per explicit
-   request - out of normal document flow so it doesn't push the button around. */
+   request - out of normal document flow so it doesn't push other content around. Now the
+   attribution itself is the link straight to her profile (replacing the old separate
+   "לצפייה בפרופיל שלה" button) - per explicit request, clicking the name or field takes you
+   there directly. */
 .weekly-tip-attr{position:absolute;bottom:12px;left:18px;font-size:11.5px;color:var(--gray);font-weight:700;}
+.weekly-tip-attr:hover{text-decoration:underline;color:var(--rose-dark);}
 .weekly-tip-btn{display:inline-block;background:var(--rose);color:#fff !important;font-weight:700;padding:5px 16px;border-radius:20px;font-size:12.5px;}
 .weekly-tip-btn:hover{background:var(--rose-dark);}
 /* Small "like the weekly quote" button - a tiny heart icon + running count, open to any
