@@ -485,6 +485,14 @@ form .field{margin-bottom:6px;}
    .card-info is a flex column filling the remaining card height, and margin-top:auto on
    the deal pushes it (and anything after it, like the decorative view-btn) to the end. */
 .card-deal{background:#FBF3EC;border:1px dashed var(--rose);border-radius:8px;padding:8px 10px;margin-top:auto !important;font-weight:600;}
+/* Fixed-size "🎁 הטבת SheCan" badge (replaces the old variable-length deal text) - always one
+   short line, so every card in a row stays the same height no matter how long the real deal
+   text underneath is. The real text shows in a small floating tooltip built by
+   scSetupDealBadges() below (JS-positioned with position:fixed, not CSS-only, so it isn't
+   clipped by .card's own overflow:hidden). */
+.card-deal-badge{display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;}
+.card-deal-badge-logo{height:16px;width:auto;flex-shrink:0;}
+#scDealTooltip{position:fixed;display:none;background:#4a4a45;color:#fff;padding:6px 10px;border-radius:8px;font-size:12.5px;font-weight:600;max-width:220px;text-align:center;line-height:1.4;z-index:9999;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.28);}
 /* card-field (main category/subcategory), card-desc (bio) and card-view-btn (decorative
    "view profile" pill - the card itself is already the link, so this is visual only, never a
    real nested <a>) all stay hidden by default. This keeps the plain card (home page, deals
@@ -1122,6 +1130,59 @@ function scSetupFormAutosave() {
   });
 }
 document.addEventListener("DOMContentLoaded", scSetupFormAutosave);
+
+// Reveals the real deal text on a grid card's fixed "🎁 הטבת SheCan" badge - on hover/focus
+// for desktop, on tap for mobile (which has no hover). Uses one shared tooltip element
+// positioned with position:fixed and JS-computed coordinates instead of a CSS-only tooltip,
+// specifically because .card has overflow:hidden (needed to round the photo's corners) which
+// would clip a CSS-positioned tooltip that pokes outside the card's own box. A click handler
+// on the badge calls preventDefault/stopPropagation so tapping it never also triggers the
+// enclosing <a class="card"> card link's navigation.
+function scSetupDealBadges() {
+  var badges = document.querySelectorAll(".card-deal-badge");
+  if (!badges.length) return;
+  var tip = document.getElementById("scDealTooltip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "scDealTooltip";
+    document.body.appendChild(tip);
+  }
+  var openFor = null;
+  function showTip(badge) {
+    var text = badge.getAttribute("data-deal") || "";
+    if (!text) return;
+    tip.textContent = text;
+    tip.style.display = "block";
+    var r = badge.getBoundingClientRect();
+    var top = r.top - tip.offsetHeight - 8;
+    if (top < 4) top = r.bottom + 8;
+    var left = r.left + r.width / 2 - tip.offsetWidth / 2;
+    if (left < 4) left = 4;
+    if (left + tip.offsetWidth > window.innerWidth - 4) left = window.innerWidth - 4 - tip.offsetWidth;
+    tip.style.top = top + "px";
+    tip.style.left = left + "px";
+  }
+  function hideTip() {
+    tip.style.display = "none";
+    openFor = null;
+  }
+  badges.forEach(function (badge) {
+    badge.addEventListener("mouseenter", function () { showTip(badge); });
+    badge.addEventListener("mouseleave", hideTip);
+    badge.addEventListener("focus", function () { showTip(badge); });
+    badge.addEventListener("blur", hideTip);
+    badge.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (openFor === badge) { hideTip(); }
+      else { showTip(badge); openFor = badge; }
+    });
+  });
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest || !e.target.closest(".card-deal-badge")) hideTip();
+  });
+}
+document.addEventListener("DOMContentLoaded", scSetupDealBadges);
 
 // ---- Installable app (PWA): register the service worker on every page so the site becomes
 // installable and can receive push messages even when no tab is open. ----

@@ -509,6 +509,20 @@ function detailLine(icon, html, extraStyle = "") {
   return `<div style="display:flex;align-items:flex-start;gap:6px;justify-content:center;max-width:100%;${extraStyle}"><span style="flex-shrink:0;">${icon}</span><span style="flex:1;min-width:0;overflow-wrap:break-word;word-break:break-word;">${html}</span></div>`;
 }
 
+// Fixed-size deal badge for grid cards (used by both freelancerCard and
+// additionalListingCard) - replaces the previous variable-length deal text so every card in
+// a row stays the same height regardless of how long any one freelancer's real deal text is.
+// The real deal text is stashed in a data-deal attribute and revealed in a small floating
+// tooltip on hover/tap by scSetupDealBadges() in layout.js's client script (a JS-positioned
+// tooltip, not a CSS-only one, so it isn't clipped by .card's own overflow:hidden). Admin can
+// optionally show her site logo next to the label via settings.showLogoOnDealBadge.
+function dealBadgeHtml(d, dealText) {
+  const logoImg = (d.settings.showLogoOnDealBadge && d.settings.siteLogoDataUri)
+    ? `<img src="${d.settings.siteLogoDataUri}" alt="" class="card-deal-badge-logo" />`
+    : "";
+  return `<div class="card-deal card-deal-badge" tabindex="0" data-deal="${esc(dealText || "הטבה בלעדית")}"><span style="flex-shrink:0;">🎁</span><span>הטבת SheCan</span>${logoImg}</div>`;
+}
+
 // Converts a local Israeli phone number into the digits-only international format
 // wa.me links expect (e.g. "050-123-4567" -> "972501234567").
 function waPhoneDigits(phone) {
@@ -768,7 +782,7 @@ function freelancerCard(f, d, opts = {}) {
       <div class="card-info">
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${f.description ? `<div class="card-desc">${detailLine("📝", esc(f.description), "justify-content:center;")}</div>` : ""}
-        <div class="card-deal">${detailLine("🎁", esc(f.dealText || "הטבה בלעדית"), "justify-content:center;")}</div>
+        ${dealBadgeHtml(d, f.dealText)}
         <span class="btn btn-small card-view-btn">לצפייה בפרופיל</span>
       </div>
     </div>
@@ -808,7 +822,7 @@ function additionalListingCard(f, listing, d) {
       <div class="card-info">
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${listing.description ? `<div class="card-desc">${detailLine("📝", esc(listing.description), "justify-content:center;")}</div>` : ""}
-        <div class="card-deal">${detailLine("🎁", esc(listing.dealText || "הטבה בלעדית"), "justify-content:center;")}</div>
+        ${dealBadgeHtml(d, listing.dealText)}
         <span class="btn btn-small card-view-btn">לצפייה בפרופיל</span>
       </div>
     </div>
@@ -3765,6 +3779,13 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <button class="btn btn-small" style="margin-top:10px;" type="submit">העלאה</button>
     </form>
     ${d.settings.siteLogoDataUri ? `<form method="post" action="/admin/logo/remove" style="margin-top:8px;"><button class="btn btn-small btn-outline" type="submit">הסרת הלוגו וחזרה לוורדמארק הטקסט</button></form>` : ""}
+    ${d.settings.siteLogoDataUri ? `
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee;">
+      <p class="muted">אפשר גם להציג לוגו קטן ליד התגית "הטבת SheCan" שמופיעה על כל כרטיסייה.</p>
+      <form method="post" action="/admin/toggle-deal-badge-logo">
+        <button class="btn btn-small" type="submit">${d.settings.showLogoOnDealBadge ? "הסרת הלוגו מתגית ההטבה" : "הצגת הלוגו ליד תגית ההטבה"}</button>
+      </form>
+    </div>` : ""}
   </div>
 
   <div class="panel">
@@ -4143,6 +4164,7 @@ route("POST", "/admin/logo/remove", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
   d.settings.siteLogoDataUri = null;
+  d.settings.showLogoOnDealBadge = false;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("חזרנו לוורדמארק הטקסט.")}`);
 });
@@ -4612,6 +4634,14 @@ route("POST", "/admin/charging-toggle", async (req, res, params, query, ctx) => 
   d.settings.chargingEnabled = !d.settings.chargingEnabled;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("עודכן!")}`);
+});
+
+route("POST", "/admin/toggle-deal-badge-logo", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.showLogoOnDealBadge = !d.settings.showLogoOnDealBadge;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showLogoOnDealBadge ? "הלוגו יופיע עכשיו ליד תגית ההטבה." : "הלוגו הוסר מתגית ההטבה.")}`);
 });
 
 route("POST", "/admin/toggle-search-visibility", async (req, res, params, query, ctx) => {

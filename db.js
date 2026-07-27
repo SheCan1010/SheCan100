@@ -44,6 +44,7 @@ function defaultData() {
       adPrice: null, // מחיר ייחוס למודעה בצד העמוד (₪ לחודש) - להשלים בפאנל הניהול
       pricing: { basic: 49, premium: 109 },
       siteLogoDataUri: null, // לוגו מותאם אישית (מוחלף על הוורדמארק "SheCan") - להעלאה בפאנל הניהול
+      showLogoOnDealBadge: false, // האם להציג את siteLogoDataUri ליד תגית "הטבת SheCan" על הכרטיסיות בגריד
       topBannerDataUri: null, // באנר קבוע בראש כל עמוד, מעל הסרגל - להעלאה בפאנל הניהול
       siteBackgroundImageDataUri: null, // תמונת רקע לכל האתר, מתחת לסרגל העליון - להעלאה בפאנל הניהול
       // תקנון ומדיניות פרטיות - טקסט חופשי שנערך בפאנל הניהול (לא בקוד), ומוצג ב-/terms
