@@ -306,26 +306,23 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
    specific freelancer attached). */
 /* Shrunk down further, per explicit request, so it doesn't push the search box below the
    fold - tighter padding/margins throughout and a smaller quote, while keeping the same
-   "floating card with avatar+name, quote, and a button" shape. Bottom padding bumped back up
-   (per a later explicit request) to give the absolutely-positioned attribution/like corner
-   elements about two lines of breathing room under the quote instead of sitting right under
-   it - the box just grows a bit taller to fit, nothing else moved. */
-.weekly-tip{position:relative;background:var(--white);border:1px solid #eee2d8;border-radius:14px;padding:32px 20px 66px;max-width:680px;margin:6px auto 10px;text-align:center;box-shadow:0 6px 18px rgba(154,142,129,.18);}
+   "floating card with avatar+name, quote, and a button" shape. */
+.weekly-tip{position:relative;background:var(--white);border:1px solid #eee2d8;border-radius:14px;padding:32px 20px 30px;max-width:680px;margin:6px auto 10px;text-align:center;box-shadow:0 6px 18px rgba(154,142,129,.18);}
 /* Kicker moved into the top-right corner of the box as a plain colored label (no pill/
    background behind it anymore), sized up slightly - per explicit request. */
 .weekly-tip-kicker{position:absolute;top:12px;right:18px;font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--rose-dark);}
 .weekly-tip-person{display:flex;align-items:center;justify-content:center;gap:6px;margin:8px 0 2px;}
 .weekly-tip-avatar{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--rose);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;}
 .weekly-tip-name{font-weight:800;color:var(--dark);font-size:13px;}
-.weekly-tip-quote{font-size:14.5px;line-height:1.45;font-style:italic;color:var(--dark);margin:0 auto;padding:0 22px;max-width:520px;}
-/* Opening/closing gershayim each get their own line above and below the quote text - per
-   explicit request - instead of the previous decorative corner marks overlapping the text. */
-.weekly-tip-quote-mark{font-size:24px;font-family:Georgia,"Times New Roman",serif;color:var(--rose-dark);opacity:.5;line-height:1;margin:2px 0;}
-/* Attribution (business name | field) now sits in normal document flow directly under the
-   closing gershayim - per explicit request - rather than pinned to a corner. It's still the
-   link straight to her profile (replacing the old separate "לצפייה בפרופיל שלה" button),
-   clicking the name or field takes you there directly. */
-.weekly-tip-attr{display:block;margin:8px auto 0;font-size:11.5px;color:var(--gray);font-weight:700;}
+.weekly-tip-quote{position:relative;font-size:14.5px;line-height:1.45;font-style:italic;color:var(--dark);margin:4px auto 6px;padding:0 22px;max-width:520px;}
+.weekly-tip-quote::before{content:"“";font-size:26px;font-family:Georgia,"Times New Roman",serif;color:var(--rose-dark);opacity:.5;position:absolute;top:-8px;right:-2px;line-height:1;}
+.weekly-tip-quote::after{content:"”";font-size:26px;font-family:Georgia,"Times New Roman",serif;color:var(--rose-dark);opacity:.5;position:absolute;bottom:-14px;left:-2px;line-height:1;}
+/* Attribution (business name | field) moved into the bottom-left corner - per explicit
+   request - out of normal document flow so it doesn't push other content around. Now the
+   attribution itself is the link straight to her profile (replacing the old separate
+   "לצפייה בפרופיל שלה" button) - per explicit request, clicking the name or field takes you
+   there directly. */
+.weekly-tip-attr{position:absolute;bottom:12px;left:18px;font-size:11.5px;color:var(--gray);font-weight:700;}
 .weekly-tip-attr:hover{text-decoration:underline;color:var(--rose-dark);}
 .weekly-tip-btn{display:inline-block;background:var(--rose);color:#fff !important;font-weight:700;padding:5px 16px;border-radius:20px;font-size:12.5px;}
 .weekly-tip-btn:hover{background:var(--rose-dark);}

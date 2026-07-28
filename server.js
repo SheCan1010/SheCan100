@@ -1162,15 +1162,13 @@ route("GET", "/", async (req, res, params, query, ctx) => {
       ${weekly.text ? `
       <div class="weekly-tip">
         <span class="weekly-tip-kicker">From the Pros | טיפ שבועי מהמומחית</span>
-        <div class="weekly-tip-quote-mark">“</div>
         <p class="weekly-tip-quote">${esc(weekly.text)}</p>
-        <div class="weekly-tip-quote-mark">”</div>
-        ${weekly.freelancer ? `
-        <a class="weekly-tip-attr" href="/freelancer/${weekly.freelancer.id}">${esc(weekly.freelancer.businessName || weekly.freelancer.name)} | ${esc(subcatName(d, weekly.freelancer.categoryId, weekly.freelancer.subcategoryId) || catName(d, weekly.freelancer.categoryId))}</a>
-        ` : `<a class="weekly-tip-btn" href="/arena">מעבר לזירה</a>`}
         <button type="button" class="weekly-tip-like" id="scWeeklyLike" data-like-key="${esc(weeklyLikeKey)}" onclick="scLikeWeeklyQuote(this)" aria-label="סמני לייק למשפט השבוע">
           <span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${weeklyLikeCount}</span>
         </button>
+        ${weekly.freelancer ? `
+        <a class="weekly-tip-attr" href="/freelancer/${weekly.freelancer.id}">${esc(weekly.freelancer.businessName || weekly.freelancer.name)} | ${esc(subcatName(d, weekly.freelancer.categoryId, weekly.freelancer.subcategoryId) || catName(d, weekly.freelancer.categoryId))}</a>
+        ` : `<a class="weekly-tip-btn" href="/arena">מעבר לזירה</a>`}
       </div>` : ""}
 
       <form class="search-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות">
