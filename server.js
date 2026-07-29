@@ -7,7 +7,8 @@ const db = require("./db");
 const auth = require("./auth");
 const webpush = require("./webpush");
 const { page, esc, categoryIcon, cityAutocompleteHtml } = require("./layout");
-const { buildFlyerPdfBuffer, FLYER_FILE_TITLE } = require("./flyer");
+const { buildJoinStoryImageBuffer } = require("./joinStory");
+const { buildReviewStoryImageBuffer } = require("./reviewStory");
 
 const PORT = process.env.PORT || 4000;
 
@@ -27,7 +28,7 @@ const whatsappIconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="#
 // If RESEND_API_KEY isn't set yet, sendEmail logs a warning and returns { ok: false }
 // instead of crashing, so the site keeps working while email isn't configured.
 // `attachments` (optional) is Resend's own format: [{ filename, content: <base64 string> }] -
-// used for the QR-flyer PDF on freelancer approval (see /admin/freelancer/:id/approve).
+// used for the join/review QR images on freelancer approval (see /admin/freelancer/:id/approve).
 async function sendEmail(to, subject, html, attachments) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL || "SheCan <onboarding@resend.dev>";
@@ -4751,7 +4752,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
     // A quick push heads-up if she has notifications enabled (unchanged from before) - this
     // can't carry a file attachment, so unlike the general notify() helper (push OR email), the
     // approval email below is always sent too, regardless of push, since it's the only way to
-    // deliver the QR-flyer attachment (see buildFlyerPdfBuffer / flyer.js).
+    // deliver the join/review QR image attachments (see joinStory.js / reviewStory.js).
     sendPushToUser(f, { title: "את באוויר! הפרופיל שלך אושר", body: "הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉", url: `/freelancer/${f.id}` }).catch(() => {});
     // hasRealEmail (not the raw f.email truthiness check this used to be) so a bulk-imported
     // freelancer with no real address on file - who has the id@imported.shecan.co.il
@@ -4759,22 +4760,46 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
     // exist. In practice bulk-imported freelancers are created already-approved and never hit
     // this route, but this keeps the check correct if that ever changes.
     if (hasRealEmail(f)) {
-      // The QR links straight to her review section (#scReview) rather than just the bare
-      // profile, so a customer who scans it lands ready to write the review.
+      // The review-QR points straight to her review section (#scReview) rather than just the
+      // bare profile, so a customer who scans it lands ready to write the review.
       const reviewUrl = `${profileUrl}#scReview`;
       let attachments = [];
+      let hasJoinImage = false;
+      let hasReviewImage = false;
+      // (1) "I joined SheCan!" story image - a ready-to-post graphic (Sapir's own template, see
+      // assets/join-story-bg.jpg / joinStory.js) personalized with her QR code and profile
+      // link, so she can share it straight to her own Instagram/Facebook story. Per explicit
+      // request. Points at the plain profile (not the review anchor below) since this is about
+      // introducing the business, not specifically soliciting a review. Build failures are
+      // logged and skipped silently - the approval itself, and the rest of this email, must
+      // never be blocked by an image-generation problem.
       try {
-        const qrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(reviewUrl)}`);
-        if (!qrRes.ok) throw new Error(`qrserver responded ${qrRes.status}`);
-        const qrBuf = Buffer.from(await qrRes.arrayBuffer());
-        const qrDataUrl = `data:image/png;base64,${qrBuf.toString("base64")}`;
-        const pdfBuffer = await buildFlyerPdfBuffer({ qrDataUrl, businessName: f.businessName || f.name });
-        attachments = [{ filename: `${FLYER_FILE_TITLE}.pdf`, content: pdfBuffer.toString("base64") }];
+        const profileQrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(profileUrl)}`);
+        if (!profileQrRes.ok) throw new Error(`qrserver responded ${profileQrRes.status}`);
+        const profileQrBuf = Buffer.from(await profileQrRes.arrayBuffer());
+        const profileQrDataUrl = `data:image/png;base64,${profileQrBuf.toString("base64")}`;
+        const joinImageBuffer = await buildJoinStoryImageBuffer({ qrDataUrl: profileQrDataUrl, profileUrl });
+        attachments.push({ filename: "1-הצטרפתי-לSheCan-לשיתוף.png", content: joinImageBuffer.toString("base64") });
+        hasJoinImage = true;
       } catch (e) {
-        // Safe to skip silently (logged only) - most likely cause is Chromium not being
-        // available yet on this server (see the Render build-command note in flyer.js) - the
-        // approval itself, and the rest of this email, must never be blocked by this.
-        console.warn("[flyer] could not build QR flyer PDF - sending approval email without it:", e.message);
+        console.warn("[join-story] could not build join-story image - sending approval email without it:", e.message);
+      }
+      // (2) Printable "scan for a review" image (Sapir's own template, see
+      // assets/review-story-bg.jpg / reviewStory.js), personalized with a QR (+ backup link)
+      // straight to her review section - meant to be printed and stuck up at her business so
+      // customers can scan it in person. Replaces the older plain PDF flyer, per explicit
+      // request, now that this on-brand version covers the same job. Same
+      // build-can-fail-silently safety as (1) above.
+      try {
+        const reviewQrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(reviewUrl)}`);
+        if (!reviewQrRes.ok) throw new Error(`qrserver responded ${reviewQrRes.status}`);
+        const reviewQrBuf = Buffer.from(await reviewQrRes.arrayBuffer());
+        const reviewQrDataUrl = `data:image/png;base64,${reviewQrBuf.toString("base64")}`;
+        const reviewImageBuffer = await buildReviewStoryImageBuffer({ qrDataUrl: reviewQrDataUrl, reviewUrl });
+        attachments.push({ filename: "2-סרקי-אותי-להדפסה.png", content: reviewImageBuffer.toString("base64") });
+        hasReviewImage = true;
+      } catch (e) {
+        console.warn("[review-story] could not build review-story image - sending approval email without it:", e.message);
       }
       // Per explicit request after freelancers reported never getting this email - the send
       // result is now actually checked (like /admin/bulk-import and resend-credentials already
@@ -4786,7 +4811,11 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
           <p>יש! הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉</p>
           <p>אפשר לראות אותו כאן: <a href="${profileUrl}">${esc(profileUrl)}</a></p>
           <p>מוזמנת לשתף את קוד הקופון שלך (<strong>${esc(f.dealCode || "")}</strong>) עם הלקוחות שלך, ולהזמין אותן לכתוב לך המלצה ישירות בכרטיסייה - זה מה שיעזור לך להתחיל להיראות ולהתבלט בקהילה.</p>
-          ${attachments.length ? `<p>צירפנו לך גם קובץ מוכן להדפסה עם קוד QR אישי - אפשר להדביק אותו בעסק כדי שלקוחות יסרקו ויכתבו לך ביקורת ישירות 📎</p>` : ""}
+          ${(hasJoinImage || hasReviewImage) ? `<p>צירפנו לך גם שני קבצים מוכנים:</p>
+          <ol>
+            ${hasJoinImage ? `<li>תמונה לשיתוף בסטורי/פוסט, עם קוד QR והקישור לפרופיל שלך - כדי לספר לכולן שהצטרפת! 📸</li>` : ""}
+            ${hasReviewImage ? `<li>תמונה להדפסה, עם קוד QR (וגם קישור לגיבוי) שמוביל ישר לכתיבת המלצה - להדביק בעסק כדי שלקוחות יסרקו במקום ✍️</li>` : ""}
+          </ol>` : ""}
         </div>`,
         attachments
       ).catch(() => ({ ok: false, reason: "send_failed" }));
