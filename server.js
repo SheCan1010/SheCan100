@@ -2717,8 +2717,26 @@ route("POST", "/forgot-password", async (req, res, params, query, ctx) => {
   if (user) {
     const token = auth.createResetToken(role, user.id);
     const link = `${getOrigin(req)}/reset-password?token=${token}`;
-    await sendEmail(email, "איפוס סיסמה ל-SheCan",
-      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(user.name || "")},</p><p>קיבלנו בקשה לאפס את הסיסמה שלך ל-SheCan. הקישור הבא בתוקף לשעה אחת:</p><p><a href="${link}">${link}</a></p><p>אם לא ביקשת את זה, אפשר פשוט להתעלם מהמייל.</p></div>`);
+    // The result is now actually checked (same pattern already used for the approval and
+    // welcome emails) - per explicit request after a freelancer reported never receiving her
+    // reset email. Since the message shown to her stays generic on purpose (to avoid leaking
+    // which addresses are registered), a send failure can't be surfaced to her directly - so
+    // instead it's pushed straight to Sapir, the same push-first/email-fallback pattern used
+    // for new-signup notifications, so she finds out and can fix/resend without waiting for
+    // the freelancer to complain.
+    const resetEmailResult = await sendEmail(email, "איפוס סיסמה ל-SheCan",
+      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(user.name || "")},</p><p>קיבלנו בקשה לאפס את הסיסמה שלך ל-SheCan. הקישור הבא בתוקף לשעה אחת:</p><p><a href="${link}">${link}</a></p><p>אם לא ביקשת את זה, אפשר פשוט להתעלם מהמייל.</p></div>`
+    ).catch(() => ({ ok: false, reason: "send_failed" }));
+    if (!resetEmailResult.ok) {
+      const notifyAdmin = d.admins[0];
+      const notifyTo = d.settings.contactEmail || notifyAdmin.email;
+      const roleLabel = role === "freelancer" ? "עצמאית" : "לקוחה";
+      sendPushToUser(notifyAdmin, { title: "מייל איפוס סיסמה נכשל", body: `${roleLabel} ${user.name || email} ניסתה לאפס סיסמה אבל המייל לא נשלח.`, url: "/admin" })
+        .then((pushed) => { if (!pushed) sendEmail(notifyTo, "מייל איפוס סיסמה נכשל בשליחה",
+          `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(roleLabel)} ${esc(user.name || "")} (${esc(email)}) ניסתה לאפס סיסמה, אבל שליחת המייל נכשלה.</p><p>כדאי לבדוק את הגדרות שירות המייל, ולוודא שכתובת המייל הרשומה שלה נכונה.</p></div>`
+        ).catch(() => {}); })
+        .catch(() => {});
+    }
   }
   redirect(res, `/login?ok=${encodeURIComponent(genericMsg)}`);
 });
