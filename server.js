@@ -847,6 +847,96 @@ function additionalListingCard(f, listing, d) {
   </a>`;
 }
 
+// Renders one of a freelancer's additional lines of work as a genuine full profile block -
+// same header/badges/description/deal-box/gallery/reviews/message-box depth as the standalone
+// /freelancer/:id/listing/:lid page - meant to be embedded inline at the bottom of her MAIN
+// profile page (see the "other businesses" section in GET /freelancer/:id below), per explicit
+// request that this show as a real profile rather than the small additionalListingCard(). Any
+// element that would otherwise collide with an identically-id'd element elsewhere on that same
+// page (the main profile's own #scMessageBox, or another embedded listing's) is namespaced with
+// the listing id - scRevealCoupon/star-input/gallery-lightbox were already confirmed safe for
+// multiple simultaneous instances without any changes needed.
+function additionalListingFullProfileHtml(f, l, d, ctx, isCustomer, customer, myThread) {
+  const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved" && String(r.listingId || "") === String(l.id));
+  const isFav = customer && customer.favorites.includes(favKey(f.id, l.id));
+  const loginUrl = `/login?next=${encodeURIComponent(`/freelancer/${f.id}/listing/${l.id}`)}`;
+  const loginUrlToMessage = `/login?next=${encodeURIComponent(`/freelancer/${f.id}/listing/${l.id}#scMessageBox-${l.id}`)}`;
+  const myExistingReview = customer ? d.reviews.find((r) => r.type === "freelancer" && r.targetId === f.id && r.authorCustomerId === customer.id && String(r.listingId || "") === String(l.id)) : null;
+
+  const heroBadges = [
+    l.tier === "premium" ? `<span class="badge">מומלצת</span>` : "",
+    l.offersOnline ? `<span class="badge badge-outline">💻 שירות אונליין</span>` : "",
+    l.offersHomeVisit ? `<span class="badge badge-outline">🚗 מגיעה אלייך</span>` : "",
+  ].filter(Boolean).join(" ");
+
+  const listingReviewCount = reviewCountFor(d, f.id, l.id);
+  const listingAvgRating = avgRatingFor(d, f.id, l.id);
+  const listingLocation = locationLabel(d, f.cityId, l.offersOnline, l.offersHomeVisit);
+  const listingContactRows = [
+    f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
+    (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
+    l.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(l.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
+    f.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox-${l.id}" onclick="var t=document.querySelector('#scMessageBox-${l.id} textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
+    f.instagram ? `<div class="profile-detail-row"><span class="profile-detail-icon">📸</span><span>${esc(f.instagram)}</span></div>` : "",
+  ].filter(Boolean).join("");
+
+  return `
+  <div class="panel profile-detail profile-merged" id="scListing-${l.id}">
+    <div class="profile-header-row">
+      <div class="profile-header-namelogo">
+        ${zoomableImage(l.logoDataUri, l.businessName, "profile-header-logo")}
+        <div class="profile-header-info">
+          <h2 class="profile-header-name">${esc(l.businessName)}</h2>
+          ${l.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(l.yearsInField))}</div>` : ""}
+          ${listingAvgRating !== null ? `<div class="profile-stars-row">${starRow(Math.round(listingAvgRating))}${listingReviewCount > 5 ? `<span class="profile-review-count-small">(${listingReviewCount})</span>` : ""}</div>` : ""}
+          ${listingLocation ? `<div class="profile-header-location">📍 ${esc(listingLocation)}</div>` : ""}
+        </div>
+      </div>
+      ${listingContactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${listingContactRows}</div>` : ""}
+    </div>
+
+    ${isCustomer ? `<form method="post" action="/freelancer/${f.id}/favorite" style="margin-top:10px;"><input type="hidden" name="listingId" value="${esc(l.id)}" /><button class="btn btn-small favorite-btn ${isFav ? "btn" : "btn-outline"}" type="submit">${isFav ? "❤️ שמורה אצלך" : "❤️ הוספה למועדפות"}</button></form>` : ""}
+    ${heroBadges ? `<div style="margin-top:10px;">${heroBadges}</div>` : ""}
+    ${l.description ? `<p class="profile-header-desc">${esc(l.description)}</p>` : ""}
+
+    <div class="deal-box deal-box-compact">
+      ${detailLine("🎁", esc(l.dealText || ""))}
+      ${l.dealCode ? (
+        isCustomer
+          ? `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this, '${l.id}')">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}-${l.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(l.dealCode)}</div>`
+          : `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
+      ) : ""}
+    </div>
+  </div>
+
+  ${(l.galleryPhotos && l.galleryPhotos.length) ? `
+  <div class="panel profile-detail">
+    <h3 style="color:var(--gray);font-size:22px;text-align:center;">גאה להציג</h3>
+    <div class="gallery-scroll">
+      ${l.galleryPhotos.map((src) => zoomableImage(src, "", "gallery-thumb", l.galleryPhotos)).join("")}
+    </div>
+  </div>` : ""}
+
+  <div class="panel profile-detail">
+    <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
+    ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
+    ${isCustomer ? reviewFormHtml(l.businessName, `/freelancer/${f.id}/review`, l.id, myExistingReview) : `<p class="muted"><a href="${loginUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לכתוב המלצה.</p>`}
+  </div>
+
+  <div class="panel profile-detail" id="scMessageBox-${l.id}">
+    <h3>💌 מוזמנת לשלוח הודעה ל ${esc(l.businessName)}, היא תקבל את ההודעה שלך גם במייל :)</h3>
+    ${isCustomer ? `
+      ${myThread.length ? `<div class="chat-thread" style="text-align:right;">${myThread.map((m) => `<div class="chat-msg from-${m.fromRole}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>` : `<p class="muted">עדיין לא כתבתן - זו ההזדמנות לשאול אותה כל מה שמעניין אותך, ישירות.</p>`}
+      <form method="post" action="/freelancer/${f.id}/message">
+        <input type="hidden" name="listingId" value="${esc(l.id)}" />
+        <textarea name="text" placeholder="כתבי הודעה ל ${esc(l.businessName)}..." style="min-height:80px;" required></textarea>
+        <button class="btn" style="margin-top:10px;" type="submit">שליחת הודעה</button>
+      </form>
+    ` : `<p class="muted"><a href="${loginUrlToMessage}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לשלוח הודעה ישירה לעצמאית.</p>`}
+  </div>
+  `;
+}
+
 // Sponsor/ad sidebar rendering now lives in layout.js's page() template, so every page on
 // the site gets the same shared sidebar slots automatically (see item 13/24 of the batch).
 
@@ -1309,12 +1399,16 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
           <select name="category" onchange="scUpdateSubcats(this, document.getElementById('scSearchSubcat'), '', 'כל תת-התחומים');"><option value="">כל התחומים</option>${catOptions}</select>
           <select name="subcategory" id="scSearchSubcat"><option value="">${category ? "כל תת-התחומים" : "בחרי קודם תחום"}</option>${subcatOptions}</select>
           ${cityAutocompleteHtml({ fieldName: "city", selectedId: city, selectedName: city ? cityName(d, city) : "", placeholder: "מאיזו עיר?" })}
-          <button class="btn" type="submit">חפשי</button>
         </div>
-        <div class="search-row" style="margin-top:10px;justify-content:space-between;align-items:center;">
+        <div class="search-row" style="margin-top:10px;justify-content:center;">
           <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0;">
             <input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} style="width:auto;margin:0;" onchange="scLiveFilter()" /><span>🚗 מגיעה עד הבית</span>
           </label>
+        </div>
+        <div class="search-row" style="margin-top:10px;justify-content:center;">
+          <button class="btn" type="submit">חפשי</button>
+        </div>
+        <div class="search-row" style="margin-top:10px;justify-content:center;">
           <div class="view-toggle" role="group" aria-label="בחירת תצוגה">
             <span class="view-toggle-label">תצוגה</span>
             <button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')" title="תצוגה מורחבת" aria-label="תצוגה מורחבת"><span class="view-icon view-icon-expanded"><i></i><i></i><i></i><i></i></span></button>
@@ -1456,12 +1550,9 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   </div>
 
   ${otherApprovedListings.length ? `
-  <div class="panel profile-detail">
-    <h3 style="text-align:center;">✨ העסקים הנוספים של ${esc(f.businessName || f.name)}</h3>
-    <div class="grid">
-      ${otherApprovedListings.map((l) => additionalListingCard(f, l, d)).join("")}
-    </div>
-  </div>` : ""}
+  <h2 class="section-title" style="margin-top:36px;">✨ העסקים הנוספים של ${esc(f.businessName || f.name)}</h2>
+  ${otherApprovedListings.map((l) => additionalListingFullProfileHtml(f, l, d, ctx, isCustomer, customer, myThread)).join("")}
+  ` : ""}
   `;
   sendHtml(res, 200, page({ title: f.businessName || f.name, session: ctx.session, body, query }));
 });
