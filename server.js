@@ -756,7 +756,12 @@ function freelancerCard(f, d, opts = {}) {
   // just whichever one happens to be shown - a customer typing the freelancer's own name
   // (rather than the business name) was getting zero matches before this fix.
   const nameForSearch = esc(`${f.businessName || ""} ${f.name || ""}`.trim().toLowerCase());
-  const categoryForSearch = esc(catName(d, f.categoryId).toLowerCase());
+  // Also folds in her subcategory (e.g. "עיצוב שיער" under the broader "יופי וטיפוח") and her
+  // own free-text bio, so the instant-as-you-type filter (scLiveFilter, see layout.js) matches
+  // the exact same things as a full /search submit - per explicit request, after "שיער" found
+  // nothing even though hair-focused freelancers were on the site under a category name that
+  // doesn't contain that word.
+  const categoryForSearch = esc(`${catName(d, f.categoryId)} ${subcatName(d, f.categoryId, f.subcategoryId)} ${f.description || ""}`.toLowerCase());
   const extraCats = additionalCategoryNames(d, f);
   // If her inspiration story happens to be this week's featured story on SheCan Stories,
   // she gets a small badge with a direct link to it - shown as a sibling of the card's own
@@ -812,7 +817,8 @@ function additionalListingCard(f, listing, d) {
   const badges = [];
   if (listing.tier === "premium") badges.push(`<span class="badge">מומלצת</span>`);
   const nameForSearch = esc((listing.businessName || "").trim().toLowerCase());
-  const categoryForSearch = esc(catNameStr.toLowerCase());
+  // Same subcategory + bio-text widening as the main freelancer card above, for this listing.
+  const categoryForSearch = esc(`${catNameStr} ${subcatName(d, listing.categoryId, listing.subcategoryId)} ${listing.description || ""}`.toLowerCase());
   const cardClass = "card" + (listing.isAdvertised ? " card-ad" : "");
   const reviewCount = reviewCountFor(d, f.id, listing.id);
   const listingFieldLabel = subcatName(d, listing.categoryId, listing.subcategoryId) || catNameStr;
@@ -1227,6 +1233,11 @@ route("GET", "/", async (req, res, params, query, ctx) => {
 route("GET", "/search", async (req, res, params, query, ctx) => {
   const d = db.load();
   const category = query.get("category") || "";
+  // Only meaningful together with `category` (a subcategory belongs to one category) - a
+  // stale subcategory left over from a since-changed category is simply ignored below rather
+  // than accidentally excluding everyone, since freelancerMatchesCategory already narrowed to
+  // the chosen category first.
+  const subcategory = query.get("subcategory") || "";
   const city = query.get("city") || "";
   const homeVisit = query.get("homeVisit") === "1";
   const q = (query.get("q") || "").trim().toLowerCase();
@@ -1234,15 +1245,22 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     if (f.status !== "approved") return false;
     if (f.active === false) return false;
     if (!freelancerMatchesCategory(f, category)) return false;
+    if (subcategory && f.subcategoryId !== subcategory) return false;
     if (city && f.cityId !== city) return false;
     if (homeVisit && !f.offersHomeVisit) return false;
     if (q) {
       // Matches her business name AND her own personal name, not just whichever one
       // happens to be displayed - searching "רוני" should find her even if the card
-      // shows the business name "רוני מאפרת".
+      // shows the business name "רוני מאפרת". Also matches her subcategory (e.g. "עיצוב
+      // שיער" under the broader "יופי וטיפוח" category - searching "שיער" used to miss her
+      // entirely since only the category name was checked) and her own free-text "about the
+      // business" bio - per explicit request, since customers often search by a word she
+      // actually wrote rather than the exact category/subcategory label.
       const nameMatch = `${f.businessName || ""} ${f.name || ""}`.toLowerCase().includes(q);
       const categoryMatch = catName(d, f.categoryId).toLowerCase().includes(q);
-      if (!nameMatch && !categoryMatch) return false;
+      const subcatMatch = subcatName(d, f.categoryId, f.subcategoryId).toLowerCase().includes(q);
+      const descMatch = (f.description || "").toLowerCase().includes(q);
+      if (!nameMatch && !categoryMatch && !subcatMatch && !descMatch) return false;
     }
     return true;
   });
@@ -1257,12 +1275,15 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     (lf.additionalListings || []).forEach((l) => {
       if (l.status !== "approved") return;
       if (category && l.categoryId !== category) return;
+      if (subcategory && l.subcategoryId !== subcategory) return;
       if (city && lf.cityId !== city) return;
       if (homeVisit && !l.offersHomeVisit) return;
       if (q) {
         const nameMatch = (l.businessName || "").toLowerCase().includes(q);
         const categoryMatch = catName(d, l.categoryId).toLowerCase().includes(q);
-        if (!nameMatch && !categoryMatch) return;
+        const subcatMatch = subcatName(d, l.categoryId, l.subcategoryId).toLowerCase().includes(q);
+        const descMatch = (l.description || "").toLowerCase().includes(q);
+        if (!nameMatch && !categoryMatch && !subcatMatch && !descMatch) return;
       }
       listingMatches.push({ f: lf, l });
     });
@@ -1273,6 +1294,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     .sort((a, b) => ((b.tier === "premium") - (a.tier === "premium")) || (b.reviewCount - a.reviewCount));
 
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === category ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  // Pre-rendered so the dropdown already shows the right subcategory list on a normal page
+  // load (e.g. reloading a search-results link with both params set) - scUpdateSubcats (see
+  // layout.js) takes over from there for live changes without a page reload.
+  const subcatOptions = category ? subcategoriesOf(d, category).map((s) => `<option value="${s.id}" ${s.id === subcategory ? "selected" : ""}>${esc(s.name)}</option>`).join("") : "";
 
   const body = `
   <h1 class="section-title">מי מחכה לך היום?</h1>
@@ -1281,7 +1306,8 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
           <input type="text" id="scSearchQ" name="q" value="${esc(query.get("q") || "")}" placeholder="חפשי לפי שם עסק, עצמאית או תחום - הסינון אוטומטי תוך כדי הקלדה" oninput="scLiveFilter()" autocomplete="off" />
         </div>
         <div class="search-row" style="margin-top:10px;">
-          <select name="category"><option value="">כל התחומים</option>${catOptions}</select>
+          <select name="category" onchange="scUpdateSubcats(this, document.getElementById('scSearchSubcat'), '', 'כל תת-התחומים');"><option value="">כל התחומים</option>${catOptions}</select>
+          <select name="subcategory" id="scSearchSubcat"><option value="">${category ? "כל תת-התחומים" : "בחרי קודם תחום"}</option>${subcatOptions}</select>
           ${cityAutocompleteHtml({ fieldName: "city", selectedId: city, selectedName: city ? cityName(d, city) : "", placeholder: "מאיזו עיר?" })}
           <button class="btn" type="submit">חפשי</button>
         </div>
@@ -1311,6 +1337,12 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const f = d.freelancers.find((x) => x.id === params.id);
   if (!f || f.status !== "approved" || f.active === false) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הפרופיל הזה.</p>` }));
   const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved" && !r.listingId);
+  // A freelancer who registered more than one line of work (e.g. also does balloons, not just
+  // makeup) previously had those additional listings reachable only if a customer happened to
+  // stumble on their own separate card somewhere else (search results, category page) - there
+  // was no link from her own main profile at all. Per explicit request, they're now surfaced
+  // right here so a customer already on her page can discover everything else she offers.
+  const otherApprovedListings = (f.additionalListings || []).filter((l) => l.status === "approved");
   const isCustomer = requireRole(ctx.session, "customer");
   let customer = null;
   if (isCustomer) customer = d.customers.find((c) => c.id === ctx.session.id);
@@ -1422,6 +1454,14 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
       </form>
     ` : `<p class="muted"><a href="${loginUrlToMessage}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לשלוח הודעה ישירה לעצמאית.</p>`}
   </div>
+
+  ${otherApprovedListings.length ? `
+  <div class="panel profile-detail">
+    <h3 style="text-align:center;">✨ העסקים הנוספים של ${esc(f.businessName || f.name)}</h3>
+    <div class="grid">
+      ${otherApprovedListings.map((l) => additionalListingCard(f, l, d)).join("")}
+    </div>
+  </div>` : ""}
   `;
   sendHtml(res, 200, page({ title: f.businessName || f.name, session: ctx.session, body, query }));
 });

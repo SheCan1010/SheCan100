@@ -386,7 +386,13 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .poll-option-row{display:flex;align-items:center;gap:10px;margin-top:8px;}
 .poll-bar-wrap{flex:1;background:#eee1e7;border-radius:8px;overflow:hidden;height:26px;position:relative;}
 .poll-bar-fill{background:var(--arena);height:100%;border-radius:8px 0 0 8px;transition:width .3s ease;}
-.poll-bar-label{position:absolute;inset:0;display:flex;align-items:center;padding:0 10px;font-size:13px;font-weight:700;color:var(--dark);}
+/* White text so it stays readable over the filled (dark bordo) portion of the bar - per
+   explicit request, the previous dark text was unreadable there. The label spans the FULL
+   width (filled + unfilled), so plain white alone would go unreadable over the light-pink
+   unfilled portion instead - the dark outline (via layered text-shadow) keeps it legible on
+   both backgrounds at once, without needing to split the label into two separately-colored
+   pieces. */
+.poll-bar-label{position:absolute;inset:0;display:flex;align-items:center;padding:0 10px;font-size:13px;font-weight:700;color:#fff;text-shadow:-1px -1px 0 rgba(0,0,0,.55),1px -1px 0 rgba(0,0,0,.55),-1px 1px 0 rgba(0,0,0,.55),1px 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.35);}
 /* "הזירה" nav button: pinned to the far (visual) left edge of the header via an auto
    inline-start margin (absorbs all remaining row space on its own row), and colored with the
    requested #cfa193 instead of the arena page's own deep-rose accent color. */
@@ -1349,13 +1355,18 @@ function scRestackBottomBanners(){
   });
 })();
 function scCategoryIcon(name){ return SC_CATEGORY_ICONS[name] || "✨"; }
-function scUpdateSubcats(catSelect, subSelect, currentValue){
+// emptyLabel (optional) overrides the placeholder/no-selection option's text when there ARE
+// subcategories to choose from - e.g. search filters want "כל תת-התחומים" (any subcategory
+// matches) instead of the profile-editing forms' "ללא תת-תחום" (she genuinely has none),
+// since blank means something different in each context. Defaults to the original wording so
+// every existing call site is unaffected.
+function scUpdateSubcats(catSelect, subSelect, currentValue, emptyLabel){
   if (!subSelect) return;
   var subs = SC_SUBCATS[catSelect.value] || [];
   subSelect.innerHTML = "";
   var optNone = document.createElement("option");
   optNone.value = "";
-  optNone.textContent = subs.length ? "ללא תת-תחום (לא חובה)" : "אין תת-תחומים לתחום הזה";
+  optNone.textContent = subs.length ? (emptyLabel || "ללא תת-תחום (לא חובה)") : "אין תת-תחומים לתחום הזה";
   subSelect.appendChild(optNone);
   subs.forEach(function(s){
     var opt = document.createElement("option");
