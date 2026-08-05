@@ -763,12 +763,18 @@ function freelancerCard(f, d, opts = {}) {
   // doesn't contain that word.
   const categoryForSearch = esc(`${catName(d, f.categoryId)} ${subcatName(d, f.categoryId, f.subcategoryId)} ${f.description || ""}`.toLowerCase());
   const extraCats = additionalCategoryNames(d, f);
-  // If her inspiration story happens to be this week's featured story on SheCan Stories,
-  // she gets a small badge with a direct link to it - shown as a sibling of the card's own
-  // link (rather than nested inside it), since an <a> can't legally contain another <a>.
+  // If her inspiration story happens to be this week's featured story on SheCan Stories, she
+  // gets a small badge overlaid on her card, linking to it. This used to be rendered as a
+  // sibling <a> wrapped together with the card in an extra <div> (to avoid illegally nesting
+  // an <a> inside another <a>) - but that extra wrapper div became its OWN separate grid cell
+  // inside the CSS Grid results list (since every direct child of .grid is auto-placed into
+  // its own cell), so the badge showed up floating in its own empty tile instead of overlaid
+  // on her actual card. Fixed by keeping everything inside the single .card <a> (one grid
+  // item, like every other card) and using a <span> with a click handler instead of a nested
+  // <a>, so it stays valid HTML while still navigating to the story on click.
   const currentStory = getCurrentStory(d);
   const featuredStoryBadge = (currentStory && currentStory.freelancerId === f.id)
-    ? `<a href="/stories/${currentStory.id}" class="badge badge-leading" style="position:absolute;top:10px;left:10px;z-index:2;text-decoration:none;">📖 הסיפור שלה מככב השבוע</a>`
+    ? `<span class="badge badge-leading" style="position:absolute;top:10px;left:10px;z-index:2;cursor:pointer;" onclick="event.preventDefault();event.stopPropagation();location.href='/stories/${currentStory.id}';" role="link" tabindex="0">📖 הסיפור שלה מככב השבוע</span>`
     : "";
   const reviewCount = reviewCountFor(d, f.id);
   const catNameStr = catName(d, f.categoryId);
@@ -783,7 +789,8 @@ function freelancerCard(f, d, opts = {}) {
   // view-mode toggle via the [data-view] CSS rules) - only location/years moved out of that
   // gated block since they're now part of the base card look.
   const cardHtml = `
-  <a class="${cardClass}" href="/freelancer/${f.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${f.offersHomeVisit ? "1" : "0"}">
+  <a class="${cardClass}" href="/freelancer/${f.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${f.offersHomeVisit ? "1" : "0"}" style="${featuredStoryBadge ? "position:relative;" : ""}">
+    ${featuredStoryBadge}
     ${cardPhotoHtml(f.photoDataUri, f.logoDataUri, f.businessName || f.name, "card-photo")}
     <div class="card-body">
       <div class="card-top">
@@ -804,7 +811,7 @@ function freelancerCard(f, d, opts = {}) {
       </div>
     </div>
   </a>`;
-  return featuredStoryBadge ? `<div style="position:relative;">${featuredStoryBadge}${cardHtml}</div>` : cardHtml;
+  return cardHtml;
 }
 
 // A freelancer's additional listing (a second/third line of work she registered
@@ -1778,6 +1785,56 @@ route("GET", "/magazine", async (req, res, params, query, ctx) => {
   <a class="btn btn-outline" style="display:block;max-width:220px;margin:14px auto 0;text-align:center;" href="/stories">לכל הסיפורים</a>
   `;
   sendHtml(res, 200, page({ title: "מגזין SheCan", session: ctx.session, body, query }));
+});
+
+// Each issue of the digital magazine is a fully self-contained "flipbook" HTML file (page
+// images embedded as base64, with a page-turn animation) that Sapir uploads herself directly
+// into the EXISTING assets/ folder via the GitHub web UI (plain "Add file -> Upload files",
+// no subfolder needed - a nested assets/magazine/ folder was tried first but GitHub's web UI
+// choked on creating it, so this deliberately reuses the one folder she already has working).
+// The admin "המגזין שלנו" panel above only accepts a URL per issue (not a file upload), so this
+// route is what turns an uploaded flipbook file into an actual public link she can paste into
+// that "קישור לצפייה" field - e.g. a file uploaded as assets/issue-1.html becomes viewable at
+// /magazine/view/issue-1. Files are pre-loaded once at boot (small, static, never change at
+// runtime) rather than hitting the filesystem on every request, same pattern as ICON_FILES
+// below. A matching assets/<slug>.pdf (same slug as the .html flipbook) is optional - when
+// present, the flipbook's own "הורדת המגזין" button links to /magazine/download/<slug> so
+// readers can save/print a plain PDF copy instead of the interactive page-flip version. Only
+// .html/.pdf files are picked up here, so this coexists fine with the .jpg template files that
+// already live in the same assets/ folder for the join/review-story features.
+const MAGAZINE_DIR = path.join(__dirname, "assets");
+const MAGAZINE_ISSUES = {};
+const MAGAZINE_PDFS = {};
+try {
+  fs.readdirSync(MAGAZINE_DIR).forEach((name) => {
+    if (/\.html?$/i.test(name)) {
+      MAGAZINE_ISSUES[name.replace(/\.html?$/i, "")] = fs.readFileSync(path.join(MAGAZINE_DIR, name));
+    } else if (/\.pdf$/i.test(name)) {
+      MAGAZINE_PDFS[name.replace(/\.pdf$/i, "")] = fs.readFileSync(path.join(MAGAZINE_DIR, name));
+    }
+  });
+} catch (e) {
+  console.warn("[magazine] assets/magazine folder not found yet - no flipbook issues loaded (this is fine until the first issue is uploaded).");
+}
+
+route("GET", "/magazine/view/:slug", async (req, res, params, query, ctx) => {
+  // :slug is matched against pre-loaded filenames only (see MAGAZINE_ISSUES above) - never
+  // used to build a filesystem path directly, so there's no path-traversal concern here.
+  const buf = MAGAZINE_ISSUES[params.slug];
+  if (!buf) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הגיליון הזה.</p>` }));
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+  res.end(buf);
+});
+
+route("GET", "/magazine/download/:slug", async (req, res, params, query, ctx) => {
+  const buf = MAGAZINE_PDFS[params.slug];
+  if (!buf) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו קובץ להורדה עבור הגיליון הזה.</p>` }));
+  res.writeHead(200, {
+    "Content-Type": "application/pdf",
+    "Content-Disposition": `attachment; filename="SheCan-Magazine-${String(params.slug).replace(/[^a-zA-Z0-9_-]/g, "")}.pdf"`,
+    "Cache-Control": "public, max-age=3600",
+  });
+  res.end(buf);
 });
 
 // ----- Inspiration stories - כל עצמאית יכולה לענות על כמה שאלות קבועות ולשלוח את הסיפור
