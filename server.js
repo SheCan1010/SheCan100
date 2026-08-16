@@ -1822,7 +1822,13 @@ route("GET", "/magazine/view/:slug", async (req, res, params, query, ctx) => {
   // used to build a filesystem path directly, so there's no path-traversal concern here.
   const buf = MAGAZINE_ISSUES[params.slug];
   if (!buf) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הגיליון הזה.</p>` }));
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+  // Cache-Control kept short (rather than the long max-age this used to have) specifically
+  // because Sapir iterates on the uploaded flipbook file directly (re-uploading the same
+  // filename after edits like the clickable-links fix) - a long-lived cache meant her browser
+  // could easily keep showing the old cached copy for up to an hour after a redeploy with no
+  // visible sign anything was wrong, which is exactly the "I uploaded the new file and nothing
+  // changed" confusion this caused once already.
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
   res.end(buf);
 });
 
@@ -1832,7 +1838,7 @@ route("GET", "/magazine/download/:slug", async (req, res, params, query, ctx) =>
   res.writeHead(200, {
     "Content-Type": "application/pdf",
     "Content-Disposition": `attachment; filename="SheCan-Magazine-${String(params.slug).replace(/[^a-zA-Z0-9_-]/g, "")}.pdf"`,
-    "Cache-Control": "public, max-age=3600",
+    "Cache-Control": "no-cache",
   });
   res.end(buf);
 });
@@ -3654,15 +3660,17 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // Site-visit numbers for the "מספרים כלליים" panel - counted by trackSiteVisit() on every
   // real page load (see near the bottom of the file). Last-7-days breakdown built from
   // siteStats.dailyVisits so Sapir can see a trend, not just one flat lifetime total.
-  const siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {} };
+  const siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {}, realVisits: 0, dailyRealVisits: {} };
+  const siteStatsDailyReal = siteStats.dailyRealVisits || {};
   const todayKey = new Date().toISOString().slice(0, 10);
   const todayVisits = siteStats.dailyVisits[todayKey] || 0;
+  const todayRealVisits = siteStatsDailyReal[todayKey] || 0;
   const last7Days = [];
   for (let i = 6; i >= 0; i--) {
     const dt = new Date();
     dt.setDate(dt.getDate() - i);
     const key = dt.toISOString().slice(0, 10);
-    last7Days.push({ key, count: siteStats.dailyVisits[key] || 0 });
+    last7Days.push({ key, count: siteStats.dailyVisits[key] || 0, realCount: siteStatsDailyReal[key] || 0 });
   }
   // Per-registered-user breakdown ("מי נכנסה וכמה פעמים") - only covers customers/freelancers
   // who logged in at least once since this was added (see identityCookie()/trackSiteVisit()) -
@@ -3700,18 +3708,28 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       </div>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.totalVisits || 0}</div>
-        <div class="muted" style="margin-top:4px;">כניסות לאתר (סה"כ)</div>
+        <div class="muted" style="margin-top:4px;">כניסות לאתר (סה"כ, כולל בוטים)</div>
       </div>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${todayVisits}</div>
-        <div class="muted" style="margin-top:4px;">כניסות היום</div>
+        <div class="muted" style="margin-top:4px;">כניסות היום (סה"כ, כולל בוטים)</div>
+      </div>
+      <div style="flex:1;min-width:160px;background:#EFEAE0;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.realVisits || 0}</div>
+        <div class="muted" style="margin-top:4px;">כניסות אמיתיות (סה"כ, משוערות)</div>
+      </div>
+      <div style="flex:1;min-width:160px;background:#EFEAE0;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${todayRealVisits}</div>
+        <div class="muted" style="margin-top:4px;">כניסות אמיתיות היום (משוערות)</div>
       </div>
     </div>
-    <p class="muted" style="margin-top:16px;margin-bottom:6px;">כניסות ב-7 הימים האחרונים:</p>
+    <p class="muted" style="margin-top:16px;margin-bottom:0;">🩶 = כל כניסה שנספרת (כולל בוטים וסורקים) &nbsp;|&nbsp; 🌸 = הערכת כניסות אמיתיות בלבד (אחרי סינון בוטים ידועים לפי User-Agent - הערכה, לא מדויקת ב-100%)</p>
+    <p class="muted" style="margin-top:6px;margin-bottom:6px;">כניסות ב-7 הימים האחרונים:</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      ${last7Days.map((day) => `<div style="flex:1;min-width:70px;background:var(--white);border:1px solid var(--rose);border-radius:8px;padding:8px 4px;text-align:center;">
-        <div style="font-size:18px;font-weight:700;color:var(--rose-dark);">${day.count}</div>
-        <div class="muted" style="font-size:11px;margin-top:2px;">${day.key.slice(5)}</div>
+      ${last7Days.map((day) => `<div style="flex:1;min-width:80px;background:var(--white);border:1px solid var(--rose);border-radius:8px;padding:8px 4px;text-align:center;">
+        <div style="font-size:16px;font-weight:700;color:var(--rose-dark);">🩶 ${day.count}</div>
+        <div style="font-size:14px;font-weight:700;color:#8A6B2E;margin-top:2px;">🌸 ${day.realCount}</div>
+        <div class="muted" style="font-size:11px;margin-top:4px;">${day.key.slice(5)}</div>
       </div>`).join("")}
     </div>
   </div>
@@ -5396,16 +5414,42 @@ route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
 // f.viewCount already works elsewhere in the app - same trade-off, same reasoning.
 const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/icons/", "/push/"];
 const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/logout"]);
+
+// Best-effort bot/crawler detection via User-Agent, added per Sapir's request after she noticed
+// a traffic spike with no promotion behind it - the raw totalVisits/dailyVisits counters above
+// count every matching page load with no filtering at all (search-engine crawlers, AI-model
+// crawlers, SEO/scraper tools, uptime pingers, etc. all count exactly like a real visitor - see
+// the original comment above). This can never be 100% accurate (a well-behaved bot can spoof a
+// normal-looking browser UA), so it's an estimate layered on top, not a replacement - the raw
+// counters are kept exactly as before so nothing about existing historical numbers changes.
+// Missing/empty User-Agent is also treated as a bot: every real browser sends one, so its
+// absence is far more often a script/bot than a real person.
+const BOT_UA_REGEX = /bot|crawl|spider|slurp|preview|facebookexternalhit|whatsapp|telegram|discordbot|skypeuripreview|vkshare|w3c_validator|headlesschrome|phantomjs|curl\/|wget\/|python-requests|python-urllib|scrapy|go-http-client|okhttp|axios\/|node-fetch|postmanruntime|archiver|ia_archiver|gptbot|chatgpt-user|claudebot|claude-web|anthropic|ccbot|bytespider|petalbot|ahrefsbot|semrushbot|mj12bot|dotbot|applebot|amazonbot|yandexbot|baiduspider|sogou|duckduckbot|google-inspectiontool|googlebot|bingbot|pingdom|uptimerobot|monitor/i;
+function isLikelyBot(userAgent) {
+  const ua = String(userAgent || "").trim();
+  if (!ua) return true;
+  return BOT_UA_REGEX.test(ua);
+}
+
 function trackSiteVisit(method, pathname, session, req) {
   if (method !== "GET") return;
   if (session && session.role === "admin") return;
   if (SITE_VISIT_SKIP_EXACT.has(pathname)) return;
   if (SITE_VISIT_SKIP_PREFIXES.some((p) => pathname.startsWith(p))) return;
   const d = db.load();
-  d.siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {} };
+  d.siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {}, realVisits: 0, dailyRealVisits: {} };
+  d.siteStats.realVisits = d.siteStats.realVisits || 0;
+  d.siteStats.dailyRealVisits = d.siteStats.dailyRealVisits || {};
   d.siteStats.totalVisits = (d.siteStats.totalVisits || 0) + 1;
   const today = new Date().toISOString().slice(0, 10);
   d.siteStats.dailyVisits[today] = (d.siteStats.dailyVisits[today] || 0) + 1;
+  // "Real" (estimated non-bot) counters - same events as above, minus anything whose User-Agent
+  // matches BOT_UA_REGEX or is missing entirely.
+  const bot = isLikelyBot(req.headers["user-agent"]);
+  if (!bot) {
+    d.siteStats.realVisits = (d.siteStats.realVisits || 0) + 1;
+    d.siteStats.dailyRealVisits[today] = (d.siteStats.dailyRealVisits[today] || 0) + 1;
+  }
   // Per-registered-user visit count, via the long-lived scUid identity cookie (see
   // identityCookie() above) - works whether or not she's currently logged in, as long as she's
   // logged in at least once on this browser before. Silently no-ops for anyone without the
