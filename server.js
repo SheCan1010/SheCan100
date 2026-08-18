@@ -1,3 +1,21 @@
+// Forces Playwright to look for its downloaded Chromium browser inside this project's own
+// node_modules folder (node_modules/playwright-core/.local-browsers) instead of its normal
+// default location, a shared cache folder in the OS user's home directory
+// (~/.cache/ms-playwright). This must be set BEFORE anything requires "playwright" anywhere in
+// the app (joinStory.js/reviewStory.js/flyer.js each do that lazily, inside their own
+// functions - setting it here, first thing, guarantees it's already in place no matter which of
+// them runs first). Added after confirming - by having /deploy-check read the actual folder off
+// disk - that ~/.cache/ms-playwright didn't exist AT ALL on Render even right after a deploy
+// whose build log showed the Playwright install step running: the browser download was
+// succeeding during the build step, but the runtime instance was starting from a filesystem that
+// didn't carry that shared home-cache folder over (a known quirk on multi-stage/ephemeral build
+// platforms). node_modules, by contrast, unambiguously *has* to survive from build to runtime -
+// the app can't even start otherwise - so installing there instead sidesteps the problem
+// entirely, without needing any Render dashboard/env-var change (which has been unreliable here
+// before) since it's fully controlled from code. Only takes effect if nothing already overrode
+// it (e.g. a real env var Sapir sets later in Render's dashboard still wins).
+process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "0";
+
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -1120,22 +1138,34 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update51 - 2026-08-18 - postinstall מריץ עכשיו npx playwright install מלא (כל הדפדפנים, לא רק chromium)";
+const DEPLOY_MARKER = "update52 - 2026-08-18 - PLAYWRIGHT_BROWSERS_PATH=0 (הורדת הדפדפן לתוך node_modules במקום תיקיית מטמון חיצונית שלא שורדת בין build ל-runtime)";
 route("GET", "/deploy-check", async (req, res) => {
-  // Also lists what's actually sitting in the Playwright browser cache on disk right now - this
-  // is a direct, no-guesswork answer to "did the chromium download actually succeed this
-  // deploy?" (the exact question that took several rounds of digging through Render's Logs tab
-  // to answer by hand, chasing the "[join-story] ... Executable doesn't exist" error each time).
-  // Playwright's default cache dir is ~/.cache/ms-playwright unless PLAYWRIGHT_BROWSERS_PATH
-  // overrides it - checking both env-var and default so this stays correct either way.
-  let browserCacheReport;
-  try {
-    const cacheDir = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(require("os").homedir(), ".cache", "ms-playwright");
-    const entries = fs.readdirSync(cacheDir);
-    browserCacheReport = `נמצאה תיקיית מטמון בנתיב ${cacheDir}, עם התיקיות הבאות בתוכה:\n` + (entries.length ? entries.map((e) => "  - " + e).join("\n") : "  (התיקייה ריקה - שום דפדפן לא ירד בפועל)");
-  } catch (e) {
-    browserCacheReport = `לא הצלחתי למצוא/לקרוא את תיקיית המטמון של הדפדפנים בכלל (${e.message}) - כנראה שההורדה מעולם לא רצה.`;
+  // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
+  // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
+  // this deploy, and is it somewhere the running app can actually find it?" (the exact question
+  // that took several rounds of digging through Render's Logs tab to answer by hand, chasing the
+  // "[join-story] ... Executable doesn't exist" error each time). Checks both the *old* default
+  // location (~/.cache/ms-playwright - confirmed via this same check to not exist at all on
+  // Render, even right after a deploy whose build log showed the install step running) and the
+  // *new* node_modules-local locations that PLAYWRIGHT_BROWSERS_PATH=0 (see near the top of this
+  // file) redirects the download to instead.
+  function listDir(label, dir) {
+    try {
+      const entries = fs.readdirSync(dir);
+      return `${label} (${dir}):\n` + (entries.length ? entries.map((e) => "  - " + e).join("\n") : "  (התיקייה קיימת אבל ריקה)");
+    } catch (e) {
+      return `${label} (${dir}): לא קיימת/לא נגישה - ${e.message}`;
+    }
   }
+  const homeCache = path.join(require("os").homedir(), ".cache", "ms-playwright");
+  const localBrowsersPlaywright = path.join(__dirname, "node_modules", "playwright", ".local-browsers");
+  const localBrowsersCore = path.join(__dirname, "node_modules", "playwright-core", ".local-browsers");
+  const browserCacheReport = [
+    `PLAYWRIGHT_BROWSERS_PATH env var: ${JSON.stringify(process.env.PLAYWRIGHT_BROWSERS_PATH || null)}`,
+    listDir("תיקיית מטמון ישנה (ברירת מחדל)", homeCache),
+    listDir("תיקייה חדשה בתוך node_modules/playwright", localBrowsersPlaywright),
+    listDir("תיקייה חדשה בתוך node_modules/playwright-core", localBrowsersCore),
+  ].join("\n\n");
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
   res.end(`SheCan deploy marker: ${DEPLOY_MARKER}\nProcess started at: ${new Date(Date.now() - process.uptime() * 1000).toISOString()}\nChecked at: ${new Date().toISOString()}\n\n--- Playwright browser cache check ---\n${browserCacheReport}`);
 });
