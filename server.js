@@ -1120,10 +1120,24 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update48 - 2026-08-18 - הוספת פירוט קבצים למייל אישור + התראת ניהול על כשל ביצירת תמונות";
+const DEPLOY_MARKER = "update51 - 2026-08-18 - postinstall מריץ עכשיו npx playwright install מלא (כל הדפדפנים, לא רק chromium)";
 route("GET", "/deploy-check", async (req, res) => {
+  // Also lists what's actually sitting in the Playwright browser cache on disk right now - this
+  // is a direct, no-guesswork answer to "did the chromium download actually succeed this
+  // deploy?" (the exact question that took several rounds of digging through Render's Logs tab
+  // to answer by hand, chasing the "[join-story] ... Executable doesn't exist" error each time).
+  // Playwright's default cache dir is ~/.cache/ms-playwright unless PLAYWRIGHT_BROWSERS_PATH
+  // overrides it - checking both env-var and default so this stays correct either way.
+  let browserCacheReport;
+  try {
+    const cacheDir = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(require("os").homedir(), ".cache", "ms-playwright");
+    const entries = fs.readdirSync(cacheDir);
+    browserCacheReport = `נמצאה תיקיית מטמון בנתיב ${cacheDir}, עם התיקיות הבאות בתוכה:\n` + (entries.length ? entries.map((e) => "  - " + e).join("\n") : "  (התיקייה ריקה - שום דפדפן לא ירד בפועל)");
+  } catch (e) {
+    browserCacheReport = `לא הצלחתי למצוא/לקרוא את תיקיית המטמון של הדפדפנים בכלל (${e.message}) - כנראה שההורדה מעולם לא רצה.`;
+  }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
-  res.end(`SheCan deploy marker: ${DEPLOY_MARKER}\nProcess started at: ${new Date(Date.now() - process.uptime() * 1000).toISOString()}\nChecked at: ${new Date().toISOString()}`);
+  res.end(`SheCan deploy marker: ${DEPLOY_MARKER}\nProcess started at: ${new Date(Date.now() - process.uptime() * 1000).toISOString()}\nChecked at: ${new Date().toISOString()}\n\n--- Playwright browser cache check ---\n${browserCacheReport}`);
 });
 
 // ----- Home -----

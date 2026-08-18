@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "postinstall": "npx playwright install chromium chromium-headless-shell || true"
+    "postinstall": "npx playwright install || true"
   },
   "engines": {
     "node": ">=18"
