@@ -5431,6 +5431,35 @@ function isLikelyBot(userAgent) {
   return BOT_UA_REGEX.test(ua);
 }
 
+// Debounced persistence for site-visit counters specifically - unlike the many other db.save()
+// calls throughout this file (each triggered by a rare, high-value user action like a signup or
+// review, where writing to disk right away is worth it), trackSiteVisit() below fires on
+// virtually every single GET request site-wide. db.save() does a full JSON.stringify + a
+// synchronous fs.writeFileSync of the ENTIRE database on every call - and this DB is not small,
+// since every freelancer's photo and logo are stored as base64 text directly inside it (see the
+// backup-download panel in the admin dashboard, which explicitly downloads "all photos including
+// logos" as part of the one data file). Doing that full serialize+write on every single page
+// view - including back-to-back crawler hits - means a burst of traffic can pile up several
+// full-DB serializations before the previous one's memory is released, which is almost certainly
+// what produced the "JavaScript heap out of memory" crash. The counters themselves still update
+// instantly in memory either way (db.load() returns the same live cached object every route
+// mutates), so throttling only delays *writing that to disk* - worst case a crash loses a few
+// seconds of visit-count history, never any real user data (every other route's own db.save()
+// call still persists everything, including the latest counts, immediately as before).
+let lastSiteStatsSave = 0;
+const SITE_STATS_SAVE_INTERVAL_MS = 20000;
+function saveSiteStatsThrottled() {
+  const now = Date.now();
+  if (now - lastSiteStatsSave < SITE_STATS_SAVE_INTERVAL_MS) return;
+  lastSiteStatsSave = now;
+  db.save();
+}
+// Best-effort flush on a graceful shutdown (e.g. Render restarting the instance for a normal
+// deploy) so a pending throttled save isn't lost - has no effect on a hard OOM kill, which never
+// reaches these handlers, but costs nothing either.
+process.on("SIGTERM", () => { try { db.save(); } catch (e) {} process.exit(0); });
+process.on("SIGINT", () => { try { db.save(); } catch (e) {} process.exit(0); });
+
 function trackSiteVisit(method, pathname, session, req) {
   if (method !== "GET") return;
   if (session && session.role === "admin") return;
@@ -5461,7 +5490,7 @@ function trackSiteVisit(method, pathname, session, req) {
     const user = list && list.find((x) => x.id === uId);
     if (user) user.siteVisitCount = (user.siteVisitCount || 0) + 1;
   }
-  db.save();
+  saveSiteStatsThrottled();
 }
 
 const server = http.createServer(async (req, res) => {
