@@ -4930,17 +4930,28 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
           <p>יש! הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉</p>
           <p>אפשר לראות אותו כאן: <a href="${profileUrl}">${esc(profileUrl)}</a></p>
           <p>מוזמנת לשתף את קוד הקופון שלך (<strong>${esc(f.dealCode || "")}</strong>) עם הלקוחות שלך, ולהזמין אותן לכתוב לך המלצה ישירות בכרטיסייה - זה מה שיעזור לך להתחיל להיראות ולהתבלט בקהילה.</p>
-          ${(hasJoinImage || hasReviewImage) ? `<p>צירפנו לך גם שני קבצים מוכנים:</p>
-          <ol>
-            ${hasJoinImage ? `<li>תמונה לשיתוף בסטורי/פוסט, עם קוד QR והקישור לפרופיל שלך - כדי לספר לכולן שהצטרפת! 📸</li>` : ""}
-            ${hasReviewImage ? `<li>תמונה להדפסה, עם קוד QR (וגם קישור לגיבוי) שמוביל ישר לכתיבת המלצה - להדביק בעסק כדי שלקוחות יסרקו במקום ✍️</li>` : ""}
-          </ol>` : ""}
+          ${(hasJoinImage || hasReviewImage) ? `<div style="background:#FBF3EC;border:1px solid #E8D9C9;border-radius:10px;padding:16px 18px;margin:18px 0;">
+            <p style="margin:0 0 10px;font-weight:700;">📎 מצורפים לך כאן למייל הזה ${hasJoinImage && hasReviewImage ? "2 קבצים" : "קובץ"} מוכנים לשימוש - כדאי לשמור אותם מהמייל:</p>
+            <ol style="margin:0;padding-right:20px;">
+              ${hasJoinImage ? `<li style="margin-bottom:8px;"><strong>1-הצטרפתי-לSheCan-לשיתוף.png</strong> - תמונה מוכנה לשיתוף בסטורי/פוסט באינסטגרם או בפייסבוק, עם קוד QR והקישור לפרופיל שלך - כדי לספר לכולן שהצטרפת! 📸</li>` : ""}
+              ${hasReviewImage ? `<li><strong>2-סרקי-אותי-להדפסה.png</strong> - תמונה מוכנה להדפסה ולהדבקה בעסק שלך, עם קוד QR שמוביל ישר לכתיבת המלצה - כדי שלקוחות יוכלו לסרוק במקום ולהמליץ עלייך ✍️</li>` : ""}
+            </ol>
+          </div>` : ""}
         </div>`,
         attachments
       ).catch(() => ({ ok: false, reason: "send_failed" }));
       if (!emailResult.ok) {
         db.save();
         return redirect(res, `/admin?ok=${encodeURIComponent(`אושרה! היא כבר באוויר. ⚠️ שימי לב - שליחת מייל האישור אליה נכשלה (${f.email}) - כדאי לבדוק את הגדרות שירות המייל, או ללחוץ "📧 שליחת פרטי התחברות" כדי לנסות שוב.`)}`);
+      }
+      // Surface a failed image build right here in the admin panel too, not just in the server
+      // log (which nobody's watching day-to-day) - per the same "make failures visible instead
+      // of silent" request as the emailResult check above. The email itself still went out fine
+      // either way (build failures never block that), just without one or both attachments.
+      if (!hasJoinImage || !hasReviewImage) {
+        db.save();
+        const missing = !hasJoinImage && !hasReviewImage ? "שני הקבצים" : !hasJoinImage ? "קובץ ה'הצטרפתי' לשיתוף" : "קובץ ה'סרקי אותי' להדפסה";
+        return redirect(res, `/admin?ok=${encodeURIComponent(`אושרה! היא כבר באוויר. המייל נשלח, אבל ⚠️ ${missing} לא צורפו אליו (בעיה טכנית ביצירת התמונות בצד השרת) - כדאי לבדוק את לוג ה-Logs ב-Render מסביב לזמן הזה, לחפש שורה עם "[join-story]" או "[review-story]".`)}`);
       }
     }
   }
