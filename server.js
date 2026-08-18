@@ -1114,6 +1114,18 @@ function route(method, pattern, handler) {
   routes.push({ method, regex: new RegExp("^" + regexStr + "$"), keys, handler });
 }
 
+// Bumped by hand every time an updated server.js is handed off, specifically so Sapir can
+// confirm a deploy actually picked up the newest code with one glance at /deploy-check in her
+// browser - instead of having to dig through Render's dashboard/logs each time to answer "did my
+// last upload actually go live?". Added after that exact question came up repeatedly in a row
+// (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
+// once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
+const DEPLOY_MARKER = "update48 - 2026-08-18 - הוספת פירוט קבצים למייל אישור + התראת ניהול על כשל ביצירת תמונות";
+route("GET", "/deploy-check", async (req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
+  res.end(`SheCan deploy marker: ${DEPLOY_MARKER}\nProcess started at: ${new Date(Date.now() - process.uptime() * 1000).toISOString()}\nChecked at: ${new Date().toISOString()}`);
+});
+
 // ----- Home -----
 route("GET", "/", async (req, res, params, query, ctx) => {
   const d = db.load();
