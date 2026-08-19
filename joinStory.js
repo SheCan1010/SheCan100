@@ -73,7 +73,12 @@ function joinStoryHtml({ qrDataUrl, profileUrl }) {
 async function buildJoinStoryImageBuffer({ qrDataUrl, profileUrl }) {
   if (!templateDataUri) throw new Error("join-story template missing");
   const { chromium } = require("playwright");
-  const browser = await chromium.launch({ args: ["--no-sandbox"] });
+  // Extra flags on top of --no-sandbox specifically to keep memory use down on a small
+  // container (Sapir's Render plan has 512MB total RAM) - --disable-dev-shm-usage is the
+  // standard fix for Chromium on constrained containers, where the default /dev/shm is far too
+  // small for Chromium's normal shared-memory usage and either crashes it or forces expensive
+  // fallbacks; the rest trim unnecessary subsystems this one-shot screenshot job never needs.
+  const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--no-zygote"] });
   try {
     const page = await browser.newPage({ viewport: { width: 1124, height: 1999 } });
     await page.setContent(joinStoryHtml({ qrDataUrl, profileUrl }), { waitUntil: "load" });

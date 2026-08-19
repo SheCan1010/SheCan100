@@ -77,7 +77,9 @@ function escHtml(s) {
 
 async function buildFlyerPdfBuffer({ qrDataUrl, businessName }) {
   const { chromium } = require("playwright");
-  const browser = await chromium.launch({ args: ["--no-sandbox"] });
+  // Same memory-saving flags as joinStory.js/reviewStory.js (not currently called from
+  // server.js, but kept consistent in case that changes) - see joinStory.js's comment for why.
+  const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--no-zygote"] });
   try {
     const page = await browser.newPage();
     await page.setContent(flyerHtml({ qrDataUrl, businessName: escHtml(businessName) }), { waitUntil: "load" });

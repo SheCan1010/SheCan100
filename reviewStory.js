@@ -64,7 +64,10 @@ function reviewStoryHtml({ qrDataUrl, reviewUrl }) {
 async function buildReviewStoryImageBuffer({ qrDataUrl, reviewUrl }) {
   if (!templateDataUri) throw new Error("review-story template missing");
   const { chromium } = require("playwright");
-  const browser = await chromium.launch({ args: ["--no-sandbox"] });
+  // Same memory-saving flags as joinStory.js's buildJoinStoryImageBuffer - see the comment
+  // there for why (512MB total RAM on Sapir's Render plan, --disable-dev-shm-usage being the
+  // standard fix for Chromium on containers with a too-small /dev/shm).
+  const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--no-zygote"] });
   try {
     const page = await browser.newPage({ viewport: { width: 1124, height: 1999 } });
     await page.setContent(reviewStoryHtml({ qrDataUrl, reviewUrl }), { waitUntil: "load" });
