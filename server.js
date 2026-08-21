@@ -994,14 +994,20 @@ function reviewDisplayName(r) {
 // ---------- "הזירה" (Arena) helpers ----------
 // Every approved freelancer whose MAIN profile, or ANY approved additional listing, matches
 // the given category (and subcategory, if the asker picked one) - used to decide who gets
-// notified by email when a new arena question is approved.
+// notified by email when a new arena question is approved. When the question has a
+// subcategory, a freelancer still counts as a match if either her subcategory is the exact
+// same one, OR she never narrowed down to a subcategory at all (works the category broadly) -
+// per explicit request, so a generalist in the field doesn't silently miss every subcategorized
+// question just because she didn't pick one of her own. A freelancer with a DIFFERENT specific
+// subcategory (e.g. manicure, when the question was tagged "bridal makeup") still doesn't match.
 function freelancersForCategory(d, categoryId, subcategoryId) {
+  const subMatches = (candidateSub) => !subcategoryId || !candidateSub || candidateSub === subcategoryId;
   const matchIds = new Set();
   d.freelancers.forEach((f) => {
     if (f.status !== "approved") return;
-    if (f.categoryId === categoryId && (!subcategoryId || f.subcategoryId === subcategoryId)) matchIds.add(f.id);
+    if (f.categoryId === categoryId && subMatches(f.subcategoryId)) matchIds.add(f.id);
     (f.additionalListings || []).forEach((l) => {
-      if (l.status === "approved" && l.categoryId === categoryId && (!subcategoryId || l.subcategoryId === subcategoryId)) matchIds.add(f.id);
+      if (l.status === "approved" && l.categoryId === categoryId && subMatches(l.subcategoryId)) matchIds.add(f.id);
     });
   });
   return d.freelancers.filter((f) => matchIds.has(f.id));
