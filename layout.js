@@ -188,6 +188,7 @@ a{color:inherit;text-decoration:none;}
 .chat-msg{padding:10px 14px;border-radius:12px;margin-bottom:8px;max-width:80%;}
 .chat-msg.from-customer{background:var(--cream);margin-inline-end:auto;}
 .chat-msg.from-freelancer{background:var(--rose);color:var(--white);margin-inline-start:auto;}
+.chat-msg.from-admin{background:var(--rose-dark);color:var(--white);}
 .chat-msg .chat-meta{display:block;font-size:11px;opacity:.75;margin-top:4px;}
 .chat-target-label{display:block;font-size:11px;font-weight:700;opacity:.85;margin-bottom:4px;}
 .badge-available{background:#5C7A5A;}

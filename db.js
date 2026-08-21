@@ -258,7 +258,7 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     admins: [
       { id: "1", email: "admin@shecan.co.il", name: "ספיר", passwordHash: null, pushSubscriptions: [] },
     ],
-    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1 },
+    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1 },
   };
 }
 
@@ -435,6 +435,12 @@ function save() {
 
 function nextId(kind) {
   const d = load();
+  // Self-healing for any kind that wasn't in the original defaultData() nextId object (e.g.
+  // added to the app after Sapir's production db.json was already created) - without this,
+  // d.nextId[kind]++ on an unknown key would silently become NaN forever (undefined++ === NaN,
+  // and NaN++ stays NaN), so every "new" id from that point on would collide as the string
+  // "NaN". Starting it at 1 the first time it's ever requested keeps ids unique either way.
+  if (typeof d.nextId[kind] !== "number" || Number.isNaN(d.nextId[kind])) d.nextId[kind] = 1;
   const id = String(d.nextId[kind]++);
   save();
   return id;

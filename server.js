@@ -16,6 +16,16 @@
 // it (e.g. a real env var Sapir sets later in Render's dashboard still wins).
 process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "0";
 
+// EMERGENCY KILL SWITCH - flip to true to re-enable. Turned off 2026-08-19 after the site went
+// into an actual crash loop (restarting every 1-3 minutes) on Render's 512MB Starter plan, right
+// after Chromium-based image generation started working for the first time - each launch is
+// memory-heavy enough on a 512MB instance to be the most likely trigger. Disabling this stops
+// server.js from ever calling buildJoinStoryImageBuffer/buildReviewStoryImageBuffer at all, so
+// approvals go back to sending the plain email with no image attachments (safe, non-blocking,
+// same as any other build failure) until either the memory picture is better understood or the
+// Render plan is upgraded.
+const STORY_IMAGES_ENABLED = false;
+
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -719,6 +729,19 @@ function getCurrentStory(d) {
     if (picked) return picked;
   }
   return sorted.find((s) => s.id === autoId) || sorted[0];
+}
+
+// The date the story rotation will next turn over (whether that lands on the automatic queue
+// advancing, or on a manual admin pin's one cycle expiring - tickRotation treats both the same
+// way, so this is correct either way). Calls getCurrentStory(d) first purely for its side
+// effect of running tickRotation, which lazily initializes/advances settings.storyLastBoundary
+// the first time it's ever needed - so this stays correct even before any story has ever been
+// picked yet. Used to show a small "next update" hint at the bottom of a story page.
+function nextStoryRotationLabel(d) {
+  getCurrentStory(d);
+  if (!d.settings.storyLastBoundary) return null;
+  const next = nextIsraelBoundary(d.settings.storyLastBoundary, STORY_BOUNDARY.weekday, STORY_BOUNDARY.hour);
+  return new Date(next).toLocaleDateString("he-IL");
 }
 
 function initials(name) { return (name || "?").trim().charAt(0).toUpperCase(); }
@@ -1425,7 +1448,19 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   }
 
   f.viewCount = (f.viewCount || 0) + 1;
-  db.save();
+  // This route (a single freelancer's public profile) is the single most-visited page type on
+  // the whole site - every card click from the home page, search, or a category page lands
+  // here. An unthrottled db.save() here means a full JSON.stringify + synchronous
+  // fs.writeFileSync of the ENTIRE database (now 96+ freelancers' worth of base64 photos/logos/
+  // galleries, plus every customer/review/story) on nearly every single page view site-wide -
+  // exactly the same full-DB-write-per-request problem that already caused the "JavaScript heap
+  // out of memory" crash for the old unthrottled site-visit counter (see saveSiteStatsThrottled's
+  // own comment below), just triggered from a different, even higher-traffic page. Reusing that
+  // same throttle here - it's a general "coalesce non-critical counter saves to at most once
+  // every 20s" mechanism, not actually specific to site-wide stats - so this stops being a
+  // per-request disk write without losing anything beyond a few seconds of the very latest view
+  // count on a crash (the count itself still updates instantly in memory either way).
+  saveSiteStatsThrottled();
 
   let myThread = [];
   if (isCustomer) {
@@ -1927,6 +1962,7 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
   let currentHtml = `<p class="muted" style="text-align:center;">הסיפור הראשון בדרך - חכי בסבלנות.</p>`;
   if (current) {
     const { f, title, dateStr, qaHtml, commentsHtml } = storyDetailHtml(current, d);
+    const nextRotationLabel = nextStoryRotationLabel(d);
     currentHtml = `
     <div class="panel">
       <span class="badge">הסיפור המוצג עכשיו</span>
@@ -1935,6 +1971,7 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
       <p class="muted">${dateStr}</p>
       ${qaHtml}
       ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(f.businessName || f.name)}</a>` : ""}
+      ${nextRotationLabel ? `<p class="muted" style="font-size:11px;text-align:center;margin-top:16px;">הסיפור הבא יתעדכן ב-${esc(nextRotationLabel)}</p>` : ""}
       <h4 style="margin-top:24px;">תגובות</h4>
       ${commentsHtml}
       ${isCustomer ? `
@@ -1978,6 +2015,7 @@ route("GET", "/stories/:id", async (req, res, params, query, ctx) => {
   if (!s) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הסיפור הזה.</p>` }));
   const isCustomer = requireRole(ctx.session, "customer");
   const { f, title, dateStr, qaHtml, commentsHtml } = storyDetailHtml(s, d);
+  const nextRotationLabel = nextStoryRotationLabel(d);
   const body = `
   <div class="panel">
     ${s.photoDataUri ? `<img src="${s.photoDataUri}" alt="" style="width:100%;max-height:320px;object-fit:cover;border-radius:10px;margin-bottom:14px;" />` : ""}
@@ -1985,6 +2023,7 @@ route("GET", "/stories/:id", async (req, res, params, query, ctx) => {
     <p class="muted" style="text-align:center;">${dateStr}</p>
     ${qaHtml}
     ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(f.businessName || f.name)}</a>` : ""}
+    ${nextRotationLabel ? `<p class="muted" style="font-size:11px;text-align:center;margin-top:16px;">הסיפור הבא באתר יתעדכן ב-${esc(nextRotationLabel)}</p>` : ""}
     <h4 style="margin-top:24px;">תגובות</h4>
     ${commentsHtml}
     ${isCustomer ? `
@@ -3231,6 +3270,18 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const storyQuestions = d.settings.storyQuestions || [];
   const storyUrl = myStory ? `${getOrigin(req)}/stories/${myStory.id}` : "";
 
+  // Customers she can start a "deal closed" confirmation with - anyone who's ever revealed her
+  // coupon while logged in (the only place we reliably link a real customer identity to this
+  // specific freelancer). Shown as a datalist so she can also just type any other registered
+  // customer's email directly if the deal happened without a coupon reveal.
+  const couponCustomers = d.customers.filter((c) => (c.revealedCoupons || []).some((r) => r.freelancerId === f.id));
+  const myDeals = (d.deals || []).filter((x) => x.freelancerId === f.id).slice().reverse();
+
+  const myAdminMessages = (d.adminMessages || []).filter((m) => m.freelancerId === f.id).slice().reverse();
+  let anyAdminMsgMarkedRead = false;
+  myAdminMessages.forEach((m) => { if (!m.read) { m.read = true; anyAdminMsgMarkedRead = true; } });
+  if (anyAdminMsgMarkedRead) db.save();
+
   // The first time an approved freelancer's dashboard renders after she gets approved, pop
   // up a "מזל טוב, את בפנים!!" welcome, followed by the "צרפי חברות" referral upsell (with
   // its own working link) when that contest is active. Marked seen right away so it only
@@ -3272,6 +3323,12 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ${f.isAdvertised ? `<span class="badge badge-ad">📣 מודעה פעילה</span> ` : ""}
     <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"} · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}</span>
   </div>
+
+  ${myAdminMessages.length ? `
+  <div class="panel">
+    <h3>הודעות מהנהלת SheCan 📣</h3>
+    <div class="chat-thread" style="text-align:right;">${myAdminMessages.map((m) => `<div class="chat-msg from-admin">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
+  </div>` : ""}
 
   <div class="panel">
     <h3>💡 איך להופיע ראשונה?</h3>
@@ -3435,6 +3492,22 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel">
+    <h3>💰 סימון עסקה שנסגרה</h3>
+    <p class="muted">כשעסקה עם לקוחה נסגרת באמת, כתבי כאן את המייל שלה - נשלח לה בקשת אישור (במייל/בהתראה), וברגע שהיא תאשר זה יופיע כאן כ"אושרה". כדי שזה יעבוד, חשוב שהיא תהיה רשומה באתר עם המייל הזה.</p>
+    <form method="post" action="/freelancer-dashboard/deal/close">
+      <label>אימייל הלקוחה
+      <input type="email" name="customerEmail" list="scDealCustomers" required placeholder="example@mail.com" /></label>
+      <datalist id="scDealCustomers">
+        ${couponCustomers.map((c) => `<option value="${esc(c.email)}">${esc(c.name)}</option>`).join("")}
+      </datalist>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שליחת בקשת אישור ללקוחה</button>
+    </form>
+    ${myDeals.length ? `<div class="table-scroll" style="margin-top:16px;"><table class="table-simple"><tr><th>לקוחה</th><th>סטטוס</th><th>תאריך</th></tr>
+      ${myDeals.map((dl) => `<tr><td>${esc(dl.customerName)}</td><td>${dealStatusLabel(dl.status)}</td><td>${esc(new Date(dl.createdAt).toLocaleDateString("he-IL"))}</td></tr>`).join("")}
+    </table></div>` : ""}
+  </div>
+
+  <div class="panel">
     <h3>מה אומרות עלייך</h3>
     ${reviews.length ? reviews.map((r) => `
       ${r.listingId ? `<p class="muted" style="margin:0 0 -6px;font-size:13px;">על התחום: ${esc(reviewTargetLabel(d, r))}</p>` : ""}
@@ -3585,6 +3658,103 @@ route("POST", "/freelancer-dashboard/message/:customerId/reply", async (req, res
     emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(customer.name || "")},</p><p>${esc(f.businessName || f.name)} ענתה לך ב-SheCan:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p></div>`,
   }).catch(() => {});
   redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("התשובה נשלחה!")}`);
+});
+
+// ===================== "עסקה נסגרה" - אישור דו-צדדי =====================
+// Per explicit request: a freelancer marking a deal "closed" isn't enough on its own (too easy
+// to click carelessly, or to game) - the customer has to confirm it too before it counts. A
+// deal always starts as "pending_customer" the moment the freelancer submits it, and only
+// becomes "confirmed" once the customer clicks through her own email/push link and says yes
+// (or "declined" if she says no). The freelancer can only start a deal against a customer who
+// already has a real SheCan account (identified by email) - that's the only way we have any
+// address to reach her at for the confirmation step.
+function dealStatusLabel(status) {
+  if (status === "confirmed") return "✅ אושרה ע\"י הלקוחה";
+  if (status === "declined") return "❌ הלקוחה סימנה שלא";
+  return "⏳ ממתינה לאישור הלקוחה";
+}
+
+route("POST", "/freelancer-dashboard/deal/close", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const email = (body.get("customerEmail") || "").trim().toLowerCase();
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  const customer = d.customers.find((c) => (c.email || "").toLowerCase() === email);
+  if (!customer) {
+    return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("לא מצאנו לקוחה רשומה עם המייל הזה - חשוב לוודא שהיא נרשמה לאתר עם המייל הזה.")}`);
+  }
+  d.deals = d.deals || [];
+  const id = db.nextId("deal");
+  const confirmToken = crypto.randomBytes(24).toString("hex");
+  d.deals.push({
+    id, freelancerId: f.id, customerId: customer.id, customerName: customer.name,
+    status: "pending_customer", confirmToken,
+    createdAt: new Date().toISOString(), customerConfirmedAt: null,
+  });
+  db.save();
+  const link = `${getOrigin(req)}/deal-confirm/${confirmToken}`;
+  notify(customer, {
+    pushTitle: "אישור עסקה ב-SheCan", pushBody: `${f.businessName || f.name} סימנה שסגרתן עסקה - נשמח שתאשרי`, url: `/deal-confirm/${confirmToken}`,
+    emailSubject: `אישור עסקה עם ${f.businessName || f.name} ב-SheCan`,
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(customer.name || "")},</p><p><strong>${esc(f.businessName || f.name)}</strong> סימנה ב-SheCan שסגרתן עסקה יחד. נשמח שתאשרי את זה בלחיצה אחת:</p><p><a href="${link}" style="background:#C98A9A;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:800;display:inline-block;">לאישור העסקה</a></p><p class="muted">אם זה לא מדויק, אפשר גם לסמן "לא" בעמוד הזה - שום דבר לא יאושר בלי שתעשי זאת בעצמך.</p></div>`,
+  }).catch(() => {});
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("בקשת האישור נשלחה ללקוחה - ברגע שהיא תאשר זה יתעדכן כאן.")}`);
+});
+
+route("GET", "/deal-confirm/:token", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const deal = (d.deals || []).find((x) => x.confirmToken === params.token);
+  if (!deal) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<div class="panel" style="text-align:center;"><p>הקישור הזה לא תקין.</p></div>` }));
+  const f = d.freelancers.find((x) => x.id === deal.freelancerId);
+  const fName = esc(f ? (f.businessName || f.name) : "העצמאית");
+  let body;
+  if (deal.status !== "pending_customer") {
+    body = `<div class="panel" style="max-width:480px;margin:0 auto;text-align:center;">
+      <p>${deal.status === "confirmed" ? `כבר אישרת שסגרת עסקה עם ${fName} - תודה! 💛` : "כבר טיפלת בבקשת האישור הזו בעבר."}</p>
+    </div>`;
+  } else {
+    body = `
+    <div class="panel" style="max-width:480px;margin:0 auto;text-align:center;">
+      <h2 class="section-title" style="margin-top:0;">אישור עסקה</h2>
+      <p>${fName} סימנה ב-SheCan שסגרתן עסקה יחד. זה נכון?</p>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:18px;">
+        <form method="post" action="/deal-confirm/${deal.confirmToken}/yes"><button class="btn" type="submit">כן, נכון 🎉</button></form>
+        <form method="post" action="/deal-confirm/${deal.confirmToken}/no"><button class="btn btn-outline" type="submit">לא</button></form>
+      </div>
+    </div>`;
+  }
+  sendHtml(res, 200, page({ title: "אישור עסקה", session: ctx.session, body }));
+});
+
+route("POST", "/deal-confirm/:token/yes", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const deal = (d.deals || []).find((x) => x.confirmToken === params.token);
+  if (deal && deal.status === "pending_customer") {
+    deal.status = "confirmed";
+    deal.customerConfirmedAt = new Date().toISOString();
+    db.save();
+    const f = d.freelancers.find((x) => x.id === deal.freelancerId);
+    if (f) {
+      notify(f, {
+        pushTitle: "עסקה אושרה! 🎉", pushBody: `${deal.customerName} אישרה שסגרתן עסקה`, url: "/freelancer-dashboard",
+        emailSubject: "עסקה אושרה ב-SheCan",
+        emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p><strong>${esc(deal.customerName)}</strong> אישרה שסגרתן עסקה יחד. מעולה! 🎉</p></div>`,
+      }).catch(() => {});
+    }
+  }
+  redirect(res, `/deal-confirm/${params.token}`);
+});
+
+route("POST", "/deal-confirm/:token/no", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const deal = (d.deals || []).find((x) => x.confirmToken === params.token);
+  if (deal && deal.status === "pending_customer") {
+    deal.status = "declined";
+    deal.customerConfirmedAt = new Date().toISOString();
+    db.save();
+  }
+  redirect(res, `/deal-confirm/${params.token}`);
 });
 
 route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
@@ -3758,10 +3928,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${activeFreelancers.length}</div>
         <div class="muted" style="margin-top:4px;">עצמאיות מאושרות ופעילות</div>
       </div>
-      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+      <a href="#pending-approvals" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת הממתינות לאישור">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingFreelancers.length}</div>
-        <div class="muted" style="margin-top:4px;">ממתינות לאישור</div>
-      </div>
+        <div class="muted" style="margin-top:4px;">ממתינות לאישור ↓</div>
+      </a>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.totalVisits || 0}</div>
         <div class="muted" style="margin-top:4px;">כניסות לאתר (סה"כ, כולל בוטים)</div>
@@ -3806,6 +3976,27 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel">
+    <h3>שליחת הודעה לעצמאית</h3>
+    <p class="muted">ההודעה תופיע גם באזור האישי שלה באתר וגם תישלח למייל שלה - כדי שבטוח תגיע אליה.</p>
+    <form method="post" action="/admin/message-freelancer" style="max-width:480px;">
+      <label>עצמאית
+      <select name="freelancerId" required>
+        <option value="">בחירת עצמאית...</option>
+        ${d.freelancers.slice().sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he")).map((f) => `<option value="${f.id}">${esc(f.businessName || f.name)}${f.status !== "approved" ? " (ממתינה לאישור)" : ""}</option>`).join("")}
+      </select></label>
+      <label>ההודעה
+      <textarea name="text" maxlength="1000" required></textarea></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שליחת הודעה</button>
+    </form>
+    ${(d.adminMessages || []).length ? `<div class="table-scroll" style="margin-top:16px;"><table class="table-simple"><tr><th>לעצמאית</th><th>הודעה</th><th>תאריך</th></tr>
+      ${d.adminMessages.slice().reverse().slice(0, 20).map((m) => {
+        const mf = d.freelancers.find((x) => x.id === m.freelancerId);
+        return `<tr><td>${esc(mf ? (mf.businessName || mf.name) : "-")}</td><td>${esc(m.text)}</td><td>${esc(new Date(m.date).toLocaleDateString("he-IL"))}</td></tr>`;
+      }).join("")}
+    </table></div>` : ""}
+  </div>
+
+  <div class="panel">
     <h3>כתובת המייל שלך להתחברות</h3>
     <p class="muted">זו הכתובת שאיתה את מתחברת לפאנל הניהול (כרגע: ${esc(admin.email)}). היא לא מוצגת ללקוחות - לשינוי המייל שהלקוחות רואות ליצירת קשר, זה בפאנל "קבוצת הווטסאפ והמייל ליצירת קשר" למטה.</p>
     <form method="post" action="/admin/change-email">
@@ -3825,7 +4016,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;">
     <h3>מחכות לאישור שלך (${pendingFreelancers.length})</h3>
     ${pendingFreelancers.length ? pendingFreelancers.map((f) => `
       <div class="panel" style="background:var(--cream);">
@@ -4165,16 +4356,19 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       </select></label>
       <button class="btn btn-small" style="margin-top:10px;" type="submit">עדכון</button>
     </form>` : ""}
-    ${approvedStoriesForAdmin.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>על מי</th><th>תאריך</th><th>פעולות</th></tr>
-      ${d.stories.filter((s) => s.status === "approved").slice().reverse().map((s) => {
+    <p class="muted" style="margin-top:-4px;margin-bottom:14px;">כל הסיפורים שנכתבו אי פעם (מאושרים, ממתינים ונדחים) - לא רק אלו שבאוויר עכשיו.</p>
+    ${d.stories.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>על מי</th><th>סטטוס</th><th>תאריך</th><th>פעולות</th></tr>
+      ${d.stories.slice().reverse().map((s) => {
         const sf = d.freelancers.find((x) => x.id === s.freelancerId);
         const title = s.title || (sf ? `הסיפור של ${sf.businessName || sf.name}` : "סיפור השראה");
+        const statusLabel = s.status === "approved" ? "מאושר ✓" : s.status === "pending" ? "ממתין לאישור" : "נדחה";
+        const titleCell = s.status === "approved" ? `<a href="/stories/${s.id}">${esc(title)}</a>` : esc(title);
         return `<tr>
-          <td><a href="/stories/${s.id}">${esc(title)}</a></td><td>${esc(sf ? (sf.businessName || sf.name) : "-")}</td><td>${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</td>
+          <td>${titleCell}</td><td>${esc(sf ? (sf.businessName || sf.name) : "-")}</td><td>${statusLabel}</td><td>${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</td>
           <td><form method="post" action="/admin/story/${s.id}/delete"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
         </tr>`;
       }).join("")}
-    </table></div>` : `<p class="muted">עדיין אין סיפורים שפורסמו.</p>`}
+    </table></div>` : `<p class="muted">עדיין אין סיפורים.</p>`}
     <form method="post" action="/admin/story" enctype="multipart/form-data" style="margin-top:14px;max-width:480px;">
       <label>הוספת סיפור ידנית (למשל סיפור שאת כותבת בעצמך)</label>
       <label>כותרת
@@ -4334,6 +4528,31 @@ route("POST", "/admin/story-of-week", async (req, res, params, query, ctx) => {
   d.settings.storyOfWeekId = body.get("storyOfWeekId") || null;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("עודכן - זה הסיפור שיוצג עכשיו, למשך שבוע אחד (אח\"כ התור האוטומטי ממשיך).")}`);
+});
+
+// A direct message from the admin to one specific freelancer - shown inside her own dashboard
+// AND always sent to her email too (not just as a push-unavailable fallback like notify()'s
+// usual behaviour elsewhere in the app - here Sapir explicitly wants both channels every time,
+// since this is meant to reliably reach her about something specific).
+route("POST", "/admin/message-freelancer", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === body.get("freelancerId"));
+  const text = (body.get("text") || "").trim();
+  if (!f || !text) {
+    return redirect(res, `/admin?err=${encodeURIComponent("יש לבחור עצמאית ולכתוב הודעה.")}`);
+  }
+  d.adminMessages = d.adminMessages || [];
+  d.adminMessages.push({ id: db.nextId("adminMessage"), freelancerId: f.id, text, date: new Date().toISOString(), read: false });
+  db.save();
+  sendPushToUser(f, { title: "הודעה מהנהלת SheCan", body: text.slice(0, 140), url: "/freelancer-dashboard" }).catch(() => {});
+  if (hasRealEmail(f)) {
+    sendEmail(f.email, "הודעה חדשה מהנהלת SheCan",
+      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>קיבלת הודעה מהנהלת SheCan:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לראות אותה גם באזור האישי שלך באתר.</p></div>`
+    ).catch(() => {});
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("ההודעה נשלחה ל" + (f.businessName || f.name) + "!")}`);
 });
 
 route("POST", "/admin/ad-price", async (req, res, params, query, ctx) => {
@@ -4949,6 +5168,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
       // logged and skipped silently - the approval itself, and the rest of this email, must
       // never be blocked by an image-generation problem.
       try {
+        if (!STORY_IMAGES_ENABLED) throw new Error("story images temporarily disabled (STORY_IMAGES_ENABLED=false) - see kill switch near top of file");
         const profileQrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(profileUrl)}`);
         if (!profileQrRes.ok) throw new Error(`qrserver responded ${profileQrRes.status}`);
         const profileQrBuf = Buffer.from(await profileQrRes.arrayBuffer());
@@ -4966,6 +5186,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
       // request, now that this on-brand version covers the same job. Same
       // build-can-fail-silently safety as (1) above.
       try {
+        if (!STORY_IMAGES_ENABLED) throw new Error("story images temporarily disabled (STORY_IMAGES_ENABLED=false) - see kill switch near top of file");
         const reviewQrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(reviewUrl)}`);
         if (!reviewQrRes.ok) throw new Error(`qrserver responded ${reviewQrRes.status}`);
         const reviewQrBuf = Buffer.from(await reviewQrRes.arrayBuffer());
@@ -5214,6 +5435,8 @@ route("POST", "/admin/freelancer/:id/delete", async (req, res, params, query, ct
   d.stories = (d.stories || []).filter((s) => s.freelancerId !== fid);
   d.chatMessages = (d.chatMessages || []).filter((m) => m.freelancerId !== fid);
   d.couponRevealEvents = (d.couponRevealEvents || []).filter((e) => e.freelancerId !== fid);
+  d.deals = (d.deals || []).filter((x) => x.freelancerId !== fid);
+  d.adminMessages = (d.adminMessages || []).filter((m) => m.freelancerId !== fid);
   d.polls = (d.polls || []).filter((p) => p.freelancerId !== fid);
   (d.arenaQuestions || []).forEach((q) => {
     q.answers = (q.answers || []).filter((a) => a.freelancerId !== fid);
@@ -5498,21 +5721,29 @@ function isLikelyBot(userAgent) {
   return BOT_UA_REGEX.test(ua);
 }
 
-// Debounced persistence for site-visit counters specifically - unlike the many other db.save()
-// calls throughout this file (each triggered by a rare, high-value user action like a signup or
-// review, where writing to disk right away is worth it), trackSiteVisit() below fires on
-// virtually every single GET request site-wide. db.save() does a full JSON.stringify + a
-// synchronous fs.writeFileSync of the ENTIRE database on every call - and this DB is not small,
-// since every freelancer's photo and logo are stored as base64 text directly inside it (see the
-// backup-download panel in the admin dashboard, which explicitly downloads "all photos including
-// logos" as part of the one data file). Doing that full serialize+write on every single page
-// view - including back-to-back crawler hits - means a burst of traffic can pile up several
-// full-DB serializations before the previous one's memory is released, which is almost certainly
-// what produced the "JavaScript heap out of memory" crash. The counters themselves still update
-// instantly in memory either way (db.load() returns the same live cached object every route
-// mutates), so throttling only delays *writing that to disk* - worst case a crash loses a few
-// seconds of visit-count history, never any real user data (every other route's own db.save()
-// call still persists everything, including the latest counts, immediately as before).
+// Debounced persistence for high-frequency, low-value counters - unlike the many other
+// db.save() calls throughout this file (each triggered by a rare, high-value user action like a
+// signup or review, where writing to disk right away is worth it), this is for updates that fire
+// on virtually every single GET request site-wide (trackSiteVisit() below, and the per-
+// freelancer-profile view counter in GET /freelancer/:id). db.save() does a full
+// JSON.stringify + a synchronous fs.writeFileSync of the ENTIRE database on every call - and
+// this DB is not small, since every freelancer's photo and logo are stored as base64 text
+// directly inside it (see the backup-download panel in the admin dashboard, which explicitly
+// downloads "all photos including logos" as part of the one data file) - and only grows as more
+// freelancers join. Doing that full serialize+write on every single page view - including
+// back-to-back crawler hits - means a burst of traffic can pile up several full-DB
+// serializations before the previous one's memory is released, which is almost certainly what
+// produced the original "JavaScript heap out of memory" crash, and (even once it's not enough
+// traffic to OOM) still blocks Node's single event loop for real time on every hit, which is
+// exactly the kind of thing that shows up as the whole site feeling sluggish under normal
+// browsing once there are enough freelancers/photos in the DB. The counters themselves still
+// update instantly in memory either way (db.load() returns the same live cached object every
+// route mutates), so throttling only delays *writing that to disk* - worst case a crash loses a
+// few seconds of view-count history, never any real user data (every other route's own
+// db.save() call still persists everything, including the latest counts, immediately as
+// before). Despite the name, this is intentionally shared by any such counter, not just site
+// stats - they all fold into the same 20-second window since they're all equally fine to
+// coalesce together.
 let lastSiteStatsSave = 0;
 const SITE_STATS_SAVE_INTERVAL_MS = 20000;
 function saveSiteStatsThrottled() {
