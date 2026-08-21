@@ -16,15 +16,19 @@
 // it (e.g. a real env var Sapir sets later in Render's dashboard still wins).
 process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "0";
 
-// EMERGENCY KILL SWITCH - flip to true to re-enable. Turned off 2026-08-19 after the site went
-// into an actual crash loop (restarting every 1-3 minutes) on Render's 512MB Starter plan, right
-// after Chromium-based image generation started working for the first time - each launch is
-// memory-heavy enough on a 512MB instance to be the most likely trigger. Disabling this stops
-// server.js from ever calling buildJoinStoryImageBuffer/buildReviewStoryImageBuffer at all, so
-// approvals go back to sending the plain email with no image attachments (safe, non-blocking,
-// same as any other build failure) until either the memory picture is better understood or the
-// Render plan is upgraded.
-const STORY_IMAGES_ENABLED = false;
+// EMERGENCY KILL SWITCH - flip to false to disable again if memory problems come back. Turned
+// off 2026-08-19 after the site went into an actual crash loop (restarting every 1-3 minutes)
+// on Render's 512MB Starter plan, right after Chromium-based image generation started working
+// for the first time - each launch is memory-heavy enough on a 512MB instance to be the most
+// likely trigger. Turned back on 2026-08-21 now that Sapir has confirmed the Render Instance
+// Type is actually Standard (2GB, 4x the old headroom - the earlier "upgrade" attempt turned out
+// to have hit the wrong button and never actually changed the per-service instance size), and
+// after the GET /freelancer/:id unthrottled-db.save()-per-view bug (a second, independent memory/
+// perf issue) was already fixed separately. While this is false, server.js never calls
+// buildJoinStoryImageBuffer/buildReviewStoryImageBuffer at all, so approvals go back to sending
+// the plain email with no image attachments (safe, non-blocking, same as any other build
+// failure) - keep that fallback behavior in mind if this ever needs to flip off again.
+const STORY_IMAGES_ENABLED = true;
 
 const http = require("http");
 const fs = require("fs");
