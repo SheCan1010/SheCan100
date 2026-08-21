@@ -617,13 +617,16 @@ function israelLocalToUtc(year, month, day, hour, minute) {
 }
 
 // Given a known-correct boundary (matching weekday+hour in Israel time), returns the next
-// one exactly 7 Israel-calendar-days later - stepping in local calendar days (not raw ms)
-// so a DST shift that happens to fall inside that week is absorbed correctly.
-function nextIsraelBoundary(boundaryUtc, weekday, hour) {
+// one exactly `days` Israel-calendar-days later (default 7) - stepping in local calendar days
+// (not raw ms) so a DST shift that happens to fall inside that span is absorbed correctly.
+// Note: `weekday` is accepted for symmetry with the other boundary helpers but isn't used
+// here - if `days` isn't a multiple of 7 (e.g. an admin-configured story rotation), the
+// boundary will naturally drift off its original weekday over time, which is expected.
+function nextIsraelBoundary(boundaryUtc, weekday, hour, days = 7) {
   const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" });
   const parts = fmt.formatToParts(boundaryUtc);
   const get = (t) => Number(parts.find((p) => p.type === t).value);
-  const nextDay = new Date(Date.UTC(get("year"), get("month") - 1, get("day") + 7));
+  const nextDay = new Date(Date.UTC(get("year"), get("month") - 1, get("day") + days));
   return israelLocalToUtc(nextDay.getUTCFullYear(), nextDay.getUTCMonth(), nextDay.getUTCDate(), hour, 0);
 }
 
@@ -652,7 +655,14 @@ function mostRecentIsraelBoundary(beforeMs, weekday, hour) {
 // manualIdKey (the admin's one-cycle pin, if any). Returns the id that's automatically "due"
 // right now (the caller still checks manualIdKey itself to decide whether the pin overrides
 // it for display - tickRotation's job is only to advance the clock and expire stale pins).
-function tickRotation(d, queue, getId, boundary, keys) {
+// `onAdvance(id)` (optional) fires every time the automatic pointer actually moves to a new
+// item - used by getCurrentStory to mark EVERY story the pointer passes through as "already
+// featured", not just whichever one is current right now. That matters if nobody visits the
+// site for more than one full rotation window (e.g. a short admin-configured rotation on a
+// quiet period) - without this, a story the queue passed through in the meantime, with nobody
+// around to observe it as "current", would never get marked and would wrongly stay missing
+// from the "previous stories" archive forever.
+function tickRotation(d, queue, getId, boundary, keys, onAdvance) {
   if (!queue.length) return null;
   const now = Date.now();
   let changed = false;
@@ -665,7 +675,7 @@ function tickRotation(d, queue, getId, boundary, keys) {
     changed = true;
   }
   let cursor = d.settings[keys.lastBoundaryKey];
-  let next = nextIsraelBoundary(cursor, boundary.weekday, boundary.hour);
+  let next = nextIsraelBoundary(cursor, boundary.weekday, boundary.hour, boundary.days);
   while (next <= now) {
     if (d.settings[keys.manualIdKey]) {
       // The manual pin just used up its one cycle - clear it, but do NOT advance the
@@ -674,9 +684,10 @@ function tickRotation(d, queue, getId, boundary, keys) {
     } else {
       const idx = queue.findIndex((it) => getId(it) === d.settings[keys.currentIdKey]);
       d.settings[keys.currentIdKey] = getId(queue[(Math.max(idx, 0) + 1) % queue.length]);
+      if (onAdvance) onAdvance(d.settings[keys.currentIdKey]);
     }
     cursor = next;
-    next = nextIsraelBoundary(cursor, boundary.weekday, boundary.hour);
+    next = nextIsraelBoundary(cursor, boundary.weekday, boundary.hour, boundary.days);
     changed = true;
   }
   if (cursor !== d.settings[keys.lastBoundaryKey]) d.settings[keys.lastBoundaryKey] = cursor;
@@ -714,7 +725,8 @@ function getWeeklyFeature(d) {
 
 // Picks which approved story is "currently featured" on the /stories page - same one-cycle
 // admin pin + auto-advancing queue mechanic as getWeeklyFeature, turning over every
-// Wednesday 20:00 Israel time, ordered by when the linked freelancer registered.
+// `storyRotationDays` days (default 7, admin-editable in the panel) at 20:00 Israel time,
+// ordered by when the linked freelancer registered.
 function getCurrentStory(d) {
   const approved = (d.stories || []).filter((s) => s.status === "approved");
   if (!approved.length) return null;
@@ -725,14 +737,41 @@ function getCurrentStory(d) {
     const tb = fb ? new Date(fb.createdAt) : new Date(b.createdAt);
     return ta - tb;
   });
-  const autoId = tickRotation(d, sorted, (s) => s.id, STORY_BOUNDARY, {
+  const autoId = tickRotation(d, sorted, (s) => s.id, {
+    weekday: STORY_BOUNDARY.weekday, hour: STORY_BOUNDARY.hour, days: d.settings.storyRotationDays || 7,
+  }, {
     currentIdKey: "currentStoryId", lastBoundaryKey: "storyLastBoundary", manualIdKey: "storyOfWeekId",
+  }, (id) => {
+    const passed = sorted.find((s) => s.id === id);
+    if (passed && !passed.featuredAt) passed.featuredAt = new Date().toISOString();
   });
+
+  // One-time backfill for sites that already had stories/rotation history before per-story
+  // s.featuredAt tracking existed (used by the "previous stories" archive to show only stories
+  // that have genuinely already had their turn, not ones still waiting in the queue). Without
+  // this, everything except today's current story would look "not yet featured" the moment
+  // this code first deploys, even stories that were shown weeks ago. Marks every story at-or-
+  // before the automatic queue's current position as already featured, runs exactly once.
+  if (!d.settings.storiesFeaturedBackfilled) {
+    const autoIdx = sorted.findIndex((s) => s.id === autoId);
+    sorted.forEach((s, i) => {
+      if (i <= autoIdx && !s.featuredAt) s.featuredAt = s.createdAt || new Date().toISOString();
+    });
+    d.settings.storiesFeaturedBackfilled = true;
+    db.save();
+  }
+
+  let result = null;
   if (d.settings.storyOfWeekId) {
     const picked = approved.find((s) => s.id === d.settings.storyOfWeekId);
-    if (picked) return picked;
+    if (picked) result = picked;
   }
-  return sorted.find((s) => s.id === autoId) || sorted[0];
+  if (!result) result = sorted.find((s) => s.id === autoId) || sorted[0];
+  if (result && !result.featuredAt) {
+    result.featuredAt = new Date().toISOString();
+    db.save();
+  }
+  return result;
 }
 
 // The date the story rotation will next turn over (whether that lands on the automatic queue
@@ -740,11 +779,14 @@ function getCurrentStory(d) {
 // way, so this is correct either way). Calls getCurrentStory(d) first purely for its side
 // effect of running tickRotation, which lazily initializes/advances settings.storyLastBoundary
 // the first time it's ever needed - so this stays correct even before any story has ever been
-// picked yet. Used to show a small "next update" hint at the bottom of a story page.
+// picked yet. Used to show a small "next update" hint at the bottom of a story page. Always
+// reflects the CURRENT value of settings.storyRotationDays, so changing it in the admin panel
+// updates this label immediately (going forward only - it never moves backward in time).
 function nextStoryRotationLabel(d) {
   getCurrentStory(d);
   if (!d.settings.storyLastBoundary) return null;
-  const next = nextIsraelBoundary(d.settings.storyLastBoundary, STORY_BOUNDARY.weekday, STORY_BOUNDARY.hour);
+  const days = d.settings.storyRotationDays || 7;
+  const next = nextIsraelBoundary(d.settings.storyLastBoundary, STORY_BOUNDARY.weekday, STORY_BOUNDARY.hour, days);
   return new Date(next).toLocaleDateString("he-IL");
 }
 
@@ -2003,8 +2045,14 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
   const d = db.load();
   const isCustomer = requireRole(ctx.session, "customer");
   const current = getCurrentStory(d);
-  const approvedStories = (d.stories || []).filter((s) => s.status === "approved").slice().reverse();
-  const previousStories = current ? approvedStories.filter((s) => s.id !== current.id) : approvedStories;
+  // "סיפורים קודמים" should only ever show stories that have genuinely already had their turn
+  // as the featured story (s.featuredAt set by getCurrentStory) - NOT every approved story,
+  // which used to also leak future stories still waiting in the automatic rotation queue.
+  const featuredStories = (d.stories || [])
+    .filter((s) => s.status === "approved" && s.featuredAt)
+    .slice()
+    .sort((a, b) => new Date(b.featuredAt) - new Date(a.featuredAt));
+  const previousStories = current ? featuredStories.filter((s) => s.id !== current.id) : featuredStories;
 
   let currentHtml = `<p class="muted" style="text-align:center;">הסיפור הראשון בדרך - חכי בסבלנות.</p>`;
   if (current) {
@@ -4447,7 +4495,12 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   <div class="panel">
     <h3>סיפורי השראה שפורסמו</h3>
-    <p class="muted">הסיפור המוצג ב<a href="/stories">עמוד הסיפורים</a> מתחלף אוטומטית כל יום רביעי בשעה 20:00, לפי סדר ההרשמה של העצמאיות.</p>
+    <p class="muted">הסיפור המוצג ב<a href="/stories">עמוד הסיפורים</a> מתחלף אוטומטית כל ${d.settings.storyRotationDays || 7} ימים בשעה 20:00, לפי סדר ההרשמה של העצמאיות.</p>
+    <form method="post" action="/admin/story-rotation-days" style="margin-bottom:14px;max-width:280px;">
+      <label>כל כמה ימים הסיפור מתחלף (ברירת מחדל: 7)
+      <input type="number" name="days" min="1" max="60" value="${d.settings.storyRotationDays || 7}" required /></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">עדכון תדירות</button>
+    </form>
     ${approvedStoriesForAdmin.length ? `
     <form method="post" action="/admin/story-of-week" style="margin-bottom:14px;max-width:480px;">
       <label>סיפור השבוע - בחירה ידנית (אופציונלי, תופסת שבוע אחד בלבד - אחריו התור האוטומטי ממשיך מאיפה שעצר)
@@ -4638,6 +4691,22 @@ route("POST", "/admin/story-of-week", async (req, res, params, query, ctx) => {
   d.settings.storyOfWeekId = body.get("storyOfWeekId") || null;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("עודכן - זה הסיפור שיוצג עכשיו, למשך שבוע אחד (אח\"כ התור האוטומטי ממשיך).")}`);
+});
+
+// Lets the admin control how many days each story stays featured before the automatic
+// rotation moves to the next one (see storyRotationDays / getCurrentStory / tickRotation).
+// Takes effect going forward only - it changes when the NEXT boundary lands, it never moves
+// the current story's remaining time backward or forward retroactively.
+route("POST", "/admin/story-rotation-days", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  let days = parseInt(body.get("days"), 10);
+  if (!Number.isFinite(days) || days < 1) days = 7;
+  if (days > 60) days = 60;
+  d.settings.storyRotationDays = days;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("עודכן - הסיפור הבא יתחלף לפי התדירות החדשה.")}`);
 });
 
 // A direct message from the admin to one specific freelancer - shown inside her own dashboard

@@ -26,6 +26,13 @@ function defaultData() {
       storyOfWeekId: null,
       currentStoryId: null,
       storyLastBoundary: null,
+      // כל כמה ימים הסיפור המוצג ב-/stories מתחלף - ניתן לעריכה בפאנל הניהול. ברירת המחדל
+      // שבוע (7). שינוי הערך משפיע קדימה בלבד - המחזור הבא יחושב לפי המספר החדש, בלי לזוז
+      // אחורה בזמן.
+      storyRotationDays: 7,
+      // דגל חד-פעמי: מסמן שכבר בוצע גיבוי-לאחור (backfill) שמילא s.featuredAt לכל הסיפורים
+      // שכבר היה להם תור לפני שהשדה הזה נוסף - ר' getCurrentStory ב-server.js.
+      storiesFeaturedBackfilled: false,
       chargingEnabled: false, // תקופת השקה חינמית
       // תחרות "הביאי חברה" ללקוחות - קישור אישי (?ref=<customerId>) שכל לקוחה מקבלת. עריכים
       // כאן כברירת מחדל בלבד - כל הערכים האלה ניתנים לעריכה בפאנל הניהול בלי דיפלוי, כדי
