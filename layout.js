@@ -623,6 +623,17 @@ form .field{margin-bottom:6px;}
 .sc-admin-page .panel > h3{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .sc-admin-page .sc-panel-toggle{font-size:22px;line-height:1;color:var(--rose-dark);flex-shrink:0;}
 .sc-admin-page .sc-panel-body{margin-top:14px;}
+/* Compact "square tiles" menu at the very top of the admin page, one tile per section title -
+   lets the whole page open short and scannable instead of a long stack of full-width collapsed
+   bars, with a search box to jump straight to a section by title (see scSetupAdminCollapsibles
+   in the script below, which builds this from the same panels it makes collapsible). */
+.sc-admin-menu{background:var(--white);border-radius:14px;padding:18px 22px 22px;margin-bottom:22px;box-shadow:0 2px 10px rgba(0,0,0,.05);}
+.sc-admin-menu-search input{width:100%;max-width:420px;margin-bottom:16px;}
+.sc-admin-menu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;}
+.sc-admin-menu-tile{background:var(--cream);border:1.5px solid var(--rose);border-radius:14px;padding:16px 10px;min-height:80px;font-family:inherit;font-size:14px;font-weight:700;color:var(--rose-dark);cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.35;transition:background .15s,transform .1s;}
+.sc-admin-menu-tile:hover{background:var(--rose);color:var(--white);}
+.sc-admin-menu-tile:active{transform:scale(.97);}
+.sc-admin-menu-empty{grid-column:1/-1;text-align:center;color:var(--rose-dark);padding:10px;}
 /* Logo cropper modal - shown right after picking a logo file, so freelancers can position/zoom
    into a clean square before it's saved, instead of a stretched/padded source image (e.g. a
    whole A4 page) ending up as-is in their profile. See scSetupLogoCropper. */
@@ -853,15 +864,27 @@ document.addEventListener("DOMContentLoaded", function () {
 // past it every time - remembers each panel's open/closed state per browser via localStorage,
 // keyed by its title text, so re-opening "מחכות לאישור שלך" once keeps it open on later visits
 // until she closes it again. Only runs on pages that actually have a .sc-admin-page wrapper
-// (the admin dashboard), so it never touches ordinary .panel cards elsewhere on the site. ----
+// (the admin dashboard), so it never touches ordinary .panel cards elsewhere on the site.
+//
+// On top of that, builds one compact "square tiles" menu at the very top of the page, one tile
+// per section title, with a search box above it that filters the tiles live by title text (plain
+// substring match, same simple approach as scFilterAdminFreelancers below) - per explicit
+// request, so the whole dashboard opens short and scannable instead of a long stack of
+// full-width collapsed bars, and a specific section can be found by typing its name instead of
+// hunting for it by eye. Clicking a tile opens that section (if it was closed) and scrolls to
+// it - the tiles are just a shortcut on top of the same collapse/expand mechanism above, not a
+// separate system, so a section opened from a tile still remembers its open state normally. ----
 function scSetupAdminCollapsibles() {
   var root = document.querySelector(".sc-admin-page");
   if (!root) return;
   var panels = root.querySelectorAll(":scope > .panel");
-  panels.forEach(function (panel) {
+  var menuItems = [];
+  panels.forEach(function (panel, i) {
     var h3 = panel.querySelector(":scope > h3");
     if (!h3) return;
-    var key = "scAdminPanelOpen:" + h3.textContent.trim();
+    var titleText = h3.textContent.trim();
+    var key = "scAdminPanelOpen:" + titleText;
+    if (!panel.id) panel.id = "scAdminPanel" + i;
     var bodyWrap = document.createElement("div");
     bodyWrap.className = "sc-panel-body";
     var node = h3.nextSibling;
@@ -879,11 +902,61 @@ function scSetupAdminCollapsibles() {
       toggle.textContent = open ? "−" : "+";
     }
     applyState(isOpen);
-    h3.addEventListener("click", function () {
+    function toggleOpen() {
       isOpen = !isOpen;
       applyState(isOpen);
       try { localStorage.setItem(key, isOpen ? "1" : "0"); } catch (e) {}
+    }
+    h3.addEventListener("click", toggleOpen);
+    menuItems.push({
+      id: panel.id, title: titleText,
+      openIfClosed: function () { if (!isOpen) toggleOpen(); },
     });
+  });
+
+  if (!menuItems.length) return;
+  var menuWrap = document.createElement("div");
+  menuWrap.className = "sc-admin-menu";
+  var searchRow = document.createElement("div");
+  searchRow.className = "sc-admin-menu-search";
+  var searchInput = document.createElement("input");
+  searchInput.type = "text";
+  searchInput.id = "scAdminMenuSearch";
+  searchInput.placeholder = "🔍 חיפוש כותרת...";
+  searchRow.appendChild(searchInput);
+  var grid = document.createElement("div");
+  grid.className = "sc-admin-menu-grid";
+  var emptyMsg = document.createElement("div");
+  emptyMsg.className = "sc-admin-menu-empty";
+  emptyMsg.textContent = "לא נמצאה כותרת מתאימה.";
+  emptyMsg.style.display = "none";
+  menuItems.forEach(function (item) {
+    var tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "sc-admin-menu-tile";
+    tile.textContent = item.title;
+    tile.addEventListener("click", function () {
+      item.openIfClosed();
+      var target = document.getElementById(item.id);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    item.tileEl = tile;
+    grid.appendChild(tile);
+  });
+  grid.appendChild(emptyMsg);
+  menuWrap.appendChild(searchRow);
+  menuWrap.appendChild(grid);
+  root.insertBefore(menuWrap, root.firstChild);
+
+  searchInput.addEventListener("input", function () {
+    var q = searchInput.value.trim().toLowerCase();
+    var anyShown = false;
+    menuItems.forEach(function (item) {
+      var match = !q || item.title.toLowerCase().indexOf(q) !== -1;
+      item.tileEl.style.display = match ? "" : "none";
+      if (match) anyShown = true;
+    });
+    emptyMsg.style.display = anyShown ? "none" : "";
   });
 }
 document.addEventListener("DOMContentLoaded", scSetupAdminCollapsibles);

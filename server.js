@@ -1937,11 +1937,29 @@ try {
   console.warn("[magazine] assets/magazine folder not found yet - no flipbook issues loaded (this is fine until the first issue is uploaded).");
 }
 
+// Pulls the :slug back out of an internal "/magazine/view/<slug>" link stored on a d.magazines
+// record, so the admin table can look up that issue's view count (tracked by slug, not by the
+// magazine record's own id - see /magazine/view/:slug below) - null for an external link
+// (Canva/Google Drive/etc.), which was never trackable in the first place.
+function magazineSlugFromUrl(url) {
+  const m = /\/magazine\/view\/([^/?#]+)/.exec(url || "");
+  return m ? m[1] : null;
+}
+
 route("GET", "/magazine/view/:slug", async (req, res, params, query, ctx) => {
   // :slug is matched against pre-loaded filenames only (see MAGAZINE_ISSUES above) - never
   // used to build a filesystem path directly, so there's no path-traversal concern here.
   const buf = MAGAZINE_ISSUES[params.slug];
   if (!buf) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הגיליון הזה.</p>` }));
+  // Counts an actual open of one issue's flipbook - deliberately NOT tracked on GET /magazine
+  // (the listing page itself), per explicit request to distinguish "landed on the magazine page"
+  // from "actually opened an issue to read it". Keyed by slug (not tied to a d.magazines record,
+  // since a flipbook file can exist before/without one) - same throttled-save reasoning as the
+  // other per-page-view counters above.
+  const d = db.load();
+  d.magazineViewCounts = d.magazineViewCounts || {};
+  d.magazineViewCounts[params.slug] = (d.magazineViewCounts[params.slug] || 0) + 1;
+  saveSiteStatsThrottled();
   // Cache-Control kept short (rather than the long max-age this used to have) specifically
   // because Sapir iterates on the uploaded flipbook file directly (re-uploading the same
   // filename after edits like the clickable-links fix) - a long-lived cache meant her browser
@@ -2042,6 +2060,12 @@ route("GET", "/stories/:id", async (req, res, params, query, ctx) => {
   const d = db.load();
   const s = (d.stories || []).find((x) => x.id === params.id && x.status === "approved");
   if (!s) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הסיפור הזה.</p>` }));
+  s.viewCount = (s.viewCount || 0) + 1;
+  // Same reasoning as the freelancer-profile view counter fix - this fires on every single
+  // story page view, so it goes through the shared throttled save instead of an eager db.save()
+  // to avoid reintroducing the full-DB-write-per-request problem that caused the earlier
+  // slowness/OOM issues.
+  saveSiteStatsThrottled();
   const isCustomer = requireRole(ctx.session, "customer");
   const { f, title, dateStr, qaHtml, commentsHtml } = storyDetailHtml(s, d);
   const nextRotationLabel = nextStoryRotationLabel(d);
@@ -4383,11 +4407,16 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   <div class="panel">
     <h3>המגזין שלנו</h3>
-    ${(d.magazines || []).length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>קישור</th><th>פעולות</th></tr>
-      ${d.magazines.map((m) => `<tr>
-        <td>${esc(m.title)}</td><td><a href="${esc(m.url)}" target="_blank" rel="noopener">לצפייה</a></td>
+    <p class="muted">"צפיות" נספר רק לגיליונות עם קישור פנימי (למשל /magazine/view/issue-1) - כלומר כניסה בפועל לצפייה בגיליון, לא רק כניסה לעמוד "מגזין SheCan" עצמו. גיליון עם קישור חיצוני (Canva/Google Drive וכו') מציג "-" כי אין לנו דרך לספור צפיות שם.</p>
+    ${(d.magazines || []).length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>קישור</th><th>צפיות</th><th>פעולות</th></tr>
+      ${d.magazines.map((m) => {
+        const slug = magazineSlugFromUrl(m.url);
+        const views = slug ? ((d.magazineViewCounts || {})[slug] || 0) : "-";
+        return `<tr>
+        <td>${esc(m.title)}</td><td><a href="${esc(m.url)}" target="_blank" rel="noopener">לצפייה</a></td><td>${views}</td>
         <td><form method="post" action="/admin/magazine/${m.id}/delete"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
-      </tr>`).join("")}
+      </tr>`;
+      }).join("")}
     </table></div>` : `<p class="muted">עדיין לא הוספת גיליונות.</p>`}
     <form method="post" action="/admin/magazine" style="margin-top:14px;max-width:420px;">
       <label>כותרת הגיליון
@@ -4429,14 +4458,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <button class="btn btn-small" style="margin-top:10px;" type="submit">עדכון</button>
     </form>` : ""}
     <p class="muted" style="margin-top:-4px;margin-bottom:14px;">כל הסיפורים שנכתבו אי פעם (מאושרים, ממתינים ונדחים) - לא רק אלו שבאוויר עכשיו.</p>
-    ${d.stories.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>על מי</th><th>סטטוס</th><th>תאריך</th><th>פעולות</th></tr>
+    ${d.stories.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>על מי</th><th>סטטוס</th><th>צפיות</th><th>תאריך</th><th>פעולות</th></tr>
       ${d.stories.slice().reverse().map((s) => {
         const sf = d.freelancers.find((x) => x.id === s.freelancerId);
         const title = s.title || (sf ? `הסיפור של ${sf.businessName || sf.name}` : "סיפור השראה");
         const statusLabel = s.status === "approved" ? "מאושר ✓" : s.status === "pending" ? "ממתין לאישור" : "נדחה";
         const titleCell = s.status === "approved" ? `<a href="/stories/${s.id}">${esc(title)}</a>` : esc(title);
         return `<tr>
-          <td>${titleCell}</td><td>${esc(sf ? (sf.businessName || sf.name) : "-")}</td><td>${statusLabel}</td><td>${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</td>
+          <td>${titleCell}</td><td>${esc(sf ? (sf.businessName || sf.name) : "-")}</td><td>${statusLabel}</td><td>${s.viewCount || 0}</td><td>${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</td>
           <td><form method="post" action="/admin/story/${s.id}/delete"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
         </tr>`;
       }).join("")}
