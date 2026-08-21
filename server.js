@@ -1302,6 +1302,25 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         <a class="btn" href="/join">ספרי לי עוד</a>
       </section>
 
+      ${d.settings.showPublicStats ? `
+      <section class="panel" style="text-align:center;margin-top:30px;">
+        <h2 class="section-title" style="margin-top:0;">הקהילה שלנו במספרים</h2>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:14px;">
+          <div style="flex:1;min-width:150px;max-width:220px;">
+            <div style="font-size:38px;font-weight:800;color:var(--rose-dark);">${d.freelancers.filter((f) => f.status === "approved" && f.active !== false).length}</div>
+            <div class="muted" style="margin-top:4px;">עצמאיות באתר</div>
+          </div>
+          <div style="flex:1;min-width:150px;max-width:220px;">
+            <div style="font-size:38px;font-weight:800;color:var(--rose-dark);">${d.customers.length}</div>
+            <div class="muted" style="margin-top:4px;">לקוחות רשומות</div>
+          </div>
+          <div style="flex:1;min-width:150px;max-width:220px;">
+            <div style="font-size:38px;font-weight:800;color:var(--rose-dark);">${(d.deals || []).filter((x) => x.status === "confirmed").length}</div>
+            <div class="muted" style="margin-top:4px;">עסקאות שנסגרו</div>
+          </div>
+        </div>
+      </section>` : ""}
+
       ${(d.settings.communityWhatsappLink || d.settings.contactEmail) ? `
       <section class="panel" style="text-align:center;margin-top:30px;">
         <h2 class="section-title" style="margin-top:0;">רוצה להיות חלק מהקהילה שלנו?</h2>
@@ -3874,6 +3893,29 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     });
   });
 
+  // Leaderboard for the freelancer "צרפי חברה" referral race - same referralCounts helper
+  // that already drives each freelancer's own personal status panel in her dashboard
+  // (referralStatusHtml), just surfaced here as a full ranked list for admin visibility. Only
+  // freelancers who actually referred someone are included, sorted highest-first, so this
+  // reads as "who's leading" rather than a long list of mostly zeros.
+  const freelancerReferralCounts = referralCounts(d.freelancers, "referredByFreelancerId");
+  const freelancerReferralRanking = d.freelancers
+    .map((f) => ({
+      id: f.id, name: f.businessName || f.name, count: freelancerReferralCounts[f.id] || 0,
+      referred: d.freelancers.filter((x) => x.referredByFreelancerId === f.id).map((x) => x.businessName || x.name),
+    }))
+    .filter((r) => r.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  // "עסקה נסגרה" two-sided confirmations (see /freelancer-dashboard/deal/close and
+  // /deal-confirm/:token) - only status "confirmed" counts as a real closed deal here, since
+  // that's the whole point of the two-sided flow: a freelancer marking it isn't enough on its
+  // own until the customer also confirms.
+  const confirmedDealsCount = (d.deals || []).filter((x) => x.status === "confirmed").length;
+  const pendingDealsCount = (d.deals || []).filter((x) => x.status === "pending_customer").length;
+  const dealsByFreelancer = {};
+  (d.deals || []).forEach((x) => { if (x.status === "confirmed") dealsByFreelancer[x.freelancerId] = (dealsByFreelancer[x.freelancerId] || 0) + 1; });
+
   const revealEvents = (d.couponRevealEvents || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
   const revealsByCategory = {};
   revealEvents.forEach((ev) => {
@@ -3948,6 +3990,15 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${todayRealVisits}</div>
         <div class="muted" style="margin-top:4px;">כניסות אמיתיות היום (משוערות)</div>
       </div>
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${confirmedDealsCount}</div>
+        <div class="muted" style="margin-top:4px;">עסקאות שנסגרו (אושרו ע"י הלקוחה)</div>
+      </div>
+      ${pendingDealsCount ? `
+      <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingDealsCount}</div>
+        <div class="muted" style="margin-top:4px;">עסקאות שממתינות לאישור הלקוחה</div>
+      </div>` : ""}
     </div>
     <p class="muted" style="margin-top:16px;margin-bottom:0;">🩶 = כל כניסה שנספרת (כולל בוטים וסורקים) &nbsp;|&nbsp; 🌸 = הערכת כניסות אמיתיות בלבד (אחרי סינון בוטים ידועים לפי User-Agent - הערכה, לא מדויקת ב-100%)</p>
     <p class="muted" style="margin-top:6px;margin-bottom:6px;">כניסות ב-7 הימים האחרונים:</p>
@@ -4310,6 +4361,17 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel">
+    <h3>מרוץ ההפניות של העצמאיות - מי מובילה 🏆</h3>
+    <p class="muted">כל עצמאית שהצטרפה דרך קישור אישי של עצמאית אחרת (או שבחרה את שמה ידנית ב"איך שמעת עלינו" בטופס ההרשמה) - ממוין מהכי הרבה הפניות להכי פחות, כולל השמות של מי שנכנסה דרך הקישור של כל אחת.</p>
+    ${freelancerReferralRanking.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מקום</th><th>עצמאית</th><th>כמות הפניות</th><th>מי נכנסה דרכה</th></tr>
+      ${freelancerReferralRanking.map((r, i) => `<tr>
+        <td>${i + 1}${i === 0 ? " 👑" : ""}</td><td>${esc(r.name)}</td><td>${r.count}</td>
+        <td>${esc(r.referred.join(", "))}</td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">עדיין אין הפניות בפועל - אף עצמאית לא נרשמה עדיין דרך הקישור האישי של עצמאית אחרת.</p>`}
+  </div>
+
+  <div class="panel">
     <h3>המגזין שלנו</h3>
     ${(d.magazines || []).length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>קישור</th><th>פעולות</th></tr>
       ${d.magazines.map((m) => `<tr>
@@ -4403,11 +4465,20 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel">
+    <h3>מספרים ציבוריים בעמוד הבית</h3>
+    <p class="muted">${d.settings.showPublicStats ? "מוצג עכשיו לכולן, בעמוד הבית, מתחת ל\"יש לך עסק? בואי נכיר\": כמה עצמאיות באתר, כמה לקוחות רשומות, וכמה עסקאות נסגרו." : "כרגע לא מוצג לאף אחת - אפשר להדליק את זה מתי שתרצי, זה מיד יופיע בעמוד הבית לכולן."}</p>
+    <p class="muted" style="font-size:12px;">כרגע: ${activeFreelancers.length} עצמאיות, ${d.customers.length} לקוחות, ${confirmedDealsCount} עסקאות שנסגרו.</p>
+    <form method="post" action="/admin/toggle-public-stats">
+      <button class="btn btn-small" type="submit">${d.settings.showPublicStats ? "הסתרה מעמוד הבית" : "הצגה לכולן בעמוד הבית"}</button>
+    </form>
+  </div>
+
+  <div class="panel">
     <h3>העצמאיות שכבר איתנו (${activeFreelancers.length})</h3>
-    <p class="muted">"נותנת חסות" - הבלטה מיוחדת וקבועה (למשל לעצמאיות שתרמו הטבה להגרלה). "מודעה" - הבלטה בתשלום שאת מוכרת וסוגרת איתן ישירות. "צפיות" - כמה פעמים נכנסו לעמוד שלה. "צפיות בקופון" - כמה פעמים לחצו "לצפייה בקוד קופון".</p>
+    <p class="muted">"נותנת חסות" - הבלטה מיוחדת וקבועה (למשל לעצמאיות שתרמו הטבה להגרלה). "מודעה" - הבלטה בתשלום שאת מוכרת וסוגרת איתן ישירות. "צפיות" - כמה פעמים נכנסו לעמוד שלה. "צפיות בקופון" - כמה פעמים לחצו "לצפייה בקוד קופון". "עסקאות שנסגרו" - כמה פעמים היא סימנה עסקה כנסגרה והלקוחה גם אישרה זאת בעצמה.</p>
     <p class="muted"><a href="/admin/export/freelancers.csv">⬇️ הורדת כל הנתונים כקובץ אקסל (CSV)</a></p>
     <input type="text" id="scAdminFreelancerSearch" placeholder="🔍 חיפוש עצמאית לפי שם עסק..." oninput="scFilterAdminFreelancers(this.value)" style="max-width:320px;margin-bottom:10px;" />
-    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>אימייל רשום</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>תמונות</th><th>פרטי התחברות</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
+    ${activeFreelancers.length ? `<div class="table-scroll"><table class="table-simple" id="scActiveFreelancersTable"><tr><th>עסק</th><th>אימייל רשום</th><th>סוג הצטרפות</th><th>סטטוס תשלום</th><th>רמה</th><th>קוד קופון</th><th>צפיות</th><th>צפיות בקופון</th><th>עסקאות שנסגרו</th><th>תמונות</th><th>פרטי התחברות</th><th>נותנת חסות</th><th>מודעה</th><th>תשלום מודעה</th><th>סטטוס באתר</th><th>מחיקה</th></tr>
       ${activeFreelancers.map((f) => `<tr>
         <td>${esc(f.businessName)}</td>
         <td><form method="post" action="/admin/freelancer/${f.id}/update-email" style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
@@ -4415,7 +4486,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <button class="btn btn-small btn-outline" type="submit" style="padding:4px 8px;font-size:12px;white-space:nowrap;">שמירה</button>
         </form></td>
         <td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td><td>${f.tier === "premium" ? "מומלצת" : "בסיסית"}</td>
-        <td>${esc(f.dealCode || "-")}</td><td>${f.viewCount || 0}</td><td>${f.couponRevealCount || 0}</td>
+        <td>${esc(f.dealCode || "-")}</td><td>${f.viewCount || 0}</td><td>${f.couponRevealCount || 0}</td><td>${dealsByFreelancer[f.id] || 0}</td>
         <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/resend-credentials" onsubmit="return confirm('זה ייצור סיסמה זמנית חדשה ל' + ${JSON.stringify(f.businessName || f.name)} + ' וישלח אותה במייל (הסיסמה הישנה שלה תפסיק לעבוד). להמשיך?');"><button class="btn btn-small btn-outline" type="submit">📧 שליחת פרטי התחברות</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-leading"><button class="btn btn-small ${f.isLeadingBusiness ? "" : "btn-outline"}" type="submit">${f.isLeadingBusiness ? "👑 נותנת חסות" : "הפכי לנותנת חסות"}</button></form></td>
@@ -5057,11 +5128,13 @@ route("GET", "/admin/export/freelancers.csv", async (req, res, params, query, ct
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
   const csvEscape = (v) => `"${String(v === undefined || v === null ? "" : v).replace(/"/g, '""')}"`;
-  const headers = ["שם איש קשר", "שם העסק", "אימייל", "טלפון", "תחום", "עיר", "תיאור", "טקסט הטבה", "קוד קופון", "סטטוס", "סוג הצטרפות", "סטטוס תשלום", "רמה", "נותנת חסות", "מודעה", "סטטוס תשלום מודעה", "פעילה באתר", "צפיות בעמוד", "צפיות בקופון", "תאריך הצטרפות"];
+  const csvDealsByFreelancer = {};
+  (d.deals || []).forEach((x) => { if (x.status === "confirmed") csvDealsByFreelancer[x.freelancerId] = (csvDealsByFreelancer[x.freelancerId] || 0) + 1; });
+  const headers = ["שם איש קשר", "שם העסק", "אימייל", "טלפון", "תחום", "עיר", "תיאור", "טקסט הטבה", "קוד קופון", "סטטוס", "סוג הצטרפות", "סטטוס תשלום", "רמה", "נותנת חסות", "מודעה", "סטטוס תשלום מודעה", "פעילה באתר", "צפיות בעמוד", "צפיות בקופון", "עסקאות שנסגרו", "תאריך הצטרפות"];
   const rows = d.freelancers.map((f) => [
     f.name, f.businessName, f.email, f.phone, catName(d, f.categoryId), cityName(d, f.cityId),
     f.description, f.dealText, f.dealCode, f.status, f.joinType, f.paymentStatus, f.tier,
-    f.isLeadingBusiness ? "כן" : "לא", f.isAdvertised ? "כן" : "לא", adPaymentStatusLabel(f.adPaymentStatus), f.active === false ? "לא" : "כן", f.viewCount || 0, f.couponRevealCount || 0, f.createdAt,
+    f.isLeadingBusiness ? "כן" : "לא", f.isAdvertised ? "כן" : "לא", adPaymentStatusLabel(f.adPaymentStatus), f.active === false ? "לא" : "כן", f.viewCount || 0, f.couponRevealCount || 0, csvDealsByFreelancer[f.id] || 0, f.createdAt,
   ]);
   const csv = "﻿" + [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\r\n");
   res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="shecan-freelancers.csv"' });
@@ -5109,6 +5182,18 @@ route("POST", "/admin/toggle-search-visibility", async (req, res, params, query,
   d.settings.searchEngineVisible = !d.settings.searchEngineVisible;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(d.settings.searchEngineVisible ? "האתר פתוח עכשיו למנועי חיפוש." : "האתר חסום שוב ממנועי חיפוש.")}`);
+});
+
+// Public-facing "community in numbers" strip on the home page (freelancers/customers/closed
+// deals), shown right under the "יש לך עסק? בואי נכיר" section - off by default, toggled here
+// exactly like search-engine visibility above, per explicit request for a button she controls
+// herself rather than something always-on.
+route("POST", "/admin/toggle-public-stats", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.showPublicStats = !d.settings.showPublicStats;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showPublicStats ? "המספרים מוצגים עכשיו לכולן בעמוד הבית." : "המספרים הוסתרו מעמוד הבית.")}`);
 });
 
 route("POST", "/admin/category", async (req, res, params, query, ctx) => {

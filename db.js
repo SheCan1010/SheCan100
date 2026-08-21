@@ -39,6 +39,7 @@ function defaultData() {
       freelancerReferralContestEndDate: "17.9",
       freelancerReferralAnnounceDate: "20.9",
       searchEngineVisible: false, // כל עוד false - האתר חסום למנועי חיפוש (Google וכו')
+      showPublicStats: false, // הצגת "הקהילה שלנו במספרים" (עצמאיות/לקוחות/עסקאות שנסגרו) בעמוד הבית לכולן - כבוי כברירת מחדל, מופעל בפאנל הניהול
       communityWhatsappLink: "", // קישור הצטרפות לקבוצת הוואטסאפ - להשלים בפאנל הניהול
       contactEmail: "", // מייל ליצירת קשר - להשלים בפאנל הניהול
       adPrice: null, // מחיר ייחוס למודעה בצד העמוד (₪ לחודש) - להשלים בפאנל הניהול
