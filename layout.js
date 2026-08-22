@@ -569,8 +569,13 @@ form .field{margin-bottom:6px;}
    bolded text), stacked as a block, every row's icon+text pair aligned so they all start
    from the same point instead of each line being centered separately, per explicit request. */
 .profile-detail-list{display:inline-flex;flex-direction:column;margin:8px auto;}
-.profile-detail-row{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:800;color:#5c5d55;padding:1px 0;}
-.profile-detail-row a{color:inherit;text-decoration:none;}
+.profile-detail-row{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:800;color:#5c5d55;padding:1px 0;max-width:100%;}
+/* overflow-wrap:anywhere (not just word-break) so an unbroken long value - e.g. a full pasted
+   URL typed into a free-text field like Instagram - wraps inside its row instead of pushing
+   past the card's edge (this is what happened before instagramLinkHtml started shortening
+   Instagram specifically to "@handle", and is kept here as a general safety net for any other
+   free-text link/value that ends up in one of these rows). */
+.profile-detail-row a, .profile-detail-row span{overflow-wrap:anywhere;min-width:0;}
 .profile-detail-icon{flex-shrink:0;width:24px;text-align:center;}
 .profile-merged-heading{color:var(--gray);font-size:20px;text-align:center;margin:18px 0 8px;}
 /* Coupon/deal box on the profile page shrink-wraps to its own content (per explicit request)
@@ -594,7 +599,7 @@ form .field{margin-bottom:6px;}
 .profile-header-location{margin-top:4px;font-size:13.5px;font-weight:700;color:var(--gray);display:flex;align-items:center;gap:4px;}
 /* Contact rows pulled in a bit closer together (was gap:7px/row padding:3px) per explicit
    request - still has a little breathing room, just not as loose as before. */
-.profile-contact-col{display:flex;flex-direction:column;gap:3px;flex-shrink:0;min-width:150px;align-items:flex-start;}
+.profile-contact-col{display:flex;flex-direction:column;gap:3px;flex-shrink:1;min-width:150px;max-width:100%;align-items:flex-start;}
 .profile-header-desc{text-align:right;font-size:14px;margin:14px 0 0;}
 /* Vertical divider between the name/logo/rating block and the contact-details column, in the
    site's established accent/"brown" tone - per explicit request. Hidden once the row wraps to

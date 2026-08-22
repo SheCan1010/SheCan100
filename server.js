@@ -717,6 +717,27 @@ function waPhoneDigits(phone) {
   return digits;
 }
 
+// f.instagram was always a free-text field (she can type a full profile URL, an @handle, or
+// just a bare handle) but was only ever rendered as plain, non-clickable text - and a long
+// pasted URL (e.g. "https://www.instagram.com/name?igsi=...") would visibly overflow past the
+// profile card's edge since there was nothing to shorten or wrap it. This extracts just the
+// handle regardless of what she typed, and returns both a clean https://instagram.com/<handle>
+// link AND a short "@handle" display label - fixing the overflow and making the link actually
+// clickable in one change, since the profile card only ever displayed the raw stored text.
+function instagramHandleAndUrl(raw) {
+  const val = (raw || "").trim();
+  if (!val) return null;
+  const m = /instagram\.com\/([^/?#\s]+)/i.exec(val);
+  let handle = (m ? m[1] : val).replace(/^@/, "").trim();
+  if (!handle) return null;
+  return { handle, url: `https://www.instagram.com/${encodeURIComponent(handle)}` };
+}
+function instagramLinkHtml(raw) {
+  const ig = instagramHandleAndUrl(raw);
+  if (!ig) return "";
+  return `<div class="profile-detail-row"><span class="profile-detail-icon">📸</span><a href="${esc(ig.url)}" target="_blank" rel="noopener">@${esc(ig.handle)}</a></div>`;
+}
+
 // A small, purely decorative icon per category name - falls back to a generic sparkle
 // for any category she adds later that isn't in the list below.
 
@@ -878,29 +899,22 @@ function getCurrentStory(d) {
     const tb = fb ? new Date(fb.createdAt) : new Date(b.createdAt);
     return ta - tb;
   });
+  // NOTE (2026-08-23): this used to pass a 4th "onAdvance" callback to tickRotation that
+  // stamped featuredAt on EVERY story the automatic pointer passed through during a catch-up
+  // (e.g. nobody visiting the site for more than one full rotation window, or the rotation
+  // frequency being lowered so several windows suddenly fall in the past at once) - not just
+  // the one story actually being shown right now. That turned out to be too eager: right after
+  // storyRotationDays became admin-editable, a burst catch-up could stamp several stories as
+  // "already featured" in one shot, even though only the very last one was ever actually shown
+  // as the current story on the page. Removed so a story's featuredAt is ONLY ever set at the
+  // exact moment it's genuinely returned as `result` below (a real "previous stories" entry
+  // now always means it was truly, at some point, the story shown on the page) - see the
+  // one-time backfill comment further down for the same reasoning applied retroactively.
   const autoId = tickRotation(d, sorted, (s) => s.id, {
     weekday: STORY_BOUNDARY.weekday, hour: STORY_BOUNDARY.hour, days: d.settings.storyRotationDays || 7,
   }, {
     currentIdKey: "currentStoryId", lastBoundaryKey: "storyLastBoundary", manualIdKey: "storyOfWeekId",
-  }, (id) => {
-    const passed = sorted.find((s) => s.id === id);
-    if (passed && !passed.featuredAt) passed.featuredAt = new Date().toISOString();
   });
-
-  // One-time backfill for sites that already had stories/rotation history before per-story
-  // s.featuredAt tracking existed (used by the "previous stories" archive to show only stories
-  // that have genuinely already had their turn, not ones still waiting in the queue). Without
-  // this, everything except today's current story would look "not yet featured" the moment
-  // this code first deploys, even stories that were shown weeks ago. Marks every story at-or-
-  // before the automatic queue's current position as already featured, runs exactly once.
-  if (!d.settings.storiesFeaturedBackfilled) {
-    const autoIdx = sorted.findIndex((s) => s.id === autoId);
-    sorted.forEach((s, i) => {
-      if (i <= autoIdx && !s.featuredAt) s.featuredAt = s.createdAt || new Date().toISOString();
-    });
-    d.settings.storiesFeaturedBackfilled = true;
-    db.save();
-  }
 
   let result = null;
   if (d.settings.storyOfWeekId) {
@@ -1713,7 +1727,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     f.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(f.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
     f.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
-    f.instagram ? `<div class="profile-detail-row"><span class="profile-detail-icon">📸</span><span>${esc(f.instagram)}</span></div>` : "",
+    instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
   const body = `
   <div class="panel profile-detail profile-merged">
@@ -1822,7 +1836,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     l.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(l.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
     f.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
-    f.instagram ? `<div class="profile-detail-row"><span class="profile-detail-icon">📸</span><span>${esc(f.instagram)}</span></div>` : "",
+    instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
   const body = `
   <p class="muted" style="text-align:center;">תחום נוסף של <a href="/freelancer/${f.id}" style="color:var(--rose-dark);font-weight:800;">${esc(f.businessName || f.name)}</a></p>
@@ -4836,15 +4850,23 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <button class="btn btn-small" style="margin-top:10px;" type="submit">עדכון</button>
     </form>` : ""}
     <p class="muted" style="margin-top:-4px;margin-bottom:14px;">כל הסיפורים שנכתבו אי פעם (מאושרים, ממתינים ונדחים) - לא רק אלו שבאוויר עכשיו.</p>
-    ${d.stories.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>על מי</th><th>סטטוס</th><th>צפיות</th><th>תאריך</th><th>פעולות</th></tr>
+    ${d.stories.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>כותרת</th><th>על מי</th><th>סטטוס</th><th>הוצג ב'סיפורים קודמים'?</th><th>צפיות</th><th>תאריך</th><th>פעולות</th></tr>
       ${d.stories.slice().reverse().map((s) => {
         const sf = d.freelancers.find((x) => x.id === s.freelancerId);
         const title = s.title || (sf ? `הסיפור של ${sf.businessName || sf.name}` : "סיפור השראה");
         const statusLabel = s.status === "approved" ? "מאושר ✓" : s.status === "pending" ? "ממתין לאישור" : "נדחה";
         const titleCell = s.status === "approved" ? `<a href="/stories/${s.id}">${esc(title)}</a>` : esc(title);
+        // "הוצג?" עוזר לזהות ולתקן במקום סיפור שסומן בטעות כ"כבר הוצג" (למשל מהבאג החד-פעמי
+        // של תחילת פיצ'ר תדירות-הסיבוב) - כפתור "בטל סימון" מנקה את זה ומחזיר אותו לתור.
+        const featuredCell = s.status !== "approved" ? "-"
+          : s.featuredAt ? `כן (${esc(new Date(s.featuredAt).toLocaleDateString("he-IL"))})`
+          : "עוד לא";
+        const unfeatureBtn = (s.status === "approved" && s.featuredAt)
+          ? `<form method="post" action="/admin/story/${s.id}/unfeature" style="display:inline;margin-inline-start:4px;" onsubmit="return confirm('לבטל את הסימון של הסיפור הזה כ\\'כבר הוצג\\'? הוא ייעלם מ\\'סיפורים קודמים\\' עד שיגיע תורו האמיתי.');"><button class="btn btn-small btn-outline" type="submit">ביטול סימון</button></form>`
+          : "";
         return `<tr>
-          <td>${titleCell}</td><td>${esc(sf ? (sf.businessName || sf.name) : "-")}</td><td>${statusLabel}</td><td>${s.viewCount || 0}</td><td>${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</td>
-          <td><form method="post" action="/admin/story/${s.id}/delete"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
+          <td>${titleCell}</td><td>${esc(sf ? (sf.businessName || sf.name) : "-")}</td><td>${statusLabel}</td><td>${featuredCell}</td><td>${s.viewCount || 0}</td><td>${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</td>
+          <td><form method="post" action="/admin/story/${s.id}/delete" style="display:inline;"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form>${unfeatureBtn}</td>
         </tr>`;
       }).join("")}
     </table></div>` : `<p class="muted">עדיין אין סיפורים.</p>`}
@@ -5284,6 +5306,19 @@ route("POST", "/admin/story/:id/delete", async (req, res, params, query, ctx) =>
   d.stories = (d.stories || []).filter((s) => s.id !== params.id);
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("הסיפור הוסר.")}`);
+});
+
+// Manually clears a story's featuredAt, so it stops appearing in "סיפורים קודמים" (see
+// getCurrentStory) - a self-service fix for the one-time backfill/catch-up bug from
+// 2026-08-22/23 that could stamp a story as "already shown" even though it never genuinely
+// was the story displayed on the page. Safe to use any time: if the story really is due for
+// its turn, the automatic rotation will pick it up and re-stamp it correctly on its own.
+route("POST", "/admin/story/:id/unfeature", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const s = (d.stories || []).find((x) => x.id === params.id);
+  if (s) { s.featuredAt = null; db.save(); }
+  redirect(res, `/admin?ok=${encodeURIComponent("הסיפור סומן מחדש כ'טרם הוצג' - הוא לא יופיע יותר ב'סיפורים קודמים' עד שיגיע תורו האמיתי.")}`);
 });
 
 route("POST", "/admin/story/:id/approve", async (req, res, params, query, ctx) => {
