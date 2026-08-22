@@ -42,6 +42,42 @@ const { page, esc, categoryIcon, cityAutocompleteHtml } = require("./layout");
 const { buildJoinStoryImageBuffer } = require("./joinStory");
 const { buildReviewStoryImageBuffer } = require("./reviewStory");
 
+// Global serialization for ANY Chromium-based image build (join-story + review-story below -
+// both launch their own headless Chromium instance, see joinStory.js/reviewStory.js). Added
+// after a second OOM crash on the Standard (2GB) plan, right after STORY_IMAGES_ENABLED was
+// turned back on - even though each individual approval already closes its own browser in a
+// finally block (so a single approval can't leak memory), nothing previously stopped TWO
+// approvals processed close together in time (e.g. working through a backlog of pending
+// freelancers) from each launching their own Chromium instance at the same moment - each easily
+// 150-300MB, and a handful of those overlapping is enough to blow past even a 2GB container
+// alongside the rest of the app's own memory (Node baseline + the in-memory DB, which holds
+// every freelancer's photo as base64). This queue guarantees only ONE Chromium instance is ever
+// running at a time, process-wide - a second approval arriving mid-build simply waits its turn
+// instead of racing to launch a second browser alongside the first.
+let chromiumQueue = Promise.resolve();
+// Hard ceiling on a single Chromium build - without this, a job that never settles (e.g.
+// browser.close() itself hangs because the OS already killed the Chromium process out from
+// under Node, which can happen under real memory pressure) would wedge this queue PERMANENTLY:
+// every approval after it would silently wait forever for its turn, with no crash and no
+// obvious error - a much worse failure mode than today's "one build fails, the rest of the
+// approval still goes through" behavior. 20s is generous for a one-shot screenshot job that
+// normally takes well under a second.
+const CHROMIUM_JOB_TIMEOUT_MS = 20000;
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+function runChromiumSerialized(fn, label) {
+  const run = chromiumQueue.then(() => withTimeout(fn(), CHROMIUM_JOB_TIMEOUT_MS, label), () => withTimeout(fn(), CHROMIUM_JOB_TIMEOUT_MS, label));
+  // Swallow here so one failed/timed-out build doesn't wedge the queue for every job queued
+  // after it - the caller's own `run` promise still rejects normally with the real error.
+  chromiumQueue = run.catch(() => {});
+  return run;
+}
+
 const PORT = process.env.PORT || 4000;
 
 // Small inline WhatsApp glyph (green, matches .whatsapp-link's text color) shown right next
@@ -2031,14 +2067,28 @@ route("GET", "/magazine/download/:slug", async (req, res, params, query, ctx) =>
 function storyDetailHtml(s, d) {
   const f = d.freelancers.find((x) => x.id === s.freelancerId);
   const title = s.title || (f ? `הסיפור של ${f.businessName || f.name}` : "סיפור השראה");
-  const dateStr = esc(new Date(s.approvedAt || s.createdAt).toLocaleDateString("he-IL"));
+  // The date shown must reflect when the story actually went LIVE on /stories (s.featuredAt,
+  // set the moment getCurrentStory() first picks it as the current story - see server.js
+  // rotation logic above) - NOT when it was written/approved, which can be well before its
+  // real turn in the queue actually comes up. Falls back to approvedAt/createdAt only for the
+  // rare case of a direct link to a story that (for some reason) has never been featured yet.
+  const dateStr = esc(new Date(s.featuredAt || s.approvedAt || s.createdAt).toLocaleDateString("he-IL"));
   const qaHtml = (s.answers && s.answers.length)
     ? s.answers.map((qa) => `<div style="margin-bottom:16px;"><div class="muted" style="font-weight:800;margin-bottom:4px;">${esc(qa.question)}</div><p style="margin:0;">${esc(qa.answer)}</p></div>`).join("")
     : `<p style="white-space:pre-wrap;">${esc(s.content || "")}</p>`;
   const commentsHtml = (s.comments && s.comments.length)
     ? s.comments.map((c) => `<div class="review" style="margin-bottom:10px;"><div class="review-header"><span class="review-name">${esc(c.customerName)}</span><span class="muted" style="font-size:12px;">${esc(new Date(c.createdAt).toLocaleDateString("he-IL"))}</span></div><div class="review-text">${esc(c.text)}</div></div>`).join("")
     : `<p class="muted">עוד אין תגובות - היי הראשונה להגיב.</p>`;
-  return { f, title, dateStr, qaHtml, commentsHtml };
+  // Anonymous "heart" reaction at the end of the story - same simplicity level as the homepage
+  // weekly-quote like (see /weekly-quote/like above): open to anyone, not just registered
+  // customers, one per browser via localStorage (see scLikeStory in layout.js).
+  const likeHtml = `
+    <div style="text-align:center;">
+      <button type="button" class="story-like-btn" data-story-id="${esc(s.id)}" onclick="scLikeStory(this)" aria-label="סמני לב לסיפור">
+        <span class="story-like-icon">🤍</span><span class="story-like-count">${s.likeCount || 0}</span>
+      </button>
+    </div>`;
+  return { f, title, dateStr, qaHtml, commentsHtml, likeHtml };
 }
 
 route("GET", "/stories", async (req, res, params, query, ctx) => {
@@ -2056,7 +2106,7 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
 
   let currentHtml = `<p class="muted" style="text-align:center;">הסיפור הראשון בדרך - חכי בסבלנות.</p>`;
   if (current) {
-    const { f, title, dateStr, qaHtml, commentsHtml } = storyDetailHtml(current, d);
+    const { f, title, dateStr, qaHtml, commentsHtml, likeHtml } = storyDetailHtml(current, d);
     const nextRotationLabel = nextStoryRotationLabel(d);
     currentHtml = `
     <div class="panel">
@@ -2065,6 +2115,7 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
       <h3>${esc(title)}</h3>
       <p class="muted">${dateStr}</p>
       ${qaHtml}
+      ${likeHtml}
       ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(f.businessName || f.name)}</a>` : ""}
       ${nextRotationLabel ? `<p class="muted" style="font-size:11px;text-align:center;margin-top:16px;">הסיפור הבא יתעדכן ב-${esc(nextRotationLabel)}</p>` : ""}
       <h4 style="margin-top:24px;">תגובות</h4>
@@ -2115,7 +2166,7 @@ route("GET", "/stories/:id", async (req, res, params, query, ctx) => {
   // slowness/OOM issues.
   saveSiteStatsThrottled();
   const isCustomer = requireRole(ctx.session, "customer");
-  const { f, title, dateStr, qaHtml, commentsHtml } = storyDetailHtml(s, d);
+  const { f, title, dateStr, qaHtml, commentsHtml, likeHtml } = storyDetailHtml(s, d);
   const nextRotationLabel = nextStoryRotationLabel(d);
   const body = `
   <div class="panel">
@@ -2123,6 +2174,7 @@ route("GET", "/stories/:id", async (req, res, params, query, ctx) => {
     <h1 class="section-title" style="margin-top:0;">${esc(title)}</h1>
     <p class="muted" style="text-align:center;">${dateStr}</p>
     ${qaHtml}
+    ${likeHtml}
     ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(f.businessName || f.name)}</a>` : ""}
     ${nextRotationLabel ? `<p class="muted" style="font-size:11px;text-align:center;margin-top:16px;">הסיפור הבא באתר יתעדכן ב-${esc(nextRotationLabel)}</p>` : ""}
     <h4 style="margin-top:24px;">תגובות</h4>
@@ -2153,6 +2205,22 @@ route("POST", "/stories/:id/comment", async (req, res, params, query, ctx) => {
   });
   db.save();
   redirect(res, `/stories/${s.id}?ok=${encodeURIComponent("התגובה שלך התווספה!")}`);
+});
+
+// Anonymous "heart" reaction on a story, at the bottom of the story text - open to anyone
+// (not just registered customers), same pattern as /weekly-quote/like above. The client
+// already updates the count optimistically and remembers the like in localStorage per story
+// id (see scLikeStory in layout.js), so this route doesn't need to return anything beyond a
+// plain 204.
+route("POST", "/stories/:id/like", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const s = (d.stories || []).find((x) => x.id === params.id && x.status === "approved");
+  if (s) {
+    s.likeCount = (s.likeCount || 0) + 1;
+    db.save();
+  }
+  res.writeHead(204);
+  res.end();
 });
 
 // ===================== "הזירה" (The Arena) =====================
@@ -3932,6 +4000,140 @@ route("POST", "/freelancer-dashboard/listing/:id", async (req, res, params, quer
   redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("התחום עודכן!")}`);
 });
 
+// ----- Admin: daily trend charts (site visits / customer signups / freelancer signups) -----
+// Rounds `max` up to a "nice" axis ceiling (1/2/5 * 10^n) for chart y-axis gridlines - e.g.
+// 17->20, 143->150, 6->10 - so tick labels are round numbers instead of awkward exact maxima.
+// Falls back to 1 for an all-zero series so the axis never collapses to a zero range.
+function niceAxisMax(max) {
+  if (!max || max <= 0) return 1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(max)));
+  const normalized = max / magnitude;
+  let niceNormalized;
+  if (normalized <= 1) niceNormalized = 1;
+  else if (normalized <= 2) niceNormalized = 2;
+  else if (normalized <= 5) niceNormalized = 5;
+  else niceNormalized = 10;
+  return niceNormalized * magnitude;
+}
+
+// Builds one small daily-trend line chart (inline SVG, no client-side JS/library needed) for
+// ONE metric over `days` (an array of "YYYY-MM-DD" strings, oldest first) - hairline
+// gridlines, a 2px colored line, an end-dot showing today's value, and a native <title>
+// tooltip on every point (hover shows the exact date + value - works with zero JS). Each
+// metric gets its OWN chart with its OWN y-axis (see adminTrendChartsHtml below, which stacks
+// three of these) rather than sharing one axis across metrics - site visits and daily signups
+// differ by orders of magnitude, and a shared/dual axis would flatten the smaller series into
+// an unreadable flat line near zero.
+function sparklineChartSvg(days, values, color) {
+  // Font sizes here are deliberately larger than a desktop-only chart would need - the SVG
+  // scales down to fit narrow phone screens (width:100% + viewBox, see the wrapping <svg> tag
+  // below), so text sized for a ~700px desktop panel would shrink to near-illegible on a
+  // ~340px-wide mobile admin panel. These sizes were chosen by checking a real mobile
+  // screenshot, not just the desktop view.
+  const W = 720, H = 140, padL = 40, padR = 12, padT = 16, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxVal = niceAxisMax(Math.max.apply(null, values.concat([0])));
+  const n = days.length;
+  const xAt = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yAt = (v) => padT + plotH - (v / maxVal) * plotH;
+  const points = values.map((v, i) => ({ x: xAt(i), y: yAt(v), v, day: days[i] }));
+  const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  // The bottom (0) and top (maxVal) gridlines always get a label - the middle one only gets a
+  // label when it rounds to something different from both (otherwise, on a small-range chart
+  // like an all-zero series, "1" would render twice at two different heights, which reads as
+  // a mistake rather than two meaningfully different values).
+  const topVal = Math.round(maxVal);
+  const midVal = Math.round(0.5 * maxVal);
+  const showMidLabel = midVal !== 0 && midVal !== topVal;
+  const gridLines = [
+    { frac: 0, val: 0, show: true },
+    { frac: 0.5, val: midVal, show: showMidLabel },
+    { frac: 1, val: topVal, show: true },
+  ].map((g) => {
+    const y = padT + plotH - g.frac * plotH;
+    return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#e1e0d9" stroke-width="1" />
+      ${g.show ? `<text x="${padL - 7}" y="${(y + 4.5).toFixed(1)}" text-anchor="end" font-size="13" fill="#898781">${g.val}</text>` : ""}`;
+  }).join("");
+  const dmy = (key) => key.slice(5).split("-").reverse().join(".");
+  const dots = points.map((p, i) => {
+    const isLast = i === n - 1;
+    return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="8" fill="transparent"><title>${esc(dmy(p.day))}: ${p.v}</title></circle>
+      ${isLast ? `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5" fill="${color}" stroke="#fcfcfb" stroke-width="2" />` : ""}`;
+  }).join("");
+  const lastPoint = points[n - 1];
+  const endLabel = lastPoint ? `<text x="${(lastPoint.x - 12).toFixed(1)}" y="${(lastPoint.y - 12).toFixed(1)}" text-anchor="end" font-size="15" font-weight="700" fill="#0b0b0b">${lastPoint.v}</text>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" role="img" aria-label="גרף מגמה יומית">
+    ${gridLines}
+    <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    ${dots}
+    ${endLabel}
+    <text x="${padL}" y="${H - 5}" font-size="13" fill="#898781">${esc(dmy(days[0] || ""))}</text>
+    <text x="${W - padR}" y="${H - 5}" text-anchor="end" font-size="13" fill="#898781">${esc(dmy(days[n - 1] || ""))}</text>
+  </svg>`;
+}
+
+// The panel itself: three stacked charts (site visits, customer signups, freelancer signups),
+// each a different fixed color so they're always identifiable at a glance, each with its own
+// "▲/▼ מאתמול" delta line above it. Site-visit numbers come from siteStats.dailyRealVisits
+// (the bot-filtered estimate - see trackSiteVisit() near the bottom of this file), which only
+// has real data from whenever that tracking first started; days before that show 0, not a gap.
+// Signup numbers are computed fresh from every customer/freelancer's own createdAt, so those
+// two lines are accurate all the way back, with no such starting point.
+function adminTrendChartsHtml(d) {
+  const DAYS = 30;
+  const dailyVisits = (d.siteStats && d.siteStats.dailyRealVisits) || {};
+  const days = [];
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const dt = new Date();
+    dt.setDate(dt.getDate() - i);
+    days.push(dt.toISOString().slice(0, 10));
+  }
+  const customersByDay = {};
+  d.customers.forEach((c) => {
+    if (!c.createdAt) return;
+    const key = new Date(c.createdAt).toISOString().slice(0, 10);
+    customersByDay[key] = (customersByDay[key] || 0) + 1;
+  });
+  const freelancersByDay = {};
+  d.freelancers.forEach((f) => {
+    if (!f.createdAt) return;
+    const key = new Date(f.createdAt).toISOString().slice(0, 10);
+    freelancersByDay[key] = (freelancersByDay[key] || 0) + 1;
+  });
+  const series = [
+    { label: "כניסות לאתר ליום (אמיתיות, לא כולל בוטים)", color: "#2a78d6", values: days.map((k) => dailyVisits[k] || 0) },
+    { label: "לקוחות שנרשמו ליום", color: "#eb6834", values: days.map((k) => customersByDay[k] || 0) },
+    { label: "עצמאיות שנרשמו ליום", color: "#1baf7a", values: days.map((k) => freelancersByDay[k] || 0) },
+  ];
+  const rows = series.map((s) => {
+    const today = s.values[s.values.length - 1] || 0;
+    const yesterday = s.values[s.values.length - 2] || 0;
+    const diff = today - yesterday;
+    const deltaHtml = diff > 0
+      ? `<span style="color:#006300;font-weight:700;">▲ ${diff}+ מאתמול</span>`
+      : diff < 0
+        ? `<span class="muted" style="font-weight:700;">▼ ${Math.abs(diff)}- מאתמול</span>`
+        : `<span class="muted">ללא שינוי מאתמול</span>`;
+    return `
+    <div style="margin-bottom:22px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
+          <strong>${esc(s.label)}</strong>
+        </div>
+        <div style="font-size:13px;">${deltaHtml}</div>
+      </div>
+      ${sparklineChartSvg(days, s.values, s.color)}
+    </div>`;
+  }).join("");
+  return `
+  <div class="panel">
+    <h3>מגמות יומיות 📈</h3>
+    <p class="muted">30 הימים האחרונים. כל מדד בגרף נפרד ובסקאלה שלו (כדי שמספרים קטנים כמו הרשמות לא "ייעלמו" ליד מספר הכניסות שגדול הרבה יותר) - כך רואים בכל יום אם היתה עליה או ירידה. אפשר לרחף עם העכבר מעל כל נקודה בגרף כדי לראות את התאריך והמספר המדויק.</p>
+    ${rows}
+  </div>`;
+}
+
 // ----- Admin -----
 route("GET", "/admin", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
@@ -4093,6 +4295,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </div>
   </div>
 
+  ${adminTrendChartsHtml(d)}
+
   <div class="panel">
     <h3>גיבוי נתונים</h3>
     <p class="muted">מורידה קובץ אחד שמכיל את כל הנתונים באתר - כל העצמאיות, הלקוחות, הביקורות, הסיפורים וכל התמונות (כולל לוגואים) - בדיוק כפי שהם שמורים כרגע. שווה לשמור עותק כזה מדי פעם (בגוגל דרייב למשל) בנוסף לגיבוי האוטומטי שיש כבר ב-Render.</p>
@@ -4149,7 +4353,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
-  <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;">
+  <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;" data-badge="${pendingFreelancers.length}">
     <h3>מחכות לאישור שלך (${pendingFreelancers.length})</h3>
     ${pendingFreelancers.length ? pendingFreelancers.map((f) => `
       <div class="panel" style="background:var(--cream);">
@@ -4174,7 +4378,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       </div>`).join("") : `<p class="muted">אין כרגע אף אחת שמחכה - הכל מעודכן.</p>`}
   </div>
 
-  <div class="panel">
+  <div class="panel" data-badge="${pendingReviews.length}">
     <h3>ביקורות שמחכות לעין שלך (${pendingReviews.length})</h3>
     ${pendingReviews.length ? pendingReviews.map((r) => `
       <div class="review">
@@ -4210,7 +4414,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     `).join("") : `<p class="muted">עוד אין ביקורות שפורסמו.</p>`}
   </div>
 
-  <div class="panel">
+  <div class="panel" data-badge="${pendingStories.length}">
     <h3>סיפורים ממתינים לאישור (${pendingStories.length})</h3>
     ${pendingStories.length ? pendingStories.map((s) => {
       const sf = d.freelancers.find((x) => x.id === s.freelancerId);
@@ -4229,7 +4433,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     }).join("") : `<p class="muted">אין כרגע סיפורים שממתינים לאישור.</p>`}
   </div>
 
-  <div class="panel">
+  <div class="panel" data-badge="${pendingArenaQuestions.length}">
     <h3>🥊 הזירה - שאלות ממתינות לאישור (${pendingArenaQuestions.length})</h3>
     ${pendingArenaQuestions.length ? pendingArenaQuestions.map((q) => `
       <div class="panel" style="background:var(--cream);">
@@ -4243,7 +4447,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     `).join("") : `<p class="muted">אין כרגע שאלות שממתינות לאישור.</p>`}
   </div>
 
-  <div class="panel">
+  <div class="panel" data-badge="${pendingConsultations.length}">
     <h3>🥊 הזירה - התייעצויות ממתינות לאישור (${pendingConsultations.length})</h3>
     ${pendingConsultations.length ? pendingConsultations.map((c) => `
       <div class="panel" style="background:var(--cream);">
@@ -4306,7 +4510,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     `).join("") : `<p class="muted">אין כרגע סקרים.</p>`}
   </div>
 
-  <div class="panel">
+  <div class="panel" data-badge="${pendingListings.length}">
     <h3>תחומים נוספים שממתינים לאישור (${pendingListings.length})</h3>
     ${pendingListings.length ? pendingListings.map(({ f, l }) => `
       <div class="panel" style="background:var(--cream);">
@@ -4616,7 +4820,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </table></div>` : ""}
   </div>
 
-  <div class="panel">
+  <div class="panel" data-badge="${unreadMessages}">
     <h3>הודעות מ"צרי קשר" (${unreadMessages} חדשות)</h3>
     ${(d.contactMessages || []).length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>אימייל</th><th>הודעה</th><th>תאריך</th><th>פעולות</th></tr>
       ${(d.contactMessages || []).slice().reverse().map((m) => `<tr>
@@ -5366,7 +5570,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
         if (!profileQrRes.ok) throw new Error(`qrserver responded ${profileQrRes.status}`);
         const profileQrBuf = Buffer.from(await profileQrRes.arrayBuffer());
         const profileQrDataUrl = `data:image/png;base64,${profileQrBuf.toString("base64")}`;
-        const joinImageBuffer = await buildJoinStoryImageBuffer({ qrDataUrl: profileQrDataUrl, profileUrl });
+        const joinImageBuffer = await runChromiumSerialized(() => buildJoinStoryImageBuffer({ qrDataUrl: profileQrDataUrl, profileUrl }), "join-story image build");
         attachments.push({ filename: "1-הצטרפתי-לSheCan-לשיתוף.png", content: joinImageBuffer.toString("base64") });
         hasJoinImage = true;
       } catch (e) {
@@ -5384,7 +5588,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
         if (!reviewQrRes.ok) throw new Error(`qrserver responded ${reviewQrRes.status}`);
         const reviewQrBuf = Buffer.from(await reviewQrRes.arrayBuffer());
         const reviewQrDataUrl = `data:image/png;base64,${reviewQrBuf.toString("base64")}`;
-        const reviewImageBuffer = await buildReviewStoryImageBuffer({ qrDataUrl: reviewQrDataUrl, reviewUrl });
+        const reviewImageBuffer = await runChromiumSerialized(() => buildReviewStoryImageBuffer({ qrDataUrl: reviewQrDataUrl, reviewUrl }), "review-story image build");
         attachments.push({ filename: "2-סרקי-אותי-להדפסה.png", content: reviewImageBuffer.toString("base64") });
         hasReviewImage = true;
       } catch (e) {

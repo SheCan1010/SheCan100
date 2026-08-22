@@ -335,6 +335,13 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .weekly-tip-like:disabled{cursor:default;opacity:.9;}
 .weekly-tip-like.liked{background:#FBF3EC;}
 .weekly-tip-like-icon{font-size:15px;line-height:1;}
+/* Heart-reaction button at the bottom of a story page/panel (see storyDetailHtml in
+   server.js + scLikeStory above) - same visual language as the weekly-tip like above, just
+   inline/centered instead of absolutely positioned since it sits at the end of the story text. */
+.story-like-btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--rose);border-radius:18px;padding:7px 18px;font-size:14px;font-weight:700;color:var(--rose-dark);cursor:pointer;margin:18px 0;}
+.story-like-btn:disabled{cursor:default;opacity:.9;}
+.story-like-btn.liked{background:#FBF3EC;}
+.story-like-icon{font-size:16px;line-height:1;}
 /* "הזירה" - עמוד קהילה מודגש: כותרת בגרדיאנט בולט, וכל אחד מ-3 החלקים הגדולים מסומן
    בפס עליון עבה בצבע הזירה, כדי שהעמוד יבלוט בבירור מול שאר האתר הרך יותר. */
 /* Hero box shrunk down significantly (it used to be a huge, mostly-empty block) and given
@@ -630,9 +637,14 @@ form .field{margin-bottom:6px;}
 .sc-admin-menu{background:var(--white);border-radius:14px;padding:18px 22px 22px;margin-bottom:22px;box-shadow:0 2px 10px rgba(0,0,0,.05);}
 .sc-admin-menu-search input{width:100%;max-width:420px;margin-bottom:16px;}
 .sc-admin-menu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;}
-.sc-admin-menu-tile{background:var(--cream);border:1.5px solid var(--rose);border-radius:14px;padding:16px 10px;min-height:80px;font-family:inherit;font-size:14px;font-weight:700;color:var(--rose-dark);cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.35;transition:background .15s,transform .1s;}
+.sc-admin-menu-tile{position:relative;background:var(--cream);border:1.5px solid var(--rose);border-radius:14px;padding:16px 10px;min-height:80px;font-family:inherit;font-size:14px;font-weight:700;color:var(--rose-dark);cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.35;transition:background .15s,transform .1s;}
 .sc-admin-menu-tile:hover{background:var(--rose);color:var(--white);}
 .sc-admin-menu-tile:active{transform:scale(.97);}
+.sc-admin-menu-tile.has-badge{border-color:#E0435B;border-width:2px;}
+/* Small red notification-style badge showing how many items on this panel need Sapir's
+   action (pending freelancer approvals, unread contact messages, etc.) - see the data-badge
+   attribute set server-side on specific panels, and how scSetupAdminCollapsibles reads it. */
+.sc-admin-menu-badge{position:absolute;top:-9px;right:-9px;background:#E0435B;color:#fff;font-size:12px;font-weight:800;min-width:22px;height:22px;line-height:22px;border-radius:11px;text-align:center;padding:0 5px;box-shadow:0 1px 4px rgba(0,0,0,.3);}
 .sc-admin-menu-empty{grid-column:1/-1;text-align:center;color:var(--rose-dark);padding:10px;}
 /* Logo cropper modal - shown right after picking a logo file, so freelancers can position/zoom
    into a clean square before it's saved, instead of a stretched/padded source image (e.g. a
@@ -908,8 +920,13 @@ function scSetupAdminCollapsibles() {
       try { localStorage.setItem(key, isOpen ? "1" : "0"); } catch (e) {}
     }
     h3.addEventListener("click", toggleOpen);
+    // data-badge (set server-side, see server.js's admin route) marks panels that need
+    // Sapir's action right now - pending freelancer approvals, unread contact messages, etc.
+    // (as opposed to plain informational totals, which don't get this attribute at all) - the
+    // number becomes a small red badge on this panel's quick-nav tile below.
+    var badge = parseInt(panel.getAttribute("data-badge") || "0", 10) || 0;
     menuItems.push({
-      id: panel.id, title: titleText,
+      id: panel.id, title: titleText, badge: badge,
       openIfClosed: function () { if (!isOpen) toggleOpen(); },
     });
   });
@@ -934,7 +951,16 @@ function scSetupAdminCollapsibles() {
     var tile = document.createElement("button");
     tile.type = "button";
     tile.className = "sc-admin-menu-tile";
-    tile.textContent = item.title;
+    var labelSpan = document.createElement("span");
+    labelSpan.textContent = item.title;
+    tile.appendChild(labelSpan);
+    if (item.badge > 0) {
+      tile.classList.add("has-badge");
+      var badgeSpan = document.createElement("span");
+      badgeSpan.className = "sc-admin-menu-badge";
+      badgeSpan.textContent = item.badge > 99 ? "99+" : String(item.badge);
+      tile.appendChild(badgeSpan);
+    }
     tile.addEventListener("click", function () {
       item.openIfClosed();
       var target = document.getElementById(item.id);
@@ -1687,6 +1713,38 @@ document.addEventListener("DOMContentLoaded", function () {
     var iconEl = btn.querySelector(".weekly-tip-like-icon");
     if (iconEl) iconEl.textContent = "❤️";
   }
+});
+// "Heart" reaction button at the bottom of a story (see storyDetailHtml in server.js) - same
+// open-to-anyone, one-per-browser pattern as scLikeWeeklyQuote above, just keyed by story id
+// instead of freelancer id.
+function scLikeStory(btn) {
+  var storyId = btn.getAttribute("data-story-id");
+  var storageKey = "scStoryLiked::" + storyId;
+  var already = false;
+  try { already = localStorage.getItem(storageKey) === "1"; } catch (e) {}
+  if (already || btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add("liked");
+  var iconEl = btn.querySelector(".story-like-icon");
+  if (iconEl) iconEl.textContent = "❤️";
+  var countEl = btn.querySelector(".story-like-count");
+  if (countEl) countEl.textContent = String((parseInt(countEl.textContent, 10) || 0) + 1);
+  try { localStorage.setItem(storageKey, "1"); } catch (e) {}
+  fetch("/stories/" + storyId + "/like", { method: "POST" }).catch(function () {});
+}
+document.addEventListener("DOMContentLoaded", function () {
+  var btns = document.querySelectorAll(".story-like-btn");
+  btns.forEach(function (btn) {
+    var storyId = btn.getAttribute("data-story-id");
+    var already = false;
+    try { already = localStorage.getItem("scStoryLiked::" + storyId) === "1"; } catch (e) {}
+    if (already) {
+      btn.disabled = true;
+      btn.classList.add("liked");
+      var iconEl = btn.querySelector(".story-like-icon");
+      if (iconEl) iconEl.textContent = "❤️";
+    }
+  });
 });
 // Turns each ".sc-star-input" widget (a row of star spans plus a hidden "rating" input)
 // into a clickable rating picker - runs immediately since this script tag sits at the end
