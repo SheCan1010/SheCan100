@@ -33,6 +33,10 @@ function defaultData() {
       // דגל חד-פעמי: מסמן שכבר בוצע גיבוי-לאחור (backfill) שמילא s.featuredAt לכל הסיפורים
       // שכבר היה להם תור לפני שהשדה הזה נוסף - ר' getCurrentStory ב-server.js.
       storiesFeaturedBackfilled: false,
+      // דגל חד-פעמי נוסף: מסמן שכל התמונות המוטמעות (base64) בתוך db.json כבר "הוצאו" לקבצים
+      // נפרדים בתיקיית uploads (ר' migrateEmbeddedPhotosToFiles ב-server.js) - זה מה שתיקן את
+      // קריסת הזיכרון מ-22.8.2026, אחרי שהתגלה ש-db.json תפח לכ-290MB.
+      photosMigratedToFiles: false,
       chargingEnabled: false, // תקופת השקה חינמית
       // תחרות "הביאי חברה" ללקוחות - קישור אישי (?ref=<customerId>) שכל לקוחה מקבלת. עריכים
       // כאן כברירת מחדל בלבד - כל הערכים האלה ניתנים לעריכה בפאנל הניהול בלי דיפלוי, כדי

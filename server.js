@@ -43,6 +43,17 @@ const path = require("path");
 const crypto = require("crypto");
 const { URL } = require("url");
 const db = require("./db");
+
+// Where uploaded/generated images live on disk from 2026-08-22 onward (see fileToDataUri and
+// migrateEmbeddedPhotosToFiles below) - a sibling folder to db.json itself, so it lives on the
+// same persistent disk (DATA_DIR) and survives every redeploy exactly like db.json does.
+const UPLOADS_DIR = path.join(path.dirname(db.DB_PATH), "uploads");
+try {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+} catch (e) {
+  console.warn("[uploads] could not create uploads dir:", e.message);
+}
+
 const auth = require("./auth");
 const webpush = require("./webpush");
 const { page, esc, categoryIcon, cityAutocompleteHtml } = require("./layout");
@@ -293,12 +304,99 @@ function parseMultipart(req, contentType) {
 // maxlength is easy to bypass with a direct POST, so the real limit is enforced here.
 function clip(str, max) { return (str || "").slice(0, max); }
 
+function extFromImageContentType(ct) {
+  const map = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp",
+    "image/gif": "gif", "image/heic": "heic", "image/heif": "heif", "image/avif": "avif",
+    "image/bmp": "bmp", "image/svg+xml": "svg",
+  };
+  return map[(ct || "").toLowerCase()] || "jpg";
+}
+
+// NOTE ON THE NAME: despite still being called fileToDataUri, this no longer returns a literal
+// "data:image/...;base64,...." string - as of 2026-08-22 it WRITES the uploaded image to a file
+// under UPLOADS_DIR and returns a short "/uploads/<name>.<ext>" URL instead. The name was kept
+// on purpose so every existing call site (freelancer registration/profile edits, additional
+// listings, reviews, stories, site logo/banner/background) keeps working with zero changes -
+// they all just store whatever string this returns and drop it into an <img src="..."> later,
+// which works identically for a data: URI or a normal URL path.
+//
+// This is the real fix for the 2026-08-22 OOM crash-loop: db.json had grown to ~290MB because
+// every one of those images was being stored as full base64 text directly inside the one JSON
+// file. Every server boot had to JSON.parse that whole ~290MB string, and every single db.save()
+// (which happens on nearly every page view / write, see saveSiteStatsThrottled and friends) had
+// to JSON.stringify it all again - on a 2GB instance that alone was enough to exhaust memory
+// within seconds of starting, independent of any traffic. See migrateEmbeddedPhotosToFiles
+// below for the one-time cleanup of images already embedded in db.json from before this fix.
 function fileToDataUri(file, maxBytes) {
   if (!file || !file.data || !file.data.length) return null;
   if (!/^image\//.test(file.contentType || "")) return null;
   if (maxBytes && file.data.length > maxBytes) return null;
-  return `data:${file.contentType};base64,${file.data.toString("base64")}`;
+  const ext = extFromImageContentType(file.contentType);
+  const filename = `${Date.now().toString(36)}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+  try {
+    fs.writeFileSync(path.join(UPLOADS_DIR, filename), file.data);
+  } catch (e) {
+    console.warn("[fileToDataUri] failed to write uploaded image to disk:", e.message);
+    return null;
+  }
+  return `/uploads/${filename}`;
 }
+
+// One-time cleanup (gated by settings.photosMigratedToFiles) that walks every place an image
+// used to be stored as an embedded base64 data: URI and rewrites it to a file under
+// UPLOADS_DIR + a short "/uploads/<name>" path instead - see the big comment on fileToDataUri
+// above for why. Safe to run on every boot: after the first successful run it flips the flag
+// and every subsequent boot returns immediately without touching anything. If writing any single
+// image to disk fails for some reason, that one field is simply left as-is (still a working
+// base64 image, just not yet migrated) rather than risking data loss - it'll be retried the
+// next time this runs, which is only possible by manually resetting the flag, so in practice a
+// failure here should be investigated rather than assumed to self-heal.
+function migrateEmbeddedPhotosToFiles(d) {
+  if (d.settings.photosMigratedToFiles) return false;
+  let moved = 0;
+  function moveOne(dataUri, prefix) {
+    if (typeof dataUri !== "string") return dataUri;
+    const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,([\s\S]+)$/.exec(dataUri);
+    if (!m) return dataUri; // not a base64 data URI (already a /uploads/ path, external URL, or empty) - leave untouched
+    const ext = extFromImageContentType(`image/${m[1]}`);
+    const filename = `migrated-${prefix}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+    try {
+      fs.writeFileSync(path.join(UPLOADS_DIR, filename), Buffer.from(m[2], "base64"));
+      moved++;
+      return `/uploads/${filename}`;
+    } catch (e) {
+      console.warn(`[migrate-photos] failed to write ${prefix}:`, e.message);
+      return dataUri;
+    }
+  }
+  function moveField(obj, field, prefix) { if (obj && obj[field]) obj[field] = moveOne(obj[field], prefix); }
+  function moveArray(obj, field, prefix) {
+    if (obj && Array.isArray(obj[field])) obj[field] = obj[field].map((v, i) => moveOne(v, `${prefix}-${i}`));
+  }
+  (d.freelancers || []).forEach((f) => {
+    moveField(f, "photoDataUri", `freelancer-${f.id}-photo`);
+    moveField(f, "logoDataUri", `freelancer-${f.id}-logo`);
+    moveArray(f, "galleryPhotos", `freelancer-${f.id}-gallery`);
+    (f.additionalListings || []).forEach((l) => {
+      moveField(l, "logoDataUri", `listing-${l.id}-logo`);
+      moveArray(l, "galleryPhotos", `listing-${l.id}-gallery`);
+    });
+  });
+  (d.reviews || []).forEach((r) => moveField(r, "photoDataUri", `review-${r.id}-photo`));
+  (d.stories || []).forEach((s) => moveField(s, "photoDataUri", `story-${s.id}-photo`));
+  moveField(d.settings, "siteLogoDataUri", "site-logo");
+  moveField(d.settings, "topBannerDataUri", "site-banner");
+  moveField(d.settings, "siteBackgroundImageDataUri", "site-bg");
+  d.settings.photosMigratedToFiles = true;
+  console.log(`[migrate-photos] moved ${moved} embedded base64 image(s) out of db.json into ${UPLOADS_DIR}`);
+  return true;
+}
+
+(function runPhotoMigration() {
+  const d = db.load();
+  if (migrateEmbeddedPhotosToFiles(d)) db.save();
+})();
 
 function sendHtml(res, status, html, extraHeaders = {}) {
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", ...extraHeaders });
@@ -6029,6 +6127,30 @@ route("GET", "/icons/:file", async (req, res, params, query, ctx) => {
   if (!buf) return sendHtml(res, 404, "not found");
   res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=604800" });
   res.end(buf);
+});
+
+// Serves every image written by fileToDataUri / migrateEmbeddedPhotosToFiles (profile photos,
+// logos, gallery shots, review/story photos, site logo/banner/background) - streamed straight
+// off disk rather than held in memory, same reasoning as the magazine files fix above. Filenames
+// are always our own randomly-generated names (never a user-typed path), but the extra pattern
+// check + "..".includes guard is cheap defense-in-depth against path traversal regardless.
+route("GET", "/uploads/:filename", async (req, res, params, query, ctx) => {
+  const filename = params.filename || "";
+  if (!/^[a-zA-Z0-9._-]+$/.test(filename) || filename.includes("..")) return sendHtml(res, 404, "not found");
+  const filePath = path.join(UPLOADS_DIR, filename);
+  fs.stat(filePath, (err, stat) => {
+    if (err || !stat.isFile()) return sendHtml(res, 404, "not found");
+    const ext = path.extname(filename).slice(1).toLowerCase();
+    const mime = {
+      jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+      gif: "image/gif", heic: "image/heic", heif: "image/heif", avif: "image/avif",
+      bmp: "image/bmp", svg: "image/svg+xml",
+    }[ext] || "application/octet-stream";
+    // Filenames are random and never reused for different content, so this is safe to cache
+    // "forever" on the client/CDN side - a changed photo always gets a brand-new filename.
+    res.writeHead(200, { "Content-Type": mime, "Cache-Control": "public, max-age=31536000, immutable" });
+    fs.createReadStream(filePath).on("error", () => res.end()).pipe(res);
+  });
 });
 
 // The service worker: enables installability, and is REQUIRED for push - a push message is
