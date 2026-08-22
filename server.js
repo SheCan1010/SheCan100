@@ -20,15 +20,22 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "
 // off 2026-08-19 after the site went into an actual crash loop (restarting every 1-3 minutes)
 // on Render's 512MB Starter plan, right after Chromium-based image generation started working
 // for the first time - each launch is memory-heavy enough on a 512MB instance to be the most
-// likely trigger. Turned back on 2026-08-21 now that Sapir has confirmed the Render Instance
-// Type is actually Standard (2GB, 4x the old headroom - the earlier "upgrade" attempt turned out
-// to have hit the wrong button and never actually changed the per-service instance size), and
-// after the GET /freelancer/:id unthrottled-db.save()-per-view bug (a second, independent memory/
-// perf issue) was already fixed separately. While this is false, server.js never calls
-// buildJoinStoryImageBuffer/buildReviewStoryImageBuffer at all, so approvals go back to sending
-// the plain email with no image attachments (safe, non-blocking, same as any other build
-// failure) - keep that fallback behavior in mind if this ever needs to flip off again.
-const STORY_IMAGES_ENABLED = true;
+// likely trigger. Turned back on 2026-08-21 after Sapir confirmed the Render Instance Type is
+// actually Standard (2GB), and after the GET /freelancer/:id unthrottled-db.save()-per-view bug
+// was fixed separately. Turned back OFF again on 2026-08-22 (temporarily) as one extra safety
+// margin during a live OOM-crash-loop-on-every-deploy incident, alongside the real fix that
+// night: assets/*.html magazine flipbook files (some embed every page as a full-resolution
+// image and can be tens of MB each) were being eagerly read into memory at boot for EVERY
+// server start, including the extra "old + new instance both briefly alive" memory overlap
+// Render does on every deploy - see the emergency-fix comment near MAGAZINE_ISSUE_FILES below,
+// which is almost certainly the actual trigger. This flag was flipped off at the same time
+// purely as belt-and-suspenders for that one critical redeploy, since Chromium launches are a
+// real (if smaller) memory cost too - safe to flip back to true once the site has been stable
+// for a while after the magazine fix lands, to restore the join/review-story image attachments.
+// While this is false, server.js never calls buildJoinStoryImageBuffer/buildReviewStoryImageBuffer
+// at all, so approvals go back to sending the plain email with no image attachments (safe,
+// non-blocking, same as any other build failure).
+const STORY_IMAGES_ENABLED = false;
 
 const http = require("http");
 const fs = require("fs");
@@ -1993,28 +2000,41 @@ route("GET", "/magazine", async (req, res, params, query, ctx) => {
 // The admin "המגזין שלנו" panel above only accepts a URL per issue (not a file upload), so this
 // route is what turns an uploaded flipbook file into an actual public link she can paste into
 // that "קישור לצפייה" field - e.g. a file uploaded as assets/issue-1.html becomes viewable at
-// /magazine/view/issue-1. Files are pre-loaded once at boot (small, static, never change at
-// runtime) rather than hitting the filesystem on every request, same pattern as ICON_FILES
-// below. A matching assets/<slug>.pdf (same slug as the .html flipbook) is optional - when
-// present, the flipbook's own "הורדת המגזין" button links to /magazine/download/<slug> so
-// readers can save/print a plain PDF copy instead of the interactive page-flip version. Only
-// .html/.pdf files are picked up here, so this coexists fine with the .jpg template files that
-// already live in the same assets/ folder for the join/review-story features.
+// /magazine/view/issue-1. Only the file PATH per slug is resolved at boot (cheap - just a
+// directory listing) - the actual file content is read/streamed from disk on demand, per
+// request (see the emergency-fix comment above). A matching assets/<slug>.pdf (same slug as
+// the .html flipbook) is optional - when present, the flipbook's own "הורדת המגזין" button
+// links to /magazine/download/<slug> so readers can save/print a plain PDF copy instead of the
+// interactive page-flip version. Only .html/.pdf files are picked up here, so this coexists
+// fine with the .jpg template files that already live in the same assets/ folder for the
+// join/review-story features.
 const MAGAZINE_DIR = path.join(__dirname, "assets");
-const MAGAZINE_ISSUES = {};
-const MAGAZINE_PDFS = {};
+const MAGAZINE_ISSUE_FILES = {};
+const MAGAZINE_PDF_FILES = {};
 try {
   fs.readdirSync(MAGAZINE_DIR).forEach((name) => {
     if (/\.html?$/i.test(name)) {
-      MAGAZINE_ISSUES[name.replace(/\.html?$/i, "")] = fs.readFileSync(path.join(MAGAZINE_DIR, name));
+      MAGAZINE_ISSUE_FILES[name.replace(/\.html?$/i, "")] = path.join(MAGAZINE_DIR, name);
     } else if (/\.pdf$/i.test(name)) {
-      MAGAZINE_PDFS[name.replace(/\.pdf$/i, "")] = fs.readFileSync(path.join(MAGAZINE_DIR, name));
+      MAGAZINE_PDF_FILES[name.replace(/\.pdf$/i, "")] = path.join(MAGAZINE_DIR, name);
     }
   });
 } catch (e) {
   console.warn("[magazine] assets/magazine folder not found yet - no flipbook issues loaded (this is fine until the first issue is uploaded).");
 }
 
+// EMERGENCY MEMORY FIX (2026-08-22): this used to eagerly read every magazine .html/.pdf file
+// into memory at boot with fs.readFileSync (see the removed code, a few lines up in git
+// history) and hold it in a MAGAZINE_ISSUES/MAGAZINE_PDFS object for the app's entire lifetime.
+// That's fine for a couple of small files, but a flipbook export can easily be tens of MB
+// (some formats embed every page as a full-resolution image directly in the HTML) - and this
+// ran on EVERY server start, including the extra "old + new instance both briefly alive"
+// memory overlap Render does on every single deploy, stacked on top of the full freelancer-
+// photo DB already in memory. That combination is the leading suspect for the OOM-at-deploy
+// crash loop from tonight. Fixed by keeping only the on-disk file PATH per slug (below), and
+// reading/streaming each file's actual content only when someone requests that specific issue
+// - so boot time and idle memory no longer depend on how many/how large the uploaded issues
+// are at all.
 // Pulls the :slug back out of an internal "/magazine/view/<slug>" link stored on a d.magazines
 // record, so the admin table can look up that issue's view count (tracked by slug, not by the
 // magazine record's own id - see /magazine/view/:slug below) - null for an external link
@@ -2025,10 +2045,11 @@ function magazineSlugFromUrl(url) {
 }
 
 route("GET", "/magazine/view/:slug", async (req, res, params, query, ctx) => {
-  // :slug is matched against pre-loaded filenames only (see MAGAZINE_ISSUES above) - never
-  // used to build a filesystem path directly, so there's no path-traversal concern here.
-  const buf = MAGAZINE_ISSUES[params.slug];
-  if (!buf) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הגיליון הזה.</p>` }));
+  // :slug is matched against pre-resolved filenames only (see MAGAZINE_ISSUE_FILES above) -
+  // never used to build a filesystem path directly from the request, so there's no path-
+  // traversal concern here.
+  const filePath = MAGAZINE_ISSUE_FILES[params.slug];
+  if (!filePath) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הגיליון הזה.</p>` }));
   // Counts an actual open of one issue's flipbook - deliberately NOT tracked on GET /magazine
   // (the listing page itself), per explicit request to distinguish "landed on the magazine page"
   // from "actually opened an issue to read it". Keyed by slug (not tied to a d.magazines record,
@@ -2044,19 +2065,21 @@ route("GET", "/magazine/view/:slug", async (req, res, params, query, ctx) => {
   // could easily keep showing the old cached copy for up to an hour after a redeploy with no
   // visible sign anything was wrong, which is exactly the "I uploaded the new file and nothing
   // changed" confusion this caused once already.
+  // Streamed straight from disk (not read into a Buffer first) so serving a large flipbook
+  // file never holds its full content in memory at once - see the emergency-fix comment above.
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
-  res.end(buf);
+  fs.createReadStream(filePath).on("error", () => res.end()).pipe(res);
 });
 
 route("GET", "/magazine/download/:slug", async (req, res, params, query, ctx) => {
-  const buf = MAGAZINE_PDFS[params.slug];
-  if (!buf) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו קובץ להורדה עבור הגיליון הזה.</p>` }));
+  const filePath = MAGAZINE_PDF_FILES[params.slug];
+  if (!filePath) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו קובץ להורדה עבור הגיליון הזה.</p>` }));
   res.writeHead(200, {
     "Content-Type": "application/pdf",
     "Content-Disposition": `attachment; filename="SheCan-Magazine-${String(params.slug).replace(/[^a-zA-Z0-9_-]/g, "")}.pdf"`,
     "Cache-Control": "no-cache",
   });
-  res.end(buf);
+  fs.createReadStream(filePath).on("error", () => res.end()).pipe(res);
 });
 
 // ----- Inspiration stories - כל עצמאית יכולה לענות על כמה שאלות קבועות ולשלוח את הסיפור
