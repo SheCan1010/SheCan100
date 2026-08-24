@@ -1955,7 +1955,7 @@ function scArenaCopyLink(id, btn){
   </div>
 </div>
 <div class="sc-support-widget">
-  <a href="/support" class="sc-support-widget-btn"><span aria-hidden="true">💬</span><span>יש לך שאלה?</span></a>
+  <a href="/support" class="sc-support-widget-btn"><span aria-hidden="true">💬</span><span>לתמיכה לחצי</span></a>
 </div>
 </body>
 </html>`;
