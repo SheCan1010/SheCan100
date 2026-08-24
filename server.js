@@ -1238,6 +1238,31 @@ function arenaVoterKeyReadOnly(req, ctx) {
   return cookies.scAnon ? `anon:${cookies.scAnon}` : null;
 }
 
+// Same identity idea as arenaVoterIdentity/arenaVoterKeyReadOnly above, but for the "יש לך
+// שאלה? 💬" support widget - reused here rather than duplicated, since it's the exact same
+// need: a stable way to say "who is this" for a logged-in customer/freelancer OR an anonymous
+// visitor, using the SAME long-lived scAnon cookie (so someone who already voted on a poll
+// gets the same identity here too, from the same browser). Freelancers are included here
+// (unlike the arena voter identity, which is customer-only) since a freelancer should be able
+// to ask a question and find her own thread again just as easily as a customer can.
+function supportIdentity(req, ctx) {
+  if (ctx.session && (ctx.session.role === "customer" || ctx.session.role === "freelancer")) {
+    return { key: `${ctx.session.role}:${ctx.session.id}`, newCookie: null };
+  }
+  const cookies = auth.parseCookies(req);
+  if (cookies.scAnon) return { key: `anon:${cookies.scAnon}`, newCookie: null };
+  const token = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  return { key: `anon:${token}`, newCookie: `scAnon=${token}; Path=/; Max-Age=31536000` };
+}
+
+function supportKeyReadOnly(req, ctx) {
+  if (ctx.session && (ctx.session.role === "customer" || ctx.session.role === "freelancer")) {
+    return `${ctx.session.role}:${ctx.session.id}`;
+  }
+  const cookies = auth.parseCookies(req);
+  return cookies.scAnon ? `anon:${cookies.scAnon}` : null;
+}
+
 // Renders one poll's question, options (as vote buttons, or result bars once this visitor has
 // voted), and a copyable share link - shared between the "מה דעתך?" section on /arena and the
 // dedicated single-poll page at /arena/poll/:id (the whole point of the share link).
@@ -4442,6 +4467,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     revealsByCategory[cat] = (revealsByCategory[cat] || 0) + 1;
   });
   const unreadMessages = (d.contactMessages || []).filter((m) => !m.read).length;
+  const openSupportMessages = (d.supportMessages || []).filter((m) => m.status !== "answered").length;
 
   // Site-visit numbers for the "מספרים כלליים" panel - counted by trackSiteVisit() on every
   // real page load (see near the bottom of the file). Last-7-days breakdown built from
@@ -5073,6 +5099,22 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         </td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין לא התקבלו הודעות.</p>`}
+  </div>
+
+  <div class="panel" data-badge="${openSupportMessages}">
+    <h3>יש לך שאלה? 💬 (${openSupportMessages} ממתינות למענה)</h3>
+    <p class="muted">שאלות שנשלחו דרך הכפתור הצף שמופיע בכל עמוד באתר - גם מלקוחות/עצמאיות מחוברות וגם מגולשות אנונימיות. תשובה שלך כאן מוצגת גם באתר עצמו (כשהיא חוזרת לפתוח את הווידג'ט מאותו דפדפן) וגם נשלחת אוטומטית למייל שהיא השאירה.</p>
+    ${(d.supportMessages || []).length ? (d.supportMessages || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map((m) => `
+      <div style="border-top:1px solid var(--rose);padding:12px 0;">
+        <p style="margin:0 0 4px;"><strong>${esc(m.name)}</strong> <span class="muted">(${esc(m.email)}) · ${esc(new Date(m.createdAt).toLocaleString("he-IL"))}</span></p>
+        <p style="margin:0 0 8px;">${esc(m.question)}</p>
+        ${m.status === "answered" ? `<p class="muted" style="background:var(--cream);border-radius:8px;padding:8px 10px;margin:0 0 8px;">✅ ${esc(m.answer)}</p>` : ""}
+        <form method="post" action="/admin/support/${m.id}/reply">
+          <textarea name="answer" required maxlength="800" placeholder="${m.status === "answered" ? "עדכון התשובה..." : "כתבי תשובה..."}">${m.status === "answered" ? esc(m.answer) : ""}</textarea>
+          <button class="btn btn-small" style="margin-top:8px;" type="submit">${m.status === "answered" ? "עדכון תשובה" : "שליחת תשובה"}</button>
+        </form>
+      </div>
+    `).join("") : `<p class="muted">עדיין לא נשאלו שאלות.</p>`}
   </div>
 
   <div class="panel">
@@ -6191,6 +6233,118 @@ route("POST", "/contact", async (req, res, params, query, ctx) => {
   db.save();
   redirect(res, `/contact?ok=${encodeURIComponent("קיבלנו את ההודעה שלך - תודה! נחזור אלייך בהקדם ❤️")}`);
 });
+
+// ----- "יש לך שאלה? 💬" - כפתור צף שמופיע בכל עמוד (ר' layout.js), בנוסף לעמוד "צרי קשר"
+// הקיים למעלה, לא במקומו. כל מי שנכנסת יכולה לשאול - כולל גולשת שלא נרשמה בכלל - ולראות את
+// התשובה גם כאן באתר (דרך supportIdentity/supportKeyReadOnly, ר' הגדרתן למעלה) וגם במייל. -----
+route("GET", "/support", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const isCustomer = requireRole(ctx.session, "customer");
+  const isFreelancer = requireRole(ctx.session, "freelancer");
+  let prefillName = "", prefillEmail = "";
+  if (isCustomer) {
+    const c = d.customers.find((x) => x.id === ctx.session.id);
+    if (c) { prefillName = c.name || ""; prefillEmail = c.email || ""; }
+  } else if (isFreelancer) {
+    const f = d.freelancers.find((x) => x.id === ctx.session.id);
+    if (f) { prefillName = f.businessName || f.name || ""; prefillEmail = f.email || ""; }
+  }
+  const key = supportKeyReadOnly(req, ctx);
+  const myMessages = key
+    ? (d.supportMessages || []).filter((m) => m.voterKey === key).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    : [];
+  const body = `
+  <h1 class="section-title">יש לך שאלה? 💬</h1>
+  <p class="muted" style="text-align:center;">אנחנו כאן בשבילך - תכתבי לנו מה שמעניין אותך, ונחזור אלייך גם כאן וגם במייל.</p>
+  <div class="panel" style="max-width:520px;margin:0 auto 24px;">
+    <form method="post" action="/support/ask">
+      ${(isCustomer || isFreelancer) ? `<p class="muted" style="margin-bottom:10px;">שולחת בתור ${esc(prefillName)}</p>` : `<label>שם<input type="text" name="name" required maxlength="80" /></label>`}
+      <label>מייל לחזרה אלייך<input type="email" name="email" required maxlength="150" value="${esc(prefillEmail)}" /></label>
+      <label>מה השאלה שלך?<textarea name="question" required maxlength="800"></textarea></label>
+      <button class="btn" type="submit" style="margin-top:10px;width:100%;">שליחה</button>
+    </form>
+  </div>
+  ${myMessages.length ? `
+  <div class="panel" style="max-width:520px;margin:0 auto;">
+    <h3>השאלות שלך</h3>
+    ${myMessages.map((m) => `
+      <div style="border-top:1px solid var(--rose);padding:10px 0;">
+        <p style="margin:0 0 6px;font-weight:700;">${esc(m.question)}</p>
+        ${m.status === "answered"
+          ? `<p class="muted" style="margin:0;background:var(--cream);border-radius:8px;padding:8px 10px;">💌 ${esc(m.answer)}</p>`
+          : `<p class="muted" style="margin:0;font-size:13px;">ממתינה לתשובה...</p>`}
+      </div>
+    `).join("")}
+  </div>` : ""}
+  `;
+  sendHtml(res, 200, page({ title: "יש לך שאלה?", session: ctx.session, body, query }));
+});
+
+route("POST", "/support/ask", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const body = await readBody(req);
+  const { key, newCookie } = supportIdentity(req, ctx);
+  const isCustomer = requireRole(ctx.session, "customer");
+  const isFreelancer = requireRole(ctx.session, "freelancer");
+  let name = "";
+  let email = clip((body.get("email") || "").trim(), 150);
+  if (isCustomer) {
+    const c = d.customers.find((x) => x.id === ctx.session.id);
+    name = c ? (c.name || "") : "";
+    if (!email && c) email = c.email || "";
+  } else if (isFreelancer) {
+    const f = d.freelancers.find((x) => x.id === ctx.session.id);
+    name = f ? (f.businessName || f.name || "") : "";
+    if (!email && f) email = f.email || "";
+  } else {
+    name = clip((body.get("name") || "").trim(), 80);
+  }
+  const question = clip((body.get("question") || "").trim(), 800);
+  if (!name || !email || !question) {
+    return redirect(res, `/support?err=${encodeURIComponent("נא למלא שם, מייל ושאלה.")}`, newCookie);
+  }
+  const id = db.nextId("supportMessage");
+  d.supportMessages = d.supportMessages || [];
+  d.supportMessages.push({
+    id, voterKey: key, name, email, question, answer: "", status: "open", answeredAt: null,
+    createdAt: new Date().toISOString(),
+  });
+  db.save();
+  // Same push-first, email-fallback pattern already used to notify Sapir the moment a new
+  // freelancer signs up (see /join above) - so a question doesn't just sit unnoticed until she
+  // happens to open /admin.
+  {
+    const notifyAdmin = d.admins[0];
+    const notifyTo = d.settings.contactEmail || notifyAdmin.email;
+    sendPushToUser(notifyAdmin, { title: "שאלה חדשה מהאתר 💬", body: `${name}: ${question}`, url: "/admin" })
+      .then((pushed) => { if (!pushed) sendEmail(notifyTo, `שאלה חדשה מהאתר - ${name}`,
+        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(name)} (${esc(email)}) שאלה:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(question)}</p><p>אפשר לענות לה מפאנל הניהול.</p></div>`
+      ).catch(() => {}); })
+      .catch(() => {});
+  }
+  redirect(res, `/support?ok=${encodeURIComponent("השאלה שלך נשלחה - נחזור אלייך בקרוב ❤️")}`, newCookie);
+});
+
+route("POST", "/admin/support/:id/reply", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const m = (d.supportMessages || []).find((x) => x.id === params.id);
+  if (m) {
+    const body = await readBody(req);
+    const answer = clip((body.get("answer") || "").trim(), 800);
+    if (answer) {
+      m.answer = answer;
+      m.status = "answered";
+      m.answeredAt = new Date().toISOString();
+      db.save();
+      sendEmail(m.email, "קיבלת תשובה ל-SheCan 💬",
+        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(m.name || "")},</p><p>שאלת אותנו:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(m.question)}</p><p>והתשובה שלנו:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(answer)}</p><p>אפשר גם לראות את זה באתר עצמו, בעמוד "יש לך שאלה?".</p></div>`
+      ).catch(() => {});
+    }
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("התשובה נשלחה.")}`);
+});
+
 route("GET", "/terms", async (req, res, params, query, ctx) => {
   const d = db.load();
   const body = `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(d.settings.termsText)}</div>`;

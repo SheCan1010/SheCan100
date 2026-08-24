@@ -187,6 +187,13 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
       ],
     },
     contactMessages: [], // הודעות שהושארו בעמוד "צרי קשר"
+    // "יש לך שאלה? 💬" - כפתור צף שמופיע בכל עמוד באתר, לכל מי שנכנסת (כולל גולשות שלא
+    // נרשמו). שואלת מזוהה: לקוחה/עצמאית מחוברת לפי session (voterKey "customer:<id>" /
+    // "freelancer:<id>"), גולשת לא מחוברת לפי אותו cookie אנונימי קבוע (scAnon) שכבר משמש
+    // להצבעות ב"זירה" - כדי שהיא תוכל לראות את השאלה והתשובה שלה גם בלי חשבון, מאותו דפדפן.
+    // התשובה של ספיר (מפאנל הניהול) נשלחת גם באתר עצמו (בעמוד /support) וגם למייל שהיא השאירה.
+    // { id, voterKey, name, email, question, answer, status: "open"|"answered", answeredAt, createdAt }
+    supportMessages: [],
     couponRevealEvents: [], // לוג גלובלי של כל לחיצה על "לצפייה בקוד קופון" - freelancerId + date
     // מונה כניסות לאתר - נספר בכל טעינת עמוד ציבורית (לא כולל אזור ניהול/דשבורד עצמאית/API
     // פנימי). totalVisits הוא הסה"כ המצטבר, dailyVisits הוא מיפוי תאריך (YYYY-MM-DD) -> מספר
@@ -278,7 +285,7 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     admins: [
       { id: "1", email: "admin@shecan.co.il", name: "ספיר", passwordHash: null, pushSubscriptions: [] },
     ],
-    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1, patternmakerRequest: 1 },
+    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1, patternmakerRequest: 1, supportMessage: 1 },
   };
 }
 
@@ -299,6 +306,7 @@ function migrate(data) {
   if (!Array.isArray(data.consultations)) { data.consultations = []; changed = true; }
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
   if (!Array.isArray(data.patternmakerRequests)) { data.patternmakerRequests = []; changed = true; }
+  if (!Array.isArray(data.supportMessages)) { data.supportMessages = []; changed = true; }
   // שדה price נוסף אחרי שכבר היו בקשות בלי אותו - כל בקשה ישנה בלי price מקבלת "ללא תשלום"
   // בברירת מחדל, בדיוק כמו בקשה חדשה שנשלחת ריקה בשדה הזה.
   (data.patternmakerRequests || []).forEach((r) => {
@@ -320,6 +328,7 @@ function migrate(data) {
   if (!("consultationReply" in data.nextId)) { data.nextId.consultationReply = 1; changed = true; }
   if (!("poll" in data.nextId)) { data.nextId.poll = 1; changed = true; }
   if (!("patternmakerRequest" in data.nextId)) { data.nextId.patternmakerRequest = 1; changed = true; }
+  if (!("supportMessage" in data.nextId)) { data.nextId.supportMessage = 1; changed = true; }
   // Older saves may have categories without a subcategories list yet - attach the
   // matching default breakdown by name where we have one, otherwise leave it browsable
   // with no subcategories (e.g. a custom category Sapir added by hand via the admin panel).

@@ -88,9 +88,10 @@ function pendingAdminCount() {
   const pendingArenaQuestions = (d.arenaQuestions || []).filter((q) => q.status === "pending").length;
   const pendingConsultations = (d.consultations || []).filter((c) => c.status === "pending").length;
   const unreadMessages = (d.contactMessages || []).filter((m) => !m.read).length;
+  const openSupportMessages = (d.supportMessages || []).filter((m) => m.status !== "answered").length;
   let pendingListings = 0;
   d.freelancers.forEach((f) => (f.additionalListings || []).forEach((l) => { if (l.status === "pending") pendingListings++; }));
-  return pendingFreelancers + pendingReviews + pendingStories + pendingArenaQuestions + pendingConsultations + unreadMessages + pendingListings;
+  return pendingFreelancers + pendingReviews + pendingStories + pendingArenaQuestions + pendingConsultations + unreadMessages + openSupportMessages + pendingListings;
 }
 
 function nav(session) {
@@ -281,6 +282,11 @@ body.sc-a11y-contrast main > .container{background:#fff !important;border:1px so
 body.sc-a11y-contrast .nav-btn, body.sc-a11y-contrast .btn{background:#000 !important;color:#fff !important;}
 body.sc-a11y-underline a{text-decoration:underline !important;}
 body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:none !important;scroll-behavior:auto !important;}
+/* כפתור צף "יש לך שאלה? 💬" - מופיע בכל עמוד, בצד הנגדי לווידג'ט הנגישות (ימין ולא שמאל)
+   כדי שהם לעולם לא יתנגשו זה בזה. */
+.sc-support-widget{position:fixed;bottom:20px;right:20px;z-index:500;}
+.sc-support-widget-btn{display:flex;align-items:center;gap:6px;background:var(--rose-dark);color:var(--white);border:none;border-radius:999px;padding:12px 18px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.25);text-decoration:none;}
+.sc-support-widget-btn:hover{background:var(--dark);}
 /* "Add to home screen" install banner - fixed bar at the bottom of the screen, above the
    accessibility widget so the two never overlap. Made large/bold on purpose (thick rose top
    border, big emoji, bold text, roomy padding) so it's impossible to miss - per explicit
@@ -1947,6 +1953,9 @@ function scArenaCopyLink(id, btn){
     <button type="button" id="scA11yAnimBtn" class="sc-a11y-row-btn" onclick="scA11yToggle('noAnim')" aria-pressed="false">עצירת אנימציות</button>
     <a href="/accessibility" class="sc-a11y-row-btn" style="display:block;text-align:center;text-decoration:none;">הצהרת נגישות</a>
   </div>
+</div>
+<div class="sc-support-widget">
+  <a href="/support" class="sc-support-widget-btn"><span aria-hidden="true">💬</span><span>יש לך שאלה?</span></a>
 </div>
 </body>
 </html>`;
