@@ -1263,6 +1263,27 @@ function supportKeyReadOnly(req, ctx) {
   return cookies.scAnon ? `anon:${cookies.scAnon}` : null;
 }
 
+// "מחוברת עכשיו" = Sapir has hit /admin/support/heartbeat (fired quietly in the background by
+// every admin page, see the inline script in layout.js's page()) sometime in the last 90
+// seconds. 90s (vs. e.g. 20s) gives a little slack for a slow tick or a brief tab-switch
+// without flickering the asker's "🟢 online" banner off and back on.
+function isAdminOnline(d) {
+  const at = d.settings.adminSupportActiveAt;
+  if (!at) return false;
+  return Date.now() - new Date(at).getTime() < 90 * 1000;
+}
+
+// The support thread "id" used in admin URLs (/admin/support/thread/:key) is just the voterKey
+// (e.g. "anon:abc123" or "customer:5") base64url-encoded - simpler and safer than trying to
+// URL-encode/decode a colon-containing raw string through the router's path-param matching.
+function encodeSupportKey(key) { return Buffer.from(String(key), "utf8").toString("base64url"); }
+function decodeSupportKey(enc) { try { return Buffer.from(String(enc), "base64url").toString("utf8"); } catch { return ""; } }
+
+function supportBubbleHtml(m) {
+  const cls = m.from === "admin" ? "from-admin" : "from-asker";
+  return `<div class="chat-msg ${cls}" data-id="${esc(m.id)}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.createdAt).toLocaleString("he-IL"))}</span></div>`;
+}
+
 // Renders one poll's question, options (as vote buttons, or result bars once this visitor has
 // voted), and a copyable share link - shared between the "מה דעתך?" section on /arena and the
 // dedicated single-poll page at /arena/poll/:id (the whole point of the share link).
@@ -1393,7 +1414,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update52 - 2026-08-18 - PLAYWRIGHT_BROWSERS_PATH=0 (הורדת הדפדפן לתוך node_modules במקום תיקיית מטמון חיצונית שלא שורדת בין build ל-runtime)";
+const DEPLOY_MARKER = "update69 - 2026-08-24 - 'לתמיכה לחצי' 💬 - צ'אט חי (polling) כשספיר מחוברת, השארת הודעה כשלא, זיהוי גולשת אנונימית לפי עוגיית scAnon";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -4467,7 +4488,20 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     revealsByCategory[cat] = (revealsByCategory[cat] || 0) + 1;
   });
   const unreadMessages = (d.contactMessages || []).filter((m) => !m.read).length;
-  const openSupportMessages = (d.supportMessages || []).filter((m) => m.status !== "answered").length;
+  // Groups the flat supportMessages list (individual chat messages, see db.js) into one row per
+  // conversation (by voterKey) - last message preview + how many of HER unread asker messages
+  // are waiting, sorted most-recently-active first, so the newest/most urgent threads sit on top.
+  const supportThreads = (() => {
+    const byKey = {};
+    (d.supportMessages || []).forEach((m) => { (byKey[m.voterKey] = byKey[m.voterKey] || []).push(m); });
+    return Object.keys(byKey).map((key) => {
+      const msgs = byKey[key].slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const last = msgs[msgs.length - 1];
+      const unread = msgs.filter((m) => m.from === "asker" && !m.read).length;
+      return { key, name: last.name, email: last.email, lastText: last.text, lastFrom: last.from, lastAt: last.createdAt, unread };
+    }).sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+  })();
+  const openSupportMessages = supportThreads.filter((t) => t.unread > 0).length;
 
   // Site-visit numbers for the "מספרים כלליים" panel - counted by trackSiteVisit() on every
   // real page load (see near the bottom of the file). Last-7-days breakdown built from
@@ -5102,19 +5136,16 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel" data-badge="${openSupportMessages}">
-    <h3>יש לך שאלה? 💬 (${openSupportMessages} ממתינות למענה)</h3>
-    <p class="muted">שאלות שנשלחו דרך הכפתור הצף שמופיע בכל עמוד באתר - גם מלקוחות/עצמאיות מחוברות וגם מגולשות אנונימיות. תשובה שלך כאן מוצגת גם באתר עצמו (כשהיא חוזרת לפתוח את הווידג'ט מאותו דפדפן) וגם נשלחת אוטומטית למייל שהיא השאירה.</p>
-    ${(d.supportMessages || []).length ? (d.supportMessages || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map((m) => `
-      <div style="border-top:1px solid var(--rose);padding:12px 0;">
-        <p style="margin:0 0 4px;"><strong>${esc(m.name)}</strong> <span class="muted">(${esc(m.email)}) · ${esc(new Date(m.createdAt).toLocaleString("he-IL"))}</span></p>
-        <p style="margin:0 0 8px;">${esc(m.question)}</p>
-        ${m.status === "answered" ? `<p class="muted" style="background:var(--cream);border-radius:8px;padding:8px 10px;margin:0 0 8px;">✅ ${esc(m.answer)}</p>` : ""}
-        <form method="post" action="/admin/support/${m.id}/reply">
-          <textarea name="answer" required maxlength="800" placeholder="${m.status === "answered" ? "עדכון התשובה..." : "כתבי תשובה..."}">${m.status === "answered" ? esc(m.answer) : ""}</textarea>
-          <button class="btn btn-small" style="margin-top:8px;" type="submit">${m.status === "answered" ? "עדכון תשובה" : "שליחת תשובה"}</button>
-        </form>
-      </div>
-    `).join("") : `<p class="muted">עדיין לא נשאלו שאלות.</p>`}
+    <h3>לתמיכה לחצי 💬 (${openSupportMessages} ממתינות לתשובה)</h3>
+    <p class="muted">שיחות שנפתחו דרך הכפתור הצף שמופיע בכל עמוד באתר - גם מלקוחות/עצמאיות מחוברות וגם מגולשות אנונימיות. כל עוד את נמצאת באיזשהו עמוד ניהול, השואלת רואה שאת "מחוברת עכשיו" ומקבלת תשובה חיה בלי רענון; כשאת לא, היא משאירה הודעה ומקבלת תשובה גם באתר וגם במייל.</p>
+    ${supportThreads.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>מייל</th><th>הודעה אחרונה</th><th>תאריך</th><th></th></tr>
+      ${supportThreads.map((t) => `<tr${t.unread ? ` style="font-weight:800;"` : ""}>
+        <td>${esc(t.name)}</td><td>${esc(t.email)}</td>
+        <td>${t.lastFrom === "admin" ? "את: " : ""}${esc((t.lastText || "").slice(0, 60))}${(t.lastText || "").length > 60 ? "…" : ""}</td>
+        <td>${esc(new Date(t.lastAt).toLocaleString("he-IL"))}</td>
+        <td><a class="btn btn-small" href="/admin/support/thread/${encodeURIComponent(encodeSupportKey(t.key))}">${t.unread ? `פתיחת שיחה (${t.unread} חדשות)` : "פתיחת שיחה"}</a></td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">עדיין לא נפתחו שיחות.</p>`}
   </div>
 
   <div class="panel">
@@ -6234,9 +6265,12 @@ route("POST", "/contact", async (req, res, params, query, ctx) => {
   redirect(res, `/contact?ok=${encodeURIComponent("קיבלנו את ההודעה שלך - תודה! נחזור אלייך בהקדם ❤️")}`);
 });
 
-// ----- "יש לך שאלה? 💬" - כפתור צף שמופיע בכל עמוד (ר' layout.js), בנוסף לעמוד "צרי קשר"
-// הקיים למעלה, לא במקומו. כל מי שנכנסת יכולה לשאול - כולל גולשת שלא נרשמה בכלל - ולראות את
-// התשובה גם כאן באתר (דרך supportIdentity/supportKeyReadOnly, ר' הגדרתן למעלה) וגם במייל. -----
+// ----- "לתמיכה לחצי 💬" - כפתור צף שמופיע בכל עמוד (ר' layout.js), בנוסף לעמוד "צרי קשר"
+// הקיים למעלה, לא במקומו. כל מי שנכנסת יכולה לפתוח שיחה - כולל גולשת שלא נרשמה בכלל - ולראות
+// אותה גם כאן באתר (דרך supportIdentity/supportKeyReadOnly, ר' הגדרתן למעלה) וגם במייל.
+// כשספיר "מחוברת" (ר' isAdminOnline) ההודעות מוצגות/מתעדכנות כמו צ'אט חי, על בסיס polling
+// קליל כל 3 שניות (בלי WebSockets - נשאר תואם ל-Node הפשוט ולפריסה ב-Render בלי שינוי תשתית).
+// -----
 route("GET", "/support", async (req, res, params, query, ctx) => {
   const d = db.load();
   const isCustomer = requireRole(ctx.session, "customer");
@@ -6251,41 +6285,108 @@ route("GET", "/support", async (req, res, params, query, ctx) => {
   }
   const key = supportKeyReadOnly(req, ctx);
   const myMessages = key
-    ? (d.supportMessages || []).filter((m) => m.voterKey === key).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    ? (d.supportMessages || []).filter((m) => m.voterKey === key).slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
     : [];
-  const body = `
-  <h1 class="section-title">יש לך שאלה? 💬</h1>
-  <p class="muted" style="text-align:center;">אנחנו כאן בשבילך - תכתבי לנו מה שמעניין אותך, ונחזור אלייך גם כאן וגם במייל.</p>
-  <div class="panel" style="max-width:520px;margin:0 auto 24px;">
-    <form method="post" action="/support/ask">
+  const online = isAdminOnline(d);
+  const lastTs = myMessages.length ? myMessages[myMessages.length - 1].createdAt : new Date(0).toISOString();
+  const onlineBannerHtml = online
+    ? `<p class="muted" style="text-align:center;color:var(--rose-dark);font-weight:800;">🟢 אנחנו מחוברות עכשיו - את יכולה לקבל תשובה מיידית</p>`
+    : `<p class="muted" style="text-align:center;">⚪ כרגע לא מחוברות - תשאירי הודעה ונחזור אלייך בהקדם, גם באתר וגם במייל</p>`;
+  const startFormHtml = `
+    <form id="scSupportStartForm" method="post" action="/support/send">
       ${(isCustomer || isFreelancer) ? `<p class="muted" style="margin-bottom:10px;">שולחת בתור ${esc(prefillName)}</p>` : `<label>שם<input type="text" name="name" required maxlength="80" /></label>`}
       <label>מייל לחזרה אלייך<input type="email" name="email" required maxlength="150" value="${esc(prefillEmail)}" /></label>
-      <label>מה השאלה שלך?<textarea name="question" required maxlength="800"></textarea></label>
+      <label>מה תרצי לשאול?<textarea name="text" required maxlength="800"></textarea></label>
       <button class="btn" type="submit" style="margin-top:10px;width:100%;">שליחה</button>
-    </form>
-  </div>
-  ${myMessages.length ? `
+    </form>`;
+  const chatHtml = `
+    <div id="scSupportThread" class="chat-thread" style="max-height:420px;">
+      ${myMessages.map(supportBubbleHtml).join("")}
+    </div>
+    <form id="scSupportSendForm" method="post" action="/support/send">
+      <textarea name="text" id="scSupportInput" required maxlength="800" placeholder="כתבי הודעה..." style="min-height:60px;"></textarea>
+      <button class="btn" style="margin-top:8px;width:100%;" type="submit">שליחה</button>
+    </form>`;
+  const body = `
+  <h1 class="section-title">לתמיכה לחצי 💬</h1>
+  <p class="muted" style="text-align:center;">אנחנו כאן בשבילך.</p>
   <div class="panel" style="max-width:520px;margin:0 auto;">
-    <h3>השאלות שלך</h3>
-    ${myMessages.map((m) => `
-      <div style="border-top:1px solid var(--rose);padding:10px 0;">
-        <p style="margin:0 0 6px;font-weight:700;">${esc(m.question)}</p>
-        ${m.status === "answered"
-          ? `<p class="muted" style="margin:0;background:var(--cream);border-radius:8px;padding:8px 10px;">💌 ${esc(m.answer)}</p>`
-          : `<p class="muted" style="margin:0;font-size:13px;">ממתינה לתשובה...</p>`}
-      </div>
-    `).join("")}
-  </div>` : ""}
+    <div id="scSupportStatus">${onlineBannerHtml}</div>
+    ${myMessages.length ? chatHtml : startFormHtml}
+  </div>
+  <script>
+  (function(){
+    var lastTs = ${JSON.stringify(lastTs)};
+    var hasThread = ${myMessages.length ? "true" : "false"};
+    function scrollDown(){ var t=document.getElementById('scSupportThread'); if(t) t.scrollTop = t.scrollHeight; }
+    scrollDown();
+    function bubbleEl(m){
+      var div = document.createElement('div');
+      div.className = 'chat-msg ' + (m.from === 'admin' ? 'from-admin' : 'from-asker');
+      div.textContent = m.text;
+      var meta = document.createElement('span');
+      meta.className = 'chat-meta';
+      meta.textContent = new Date(m.createdAt).toLocaleString('he-IL');
+      div.appendChild(meta);
+      return div;
+    }
+    function setStatus(isOnline){
+      var el = document.getElementById('scSupportStatus');
+      if (!el) return;
+      el.innerHTML = isOnline
+        ? '<p class="muted" style="text-align:center;color:var(--rose-dark);font-weight:800;">🟢 אנחנו מחוברות עכשיו - את יכולה לקבל תשובה מיידית</p>'
+        : '<p class="muted" style="text-align:center;">⚪ כרגע לא מחוברות - תשאירי הודעה ונחזור אלייך בהקדם, גם באתר וגם במייל</p>';
+    }
+    function poll(){
+      if (!hasThread) return;
+      fetch('/support/poll?since=' + encodeURIComponent(lastTs), { headers: { 'Accept': 'application/json' } })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          setStatus(data.online);
+          (data.messages || []).forEach(function(m){
+            var t = document.getElementById('scSupportThread');
+            if (t) { t.appendChild(bubbleEl(m)); scrollDown(); }
+            lastTs = m.createdAt;
+          });
+        }).catch(function(){});
+    }
+    setInterval(poll, 3000);
+    function wireForm(formId, isFirst){
+      var form = document.getElementById(formId);
+      if (!form) return;
+      form.addEventListener('submit', function(ev){
+        ev.preventDefault();
+        var fd = new FormData(form);
+        fetch('/support/send', { method: 'POST', body: fd, headers: { 'Accept': 'application/json' } })
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            if (!data.ok) { alert(data.error || 'שגיאה בשליחה - נסי שוב.'); return; }
+            if (isFirst) { location.reload(); return; }
+            var t = document.getElementById('scSupportThread');
+            if (t) { t.appendChild(bubbleEl(data.message)); scrollDown(); }
+            lastTs = data.message.createdAt;
+            hasThread = true;
+            var ta = document.getElementById('scSupportInput');
+            if (ta) ta.value = '';
+          }).catch(function(){ alert('שגיאה בשליחה - נסי שוב.'); });
+      });
+    }
+    wireForm('scSupportStartForm', true);
+    wireForm('scSupportSendForm', false);
+  })();
+  </script>
   `;
-  sendHtml(res, 200, page({ title: "יש לך שאלה?", session: ctx.session, body, query }));
+  sendHtml(res, 200, page({ title: "לתמיכה לחצי", session: ctx.session, body, query }));
 });
 
-route("POST", "/support/ask", async (req, res, params, query, ctx) => {
+route("POST", "/support/send", async (req, res, params, query, ctx) => {
   const d = db.load();
   const body = await readBody(req);
   const { key, newCookie } = supportIdentity(req, ctx);
   const isCustomer = requireRole(ctx.session, "customer");
   const isFreelancer = requireRole(ctx.session, "freelancer");
+  const wantsJson = (req.headers["accept"] || "").includes("application/json");
+  const existing = (d.supportMessages || []).find((m) => m.voterKey === key);
   let name = "";
   let email = clip((body.get("email") || "").trim(), 150);
   if (isCustomer) {
@@ -6297,52 +6398,170 @@ route("POST", "/support/ask", async (req, res, params, query, ctx) => {
     name = f ? (f.businessName || f.name || "") : "";
     if (!email && f) email = f.email || "";
   } else {
-    name = clip((body.get("name") || "").trim(), 80);
+    name = clip((body.get("name") || "").trim(), 80) || (existing ? existing.name : "");
   }
-  const question = clip((body.get("question") || "").trim(), 800);
-  if (!name || !email || !question) {
-    return redirect(res, `/support?err=${encodeURIComponent("נא למלא שם, מייל ושאלה.")}`, newCookie);
+  if (!email && existing) email = existing.email;
+  const text = clip((body.get("text") || "").trim(), 800);
+  const respond = (status, payload) => {
+    if (wantsJson) {
+      return sendHtml(res, status, JSON.stringify(payload), { "Content-Type": "application/json; charset=utf-8", ...(newCookie ? { "Set-Cookie": newCookie } : {}) });
+    }
+    if (payload.ok) return redirect(res, `/support?ok=${encodeURIComponent("ההודעה שלך נשלחה!")}`, newCookie);
+    return redirect(res, `/support?err=${encodeURIComponent(payload.error)}`, newCookie);
+  };
+  if (!name || !email || !text) {
+    return respond(400, { ok: false, error: "נא למלא שם, מייל והודעה." });
   }
   const id = db.nextId("supportMessage");
+  const message = { id, voterKey: key, name, email, from: "asker", text, createdAt: new Date().toISOString(), read: false };
   d.supportMessages = d.supportMessages || [];
-  d.supportMessages.push({
-    id, voterKey: key, name, email, question, answer: "", status: "open", answeredAt: null,
-    createdAt: new Date().toISOString(),
-  });
+  d.supportMessages.push(message);
   db.save();
-  // Same push-first, email-fallback pattern already used to notify Sapir the moment a new
-  // freelancer signs up (see /join above) - so a question doesn't just sit unnoticed until she
-  // happens to open /admin.
-  {
+  // Only push/email-notify Sapir when she's NOT already live in the admin panel watching - keeps
+  // an active back-and-forth chat from spamming her inbox, while a message left while she's away
+  // still reaches her the same push-first/email-fallback way a new freelancer signup does.
+  if (!isAdminOnline(d)) {
     const notifyAdmin = d.admins[0];
     const notifyTo = d.settings.contactEmail || notifyAdmin.email;
-    sendPushToUser(notifyAdmin, { title: "שאלה חדשה מהאתר 💬", body: `${name}: ${question}`, url: "/admin" })
-      .then((pushed) => { if (!pushed) sendEmail(notifyTo, `שאלה חדשה מהאתר - ${name}`,
-        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(name)} (${esc(email)}) שאלה:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(question)}</p><p>אפשר לענות לה מפאנל הניהול.</p></div>`
+    sendPushToUser(notifyAdmin, { title: "הודעה חדשה מהאתר 💬", body: `${name}: ${text}`, url: "/admin" })
+      .then((pushed) => { if (!pushed) sendEmail(notifyTo, `הודעה חדשה מהאתר - ${name}`,
+        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(name)} (${esc(email)}) כתבה:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לענות לה מפאנל הניהול.</p></div>`
       ).catch(() => {}); })
       .catch(() => {});
   }
-  redirect(res, `/support?ok=${encodeURIComponent("השאלה שלך נשלחה - נחזור אלייך בקרוב ❤️")}`, newCookie);
+  respond(200, { ok: true, message });
 });
 
-route("POST", "/admin/support/:id/reply", async (req, res, params, query, ctx) => {
+route("GET", "/support/poll", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const key = supportKeyReadOnly(req, ctx);
+  const since = query.since ? new Date(query.since).getTime() : 0;
+  const messages = key
+    ? (d.supportMessages || []).filter((m) => m.voterKey === key && new Date(m.createdAt).getTime() > since).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    : [];
+  sendHtml(res, 200, JSON.stringify({ messages, online: isAdminOnline(d) }), { "Content-Type": "application/json; charset=utf-8" });
+});
+
+route("POST", "/admin/support/heartbeat", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return sendHtml(res, 401, JSON.stringify({ ok: false }), { "Content-Type": "application/json; charset=utf-8" });
+  const d = db.load();
+  d.settings.adminSupportActiveAt = new Date().toISOString();
+  db.save();
+  sendHtml(res, 200, JSON.stringify({ ok: true }), { "Content-Type": "application/json; charset=utf-8" });
+});
+
+route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
-  const m = (d.supportMessages || []).find((x) => x.id === params.id);
-  if (m) {
-    const body = await readBody(req);
-    const answer = clip((body.get("answer") || "").trim(), 800);
-    if (answer) {
-      m.answer = answer;
-      m.status = "answered";
-      m.answeredAt = new Date().toISOString();
-      db.save();
-      sendEmail(m.email, "קיבלת תשובה ל-SheCan 💬",
-        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(m.name || "")},</p><p>שאלת אותנו:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(m.question)}</p><p>והתשובה שלנו:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(answer)}</p><p>אפשר גם לראות את זה באתר עצמו, בעמוד "יש לך שאלה?".</p></div>`
-      ).catch(() => {});
+  const voterKey = decodeSupportKey(params.key);
+  const messages = (d.supportMessages || []).filter((m) => m.voterKey === voterKey).slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  if (!messages.length) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את השיחה הזו.</p>` }));
+  let anyMarkedRead = false;
+  messages.forEach((m) => { if (m.from === "asker" && !m.read) { m.read = true; anyMarkedRead = true; } });
+  if (anyMarkedRead) db.save();
+  const last = messages[messages.length - 1];
+  const lastTs = last.createdAt;
+  const body = `
+  <h1 class="section-title">💬 שיחה עם ${esc(last.name)}</h1>
+  <p class="muted" style="text-align:center;">${esc(last.email)}</p>
+  <div class="panel" style="max-width:560px;margin:0 auto;">
+    <div id="scSupportThread" class="chat-thread" style="max-height:480px;">
+      ${messages.map(supportBubbleHtml).join("")}
+    </div>
+    <form id="scSupportSendForm" method="post" action="/admin/support/thread/${esc(params.key)}/send">
+      <textarea name="text" id="scSupportInput" required maxlength="800" placeholder="כתבי תשובה..." style="min-height:60px;"></textarea>
+      <button class="btn" style="margin-top:8px;width:100%;" type="submit">שליחה</button>
+    </form>
+  </div>
+  <p class="muted" style="text-align:center;margin-top:16px;"><a href="/admin">חזרה לפאנל הניהול</a></p>
+  <script>
+  (function(){
+    var lastTs = ${JSON.stringify(lastTs)};
+    function scrollDown(){ var t=document.getElementById('scSupportThread'); if(t) t.scrollTop = t.scrollHeight; }
+    scrollDown();
+    function bubbleEl(m){
+      var div = document.createElement('div');
+      div.className = 'chat-msg ' + (m.from === 'admin' ? 'from-admin' : 'from-asker');
+      div.textContent = m.text;
+      var meta = document.createElement('span');
+      meta.className = 'chat-meta';
+      meta.textContent = new Date(m.createdAt).toLocaleString('he-IL');
+      div.appendChild(meta);
+      return div;
     }
+    function poll(){
+      fetch('/admin/support/thread/${esc(params.key)}/poll?since=' + encodeURIComponent(lastTs), { headers: { 'Accept': 'application/json' } })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          (data.messages || []).forEach(function(m){
+            var t = document.getElementById('scSupportThread');
+            if (t) { t.appendChild(bubbleEl(m)); scrollDown(); }
+            lastTs = m.createdAt;
+          });
+        }).catch(function(){});
+    }
+    setInterval(poll, 3000);
+    var form = document.getElementById('scSupportSendForm');
+    form.addEventListener('submit', function(ev){
+      ev.preventDefault();
+      var fd = new FormData(form);
+      fetch(form.action, { method: 'POST', body: fd, headers: { 'Accept': 'application/json' } })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (!data.ok) { alert('שגיאה בשליחה - נסי שוב.'); return; }
+          var t = document.getElementById('scSupportThread');
+          if (t) { t.appendChild(bubbleEl(data.message)); scrollDown(); }
+          lastTs = data.message.createdAt;
+          var ta = document.getElementById('scSupportInput');
+          if (ta) ta.value = '';
+        }).catch(function(){ alert('שגיאה בשליחה - נסי שוב.'); });
+    });
+  })();
+  </script>
+  `;
+  sendHtml(res, 200, page({ title: `שיחה עם ${last.name}`, session: ctx.session, body, query, noSidebars: true }));
+});
+
+route("GET", "/admin/support/thread/:key/poll", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return sendHtml(res, 401, JSON.stringify({ messages: [] }), { "Content-Type": "application/json; charset=utf-8" });
+  const d = db.load();
+  const voterKey = decodeSupportKey(params.key);
+  const since = query.since ? new Date(query.since).getTime() : 0;
+  const messages = (d.supportMessages || []).filter((m) => m.voterKey === voterKey && new Date(m.createdAt).getTime() > since).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  let anyMarkedRead = false;
+  messages.forEach((m) => { if (m.from === "asker" && !m.read) { m.read = true; anyMarkedRead = true; } });
+  if (anyMarkedRead) db.save();
+  sendHtml(res, 200, JSON.stringify({ messages }), { "Content-Type": "application/json; charset=utf-8" });
+});
+
+route("POST", "/admin/support/thread/:key/send", async (req, res, params, query, ctx) => {
+  const wantsJson = (req.headers["accept"] || "").includes("application/json");
+  if (!requireRole(ctx.session, "admin")) {
+    return wantsJson ? sendHtml(res, 401, JSON.stringify({ ok: false }), { "Content-Type": "application/json; charset=utf-8" }) : redirect(res, "/login");
   }
-  redirect(res, `/admin?ok=${encodeURIComponent("התשובה נשלחה.")}`);
+  const d = db.load();
+  const voterKey = decodeSupportKey(params.key);
+  const existing = (d.supportMessages || []).find((m) => m.voterKey === voterKey);
+  if (!existing) {
+    return wantsJson ? sendHtml(res, 404, JSON.stringify({ ok: false, error: "השיחה לא נמצאה." }), { "Content-Type": "application/json; charset=utf-8" }) : redirect(res, "/admin");
+  }
+  const body = await readBody(req);
+  const text = clip((body.get("text") || "").trim(), 800);
+  if (!text) {
+    return wantsJson ? sendHtml(res, 400, JSON.stringify({ ok: false, error: "נא לכתוב הודעה." }), { "Content-Type": "application/json; charset=utf-8" }) : redirect(res, `/admin/support/thread/${params.key}`);
+  }
+  const id = db.nextId("supportMessage");
+  const message = { id, voterKey, name: existing.name, email: existing.email, from: "admin", text, createdAt: new Date().toISOString(), read: true };
+  d.supportMessages = d.supportMessages || [];
+  d.supportMessages.push(message);
+  db.save();
+  // Askers (especially anonymous ones) have no push subscription at all, so email is her only
+  // real fallback notification channel if she isn't sitting on the page watching it live.
+  sendEmail(existing.email, "קיבלת תשובה ל-SheCan 💬",
+    `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(existing.name || "")},</p><p>קיבלת תשובה חדשה בשיחה שלך עם SheCan:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר גם לראות ולהמשיך את השיחה באתר עצמו, בעמוד "לתמיכה לחצי".</p></div>`
+  ).catch(() => {});
+  if (wantsJson) return sendHtml(res, 200, JSON.stringify({ ok: true, message }), { "Content-Type": "application/json; charset=utf-8" });
+  redirect(res, `/admin/support/thread/${params.key}`);
 });
 
 route("GET", "/terms", async (req, res, params, query, ctx) => {

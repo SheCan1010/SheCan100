@@ -88,7 +88,11 @@ function pendingAdminCount() {
   const pendingArenaQuestions = (d.arenaQuestions || []).filter((q) => q.status === "pending").length;
   const pendingConsultations = (d.consultations || []).filter((c) => c.status === "pending").length;
   const unreadMessages = (d.contactMessages || []).filter((m) => !m.read).length;
-  const openSupportMessages = (d.supportMessages || []).filter((m) => m.status !== "answered").length;
+  // Support chat is now multi-message per thread (grouped by voterKey), not single Q&A
+  // records - count THREADS that have at least one unread asker message, not raw messages.
+  const supportByKey = {};
+  (d.supportMessages || []).forEach((m) => { (supportByKey[m.voterKey] = supportByKey[m.voterKey] || []).push(m); });
+  const openSupportMessages = Object.values(supportByKey).filter((msgs) => msgs.some((m) => m.from === "asker" && !m.read)).length;
   let pendingListings = 0;
   d.freelancers.forEach((f) => (f.additionalListings || []).forEach((l) => { if (l.status === "pending") pendingListings++; }));
   return pendingFreelancers + pendingReviews + pendingStories + pendingArenaQuestions + pendingConsultations + unreadMessages + openSupportMessages + pendingListings;
@@ -190,7 +194,8 @@ a{color:inherit;text-decoration:none;}
 .chat-msg{padding:10px 14px;border-radius:12px;margin-bottom:8px;max-width:80%;}
 .chat-msg.from-customer{background:var(--cream);margin-inline-end:auto;}
 .chat-msg.from-freelancer{background:var(--rose);color:var(--white);margin-inline-start:auto;}
-.chat-msg.from-admin{background:var(--rose-dark);color:var(--white);}
+.chat-msg.from-admin{background:var(--rose-dark);color:var(--white);margin-inline-start:auto;}
+.chat-msg.from-asker{background:var(--cream);margin-inline-end:auto;}
 .chat-msg .chat-meta{display:block;font-size:11px;opacity:.75;margin-top:4px;}
 .chat-target-label{display:block;font-size:11px;font-weight:700;opacity:.85;margin-bottom:4px;}
 .badge-available{background:#5C7A5A;}
@@ -1004,6 +1009,19 @@ var SC_CATEGORY_ICONS = ${JSON.stringify(CATEGORY_ICONS)};
 var SC_VAPID_PUBLIC_KEY = ${JSON.stringify(VAPID_PUBLIC_KEY)};
 var SC_LOGGED_IN = ${JSON.stringify(!!session)};
 var SC_WANTS_PUSH = ${JSON.stringify(wantsPush)};
+var SC_IS_ADMIN = ${JSON.stringify(!!(session && session.role === "admin"))};
+// "לתמיכה לחצי 💬" - כל עוד ספיר נמצאת באיזשהו עמוד ניהול (לא רק בשיחה עצמה), פינג שקט ברקע
+// כל 20 שניות מסמן אותה "מחוברת עכשיו" (ר' isAdminOnline/POST /admin/support/heartbeat
+// ב-server.js) - כדי שהכפתור הצף אצל כל גולשת יידע להראות "מחוברת" בלי שהיא צריכה לפתוח
+// שיחה ספציפית קודם.
+if (SC_IS_ADMIN) {
+  (function scSupportHeartbeat(){
+    fetch("/admin/support/heartbeat", { method: "POST" }).catch(function(){});
+  })();
+  setInterval(function(){
+    fetch("/admin/support/heartbeat", { method: "POST" }).catch(function(){});
+  }, 20000);
+}
 var SC_CITIES = ${JSON.stringify(d.cities.map((c) => ({ id: c.id, name: c.name })))};
 
 // ---- City picker: a searchable text field instead of a giant dropdown (the cities list

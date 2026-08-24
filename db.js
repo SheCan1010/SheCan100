@@ -49,6 +49,10 @@ function defaultData() {
       freelancerReferralContestActive: true,
       freelancerReferralContestEndDate: "17.9",
       freelancerReferralAnnounceDate: "20.9",
+      // חותמת הזמן האחרונה שבה ספיר "פינגה" מתוך פאנל הניהול (ר' POST /admin/support/heartbeat,
+      // נשלח אוטומטית ברקע כל עוד היא מחוברת כאדמין ונמצאת באיזשהו עמוד ניהול) - משמש כדי
+      // להראות לשואלת ב-"לתמיכה לחצי" אם ספיר "מחוברת עכשיו" (צ'אט חי) או לא (משאירה הודעה).
+      adminSupportActiveAt: null,
       searchEngineVisible: false, // כל עוד false - האתר חסום למנועי חיפוש (Google וכו')
       showPublicStats: false, // הצגת "הקהילה שלנו במספרים" (עצמאיות/לקוחות/עסקאות שנסגרו) בעמוד הבית לכולן - כבוי כברירת מחדל, מופעל בפאנל הניהול
       communityWhatsappLink: "", // קישור הצטרפות לקבוצת הוואטסאפ - להשלים בפאנל הניהול
@@ -187,12 +191,17 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
       ],
     },
     contactMessages: [], // הודעות שהושארו בעמוד "צרי קשר"
-    // "יש לך שאלה? 💬" - כפתור צף שמופיע בכל עמוד באתר, לכל מי שנכנסת (כולל גולשות שלא
+    // "לתמיכה לחצי 💬" - כפתור צף שמופיע בכל עמוד באתר, לכל מי שנכנסת (כולל גולשות שלא
     // נרשמו). שואלת מזוהה: לקוחה/עצמאית מחוברת לפי session (voterKey "customer:<id>" /
     // "freelancer:<id>"), גולשת לא מחוברת לפי אותו cookie אנונימי קבוע (scAnon) שכבר משמש
-    // להצבעות ב"זירה" - כדי שהיא תוכל לראות את השאלה והתשובה שלה גם בלי חשבון, מאותו דפדפן.
-    // התשובה של ספיר (מפאנל הניהול) נשלחת גם באתר עצמו (בעמוד /support) וגם למייל שהיא השאירה.
-    // { id, voterKey, name, email, question, answer, status: "open"|"answered", answeredAt, createdAt }
+    // להצבעות ב"זירה" - כדי שהיא תוכל לראות את השיחה שלה גם בלי חשבון, מאותו דפדפן.
+    // זו רשימה שטוחה של הודעות בודדות בתוך שיחה - בדיוק כמו chatMessages למעלה, רק בין
+    // שואלת (from:"asker") לבין ספיר (from:"admin") - כל ההודעות עם אותו voterKey שייכות
+    // לאותה שיחה. כשספיר "מחוברת" (settings.adminSupportActiveAt מעודכן ב-90 השניות
+    // האחרונות - ר' POST /admin/support/heartbeat) ההודעות מוצגות/מתעדכנות כמו צ'אט חי עם
+    // polling; כשהיא לא מחוברת, השואלת משאירה הודעה וממתינה - התשובה שלה תגיע גם באתר עצמו
+    // (בפעם הבאה שהיא פותחת את /support מאותו דפדפן) וגם למייל שהיא השאירה.
+    // { id, voterKey, name, email, from: "asker"|"admin", text, createdAt, read }
     supportMessages: [],
     couponRevealEvents: [], // לוג גלובלי של כל לחיצה על "לצפייה בקוד קופון" - freelancerId + date
     // מונה כניסות לאתר - נספר בכל טעינת עמוד ציבורית (לא כולל אזור ניהול/דשבורד עצמאית/API
@@ -307,6 +316,29 @@ function migrate(data) {
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
   if (!Array.isArray(data.patternmakerRequests)) { data.patternmakerRequests = []; changed = true; }
   if (!Array.isArray(data.supportMessages)) { data.supportMessages = []; changed = true; }
+  // supportMessages היה במקור רשומה אחת לכל שאלה (question/answer/status) - שודרג לצ'אט
+  // אמיתי (הודעות בודדות עם from:"asker"/"admin"). כל רשומה ישנה בצורה הזו מפוצלת להודעת
+  // שואלת אחת, ובנוסף הודעת admin אם כבר היתה תשובה - כדי לא לאבד שום שיחה שכבר התקיימה
+  // לפני השדרוג.
+  {
+    const upgraded = [];
+    let needsUpgrade = false;
+    (data.supportMessages || []).forEach((m) => {
+      if (m.from === "asker" || m.from === "admin") { upgraded.push(m); return; }
+      needsUpgrade = true;
+      upgraded.push({
+        id: m.id, voterKey: m.voterKey, name: m.name, email: m.email,
+        from: "asker", text: m.question || "", createdAt: m.createdAt, read: true,
+      });
+      if (m.status === "answered" && m.answer) {
+        upgraded.push({
+          id: `${m.id}-a`, voterKey: m.voterKey, name: m.name, email: m.email,
+          from: "admin", text: m.answer, createdAt: m.answeredAt || m.createdAt, read: true,
+        });
+      }
+    });
+    if (needsUpgrade) { data.supportMessages = upgraded; changed = true; }
+  }
   // שדה price נוסף אחרי שכבר היו בקשות בלי אותו - כל בקשה ישנה בלי price מקבלת "ללא תשלום"
   // בברירת מחדל, בדיוק כמו בקשה חדשה שנשלחת ריקה בשדה הזה.
   (data.patternmakerRequests || []).forEach((r) => {
