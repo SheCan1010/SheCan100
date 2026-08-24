@@ -215,7 +215,8 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // (POST /freelancer/:id/message, כמו בכל פנייה אחרת לעצמאית). הבקשה מוסרת רק ע"י
     // העצמאית שפרסמה אותה, לאחר בדיקת בעלות (freelancerId === session.id) - בדיוק כמו
     // דפוס המחיקה העצמית של polls/arenaQuestions/consultations למעלה.
-    // { id, freelancerId, freelancerName, details, location, when, createdAt }
+    // price הוא שדה חופשי, ברירת מחדל "ללא תשלום" כשלא מולא (ר' migrate למטה לגבי בקשות ישנות).
+    // { id, freelancerId, freelancerName, details, location, when, price, createdAt }
     patternmakerRequests: [],
     // Each main category can have subcategories, so an area like "יופי וטיפוח" can be
     // broken down into "מאפרת כלות וערב", "מניקוריסטית ולק ג'ל" וכו'. A freelancer picks
@@ -298,6 +299,11 @@ function migrate(data) {
   if (!Array.isArray(data.consultations)) { data.consultations = []; changed = true; }
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
   if (!Array.isArray(data.patternmakerRequests)) { data.patternmakerRequests = []; changed = true; }
+  // שדה price נוסף אחרי שכבר היו בקשות בלי אותו - כל בקשה ישנה בלי price מקבלת "ללא תשלום"
+  // בברירת מחדל, בדיוק כמו בקשה חדשה שנשלחת ריקה בשדה הזה.
+  (data.patternmakerRequests || []).forEach((r) => {
+    if (!r.price) { r.price = "ללא תשלום"; changed = true; }
+  });
   if (!data.siteStats || typeof data.siteStats !== "object") { data.siteStats = { totalVisits: 0, dailyVisits: {} }; changed = true; }
   if (typeof data.siteStats.totalVisits !== "number") { data.siteStats.totalVisits = 0; changed = true; }
   if (!data.siteStats.dailyVisits || typeof data.siteStats.dailyVisits !== "object") { data.siteStats.dailyVisits = {}; changed = true; }

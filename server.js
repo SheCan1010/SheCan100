@@ -2809,7 +2809,7 @@ function patternmakerCard(r, d) {
     <div class="card-photo">✂️</div>
     <div class="card-body">
       <h3>${name}</h3>
-      <p class="muted" style="margin:4px 0;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)}</p>
+      <p class="muted" style="margin:4px 0;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)} · 💰 ${esc(r.price || "ללא תשלום")}</p>
       <p style="margin:8px 0;">${esc(r.details)}</p>
       ${f && f.status === "approved" && f.active !== false
         ? `<a class="btn btn-small" style="margin-top:8px;text-align:center;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
@@ -2825,7 +2825,7 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
   const requests = (d.patternmakerRequests || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const myRequests = me ? requests.filter((r) => r.freelancerId === me.id) : [];
   const body = `
-  <h1 class="section-title">✂️ מודליסטיות נדרשות</h1>
+  <h1 class="section-title">✂️ מודליסטיות</h1>
   <p class="muted" style="text-align:center;">עצמאית שצריכה עזרה ממודליסטית או תופרת? כאן המקום לפרסם בקשה - וכל לקוחה שרואה יכולה לפנות אלייך ישירות דרך הפרופיל שלך.</p>
   ${me ? `
     <div class="panel" style="max-width:560px;margin:0 auto 24px;">
@@ -2834,6 +2834,7 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
         <label>פרטי הבקשה<textarea name="details" required maxlength="500" placeholder="לדוגמה: צריכה עזרה בתפירת שמלות ערב, כמות קטנה..."></textarea></label>
         <label>מיקום<input type="text" name="location" required maxlength="100" placeholder="לדוגמה: תל אביב, או אצלי בסטודיו" /></label>
         <label>מתי<input type="text" name="when" required maxlength="100" placeholder="לדוגמה: בהקדם / יום שלישי בבוקר" /></label>
+        <label>מחיר<input type="text" name="price" maxlength="100" placeholder="לדוגמה: 150 ₪ - או השאירי ריק ויוצג 'ללא תשלום'" /></label>
         <button class="btn" type="submit" style="margin-top:10px;">פרסום הבקשה</button>
       </form>
     </div>
@@ -2843,7 +2844,7 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
       ${myRequests.map((r) => `
         <div style="border-top:1px solid var(--rose);padding:10px 0;">
           <p style="margin:0 0 4px;">${esc(r.details)}</p>
-          <p class="muted" style="margin:0 0 8px;font-size:13px;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)}</p>
+          <p class="muted" style="margin:0 0 8px;font-size:13px;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)} · 💰 ${esc(r.price || "ללא תשלום")}</p>
           <form method="post" action="/patternmakers/${r.id}/delete" onsubmit="return confirm('הבקשה כבר לא רלוונטית? היא תוסר לצמיתות.');">
             <button class="btn btn-small btn-outline" type="submit">הבקשה כבר לא רלוונטית - הסרה</button>
           </form>
@@ -2856,7 +2857,7 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
     ${requests.length ? requests.map((r) => patternmakerCard(r, d)).join("") : `<p class="muted" style="text-align:center;">עדיין אין בקשות פעילות - היי הראשונה לפרסם.</p>`}
   </div>
   `;
-  sendHtml(res, 200, page({ title: "מודליסטיות נדרשות", session: ctx.session, body, query }));
+  sendHtml(res, 200, page({ title: "מודליסטיות", session: ctx.session, body, query }));
 });
 
 route("POST", "/patternmakers/add", async (req, res, params, query, ctx) => {
@@ -2868,6 +2869,8 @@ route("POST", "/patternmakers/add", async (req, res, params, query, ctx) => {
   const details = clip((body.get("details") || "").trim(), 500);
   const location = clip((body.get("location") || "").trim(), 100);
   const when = clip((body.get("when") || "").trim(), 100);
+  // מחיר הוא שדה חופשי ולא חובה - ברירת המחדל כשלא מולא כלום היא "ללא תשלום", לפי בקשה מפורשת.
+  const price = clip((body.get("price") || "").trim(), 100) || "ללא תשלום";
   if (!details || !location || !when) {
     return redirect(res, `/patternmakers?err=${encodeURIComponent("נא למלא פרטים, מיקום ומתי.")}`);
   }
@@ -2875,7 +2878,7 @@ route("POST", "/patternmakers/add", async (req, res, params, query, ctx) => {
   d.patternmakerRequests = d.patternmakerRequests || [];
   d.patternmakerRequests.push({
     id, freelancerId: f.id, freelancerName: f.businessName || f.name,
-    details, location, when, createdAt: new Date().toISOString(),
+    details, location, when, price, createdAt: new Date().toISOString(),
   });
   db.save();
   redirect(res, `/patternmakers?ok=${encodeURIComponent("הבקשה שלך פורסמה!")}`);
