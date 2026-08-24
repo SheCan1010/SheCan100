@@ -2796,6 +2796,102 @@ route("GET", "/arena/poll/:id", async (req, res, params, query, ctx) => {
   sendHtml(res, 200, page({ title: "מה דעתך? | הזירה", session: ctx.session, body, query, noSidebars: true }));
 });
 
+// ----- "מודליסטיות נדרשות" - עצמאית מפרסמת בקשה לעזרה ממודליסטית/תופרת (פרטים/מיקום/מתי),
+// כל גולשת (לקוחה או לא) יכולה לצפות ולפנות אליה ישירות דרך עמוד הפרופיל הקיים שלה - שום
+// מנגנון פנייה חדש לא נבנה כאן בכוונה, רק קישור לפרופיל עם עוגן ל-#scMessageBox, כדי לעשות
+// שימוש חוזר במערכת ההודעות/הטלפון/הוואטסאפ הקיימת. הבקשה מוסרת רק ע"י מי שפרסמה אותה
+// (בדיקת בעלות freelancerId === session.id), בדיוק כמו דפוס המחיקה העצמית של הסקרים בזירה. -----
+function patternmakerCard(r, d) {
+  const f = d.freelancers.find((x) => x.id === r.freelancerId);
+  const name = esc(r.freelancerName || (f && (f.businessName || f.name)) || "עצמאית");
+  return `
+  <div class="card">
+    <div class="card-photo">✂️</div>
+    <div class="card-body">
+      <h3>${name}</h3>
+      <p class="muted" style="margin:4px 0;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)}</p>
+      <p style="margin:8px 0;">${esc(r.details)}</p>
+      ${f && f.status === "approved" && f.active !== false
+        ? `<a class="btn btn-small" style="margin-top:8px;text-align:center;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
+        : `<p class="muted" style="font-size:12px;">הפרופיל שפרסם/ה את הבקשה כרגע לא זמין.</p>`}
+    </div>
+  </div>`;
+}
+
+route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const isFreelancer = requireRole(ctx.session, "freelancer");
+  const me = isFreelancer ? d.freelancers.find((x) => x.id === ctx.session.id) : null;
+  const requests = (d.patternmakerRequests || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const myRequests = me ? requests.filter((r) => r.freelancerId === me.id) : [];
+  const body = `
+  <h1 class="section-title">✂️ מודליסטיות נדרשות</h1>
+  <p class="muted" style="text-align:center;">עצמאית שצריכה עזרה ממודליסטית או תופרת? כאן המקום לפרסם בקשה - וכל לקוחה שרואה יכולה לפנות אלייך ישירות דרך הפרופיל שלך.</p>
+  ${me ? `
+    <div class="panel" style="max-width:560px;margin:0 auto 24px;">
+      <h3>פרסום בקשה חדשה</h3>
+      <form method="post" action="/patternmakers/add">
+        <label>פרטי הבקשה<textarea name="details" required maxlength="500" placeholder="לדוגמה: צריכה עזרה בתפירת שמלות ערב, כמות קטנה..."></textarea></label>
+        <label>מיקום<input type="text" name="location" required maxlength="100" placeholder="לדוגמה: תל אביב, או אצלי בסטודיו" /></label>
+        <label>מתי<input type="text" name="when" required maxlength="100" placeholder="לדוגמה: בהקדם / יום שלישי בבוקר" /></label>
+        <button class="btn" type="submit" style="margin-top:10px;">פרסום הבקשה</button>
+      </form>
+    </div>
+    ${myRequests.length ? `
+    <div class="panel" style="max-width:560px;margin:0 auto 24px;">
+      <h3>הבקשות שלך</h3>
+      ${myRequests.map((r) => `
+        <div style="border-top:1px solid var(--rose);padding:10px 0;">
+          <p style="margin:0 0 4px;">${esc(r.details)}</p>
+          <p class="muted" style="margin:0 0 8px;font-size:13px;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)}</p>
+          <form method="post" action="/patternmakers/${r.id}/delete" onsubmit="return confirm('הבקשה כבר לא רלוונטית? היא תוסר לצמיתות.');">
+            <button class="btn btn-small btn-outline" type="submit">הבקשה כבר לא רלוונטית - הסרה</button>
+          </form>
+        </div>
+      `).join("")}
+    </div>` : ""}
+  ` : `<p class="muted" style="text-align:center;"><a href="/login?role=freelancer&next=${encodeURIComponent("/patternmakers")}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כעצמאית</a> כדי לפרסם בקשה משלך.</p>`}
+
+  <div class="grid">
+    ${requests.length ? requests.map((r) => patternmakerCard(r, d)).join("") : `<p class="muted" style="text-align:center;">עדיין אין בקשות פעילות - היי הראשונה לפרסם.</p>`}
+  </div>
+  `;
+  sendHtml(res, 200, page({ title: "מודליסטיות נדרשות", session: ctx.session, body, query }));
+});
+
+route("POST", "/patternmakers/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, `/login?role=freelancer&next=${encodeURIComponent("/patternmakers")}`);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (!f) return redirect(res, "/patternmakers");
+  const body = await readBody(req);
+  const details = clip((body.get("details") || "").trim(), 500);
+  const location = clip((body.get("location") || "").trim(), 100);
+  const when = clip((body.get("when") || "").trim(), 100);
+  if (!details || !location || !when) {
+    return redirect(res, `/patternmakers?err=${encodeURIComponent("נא למלא פרטים, מיקום ומתי.")}`);
+  }
+  const id = db.nextId("patternmakerRequest");
+  d.patternmakerRequests = d.patternmakerRequests || [];
+  d.patternmakerRequests.push({
+    id, freelancerId: f.id, freelancerName: f.businessName || f.name,
+    details, location, when, createdAt: new Date().toISOString(),
+  });
+  db.save();
+  redirect(res, `/patternmakers?ok=${encodeURIComponent("הבקשה שלך פורסמה!")}`);
+});
+
+route("POST", "/patternmakers/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const r = (d.patternmakerRequests || []).find((x) => x.id === params.id && x.freelancerId === ctx.session.id);
+  if (r) {
+    d.patternmakerRequests = d.patternmakerRequests.filter((x) => x.id !== params.id);
+    db.save();
+  }
+  redirect(res, `/patternmakers?ok=${encodeURIComponent("הבקשה הוסרה.")}`);
+});
+
 // ----- Central deals page - all active coupon offers in one place -----
 route("GET", "/deals", async (req, res, params, query, ctx) => {
   const d = db.load();

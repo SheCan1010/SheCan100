@@ -210,6 +210,13 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // voters מכיל "customer:<id>" עבור לקוחות מחוברות, או "anon:<token>" עבור מצביעות
     // אנונימיות שהגיעו דרך קישור השיתוף - כדי למנוע הצבעה כפולה מאותו דפדפן.
     polls: [],
+    // "מודליסטיות נדרשות" - עצמאית מפרסמת בקשה לעזרה ממודליסטית/תופרת (פרטים/מיקום/מתי),
+    // כל גולשת (לקוחה או לא) יכולה לצפות ולפנות אליה דרך מערכת ההודעות הקיימת
+    // (POST /freelancer/:id/message, כמו בכל פנייה אחרת לעצמאית). הבקשה מוסרת רק ע"י
+    // העצמאית שפרסמה אותה, לאחר בדיקת בעלות (freelancerId === session.id) - בדיוק כמו
+    // דפוס המחיקה העצמית של polls/arenaQuestions/consultations למעלה.
+    // { id, freelancerId, freelancerName, details, location, when, createdAt }
+    patternmakerRequests: [],
     // Each main category can have subcategories, so an area like "יופי וטיפוח" can be
     // broken down into "מאפרת כלות וערב", "מניקוריסטית ולק ג'ל" וכו'. A freelancer picks
     // a main category (required) and, if that category has subcategories, an optional
@@ -270,7 +277,7 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     admins: [
       { id: "1", email: "admin@shecan.co.il", name: "ספיר", passwordHash: null, pushSubscriptions: [] },
     ],
-    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1 },
+    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1, patternmakerRequest: 1 },
   };
 }
 
@@ -290,6 +297,7 @@ function migrate(data) {
   if (!Array.isArray(data.arenaQuestions)) { data.arenaQuestions = []; changed = true; }
   if (!Array.isArray(data.consultations)) { data.consultations = []; changed = true; }
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
+  if (!Array.isArray(data.patternmakerRequests)) { data.patternmakerRequests = []; changed = true; }
   if (!data.siteStats || typeof data.siteStats !== "object") { data.siteStats = { totalVisits: 0, dailyVisits: {} }; changed = true; }
   if (typeof data.siteStats.totalVisits !== "number") { data.siteStats.totalVisits = 0; changed = true; }
   if (!data.siteStats.dailyVisits || typeof data.siteStats.dailyVisits !== "object") { data.siteStats.dailyVisits = {}; changed = true; }
@@ -305,6 +313,7 @@ function migrate(data) {
   if (!("consultation" in data.nextId)) { data.nextId.consultation = 1; changed = true; }
   if (!("consultationReply" in data.nextId)) { data.nextId.consultationReply = 1; changed = true; }
   if (!("poll" in data.nextId)) { data.nextId.poll = 1; changed = true; }
+  if (!("patternmakerRequest" in data.nextId)) { data.nextId.patternmakerRequest = 1; changed = true; }
   // Older saves may have categories without a subcategories list yet - attach the
   // matching default breakdown by name where we have one, otherwise leave it browsable
   // with no subcategories (e.g. a custom category Sapir added by hand via the admin panel).

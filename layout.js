@@ -130,6 +130,7 @@ function nav(session) {
           <a class="nav-link" href="/magazine">מגזין SheCan</a>
           <a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה</a>
+          <a class="nav-link" href="/patternmakers">✂️ מודליסטיות נדרשות</a>
         </nav>
         <nav class="nav-side" aria-label="חשבון">${right}</nav>
       </div>
