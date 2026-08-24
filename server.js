@@ -1414,7 +1414,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update69 - 2026-08-24 - 'לתמיכה לחצי' 💬 - צ'אט חי (polling) כשספיר מחוברת, השארת הודעה כשלא, זיהוי גולשת אנונימית לפי עוגיית scAnon";
+const DEPLOY_MARKER = "update70 - 2026-08-24 - תיקון באג: הודעות בצ'אט התמיכה חזרו על עצמן בלולאה (since לא נקרא נכון מ-URLSearchParams)";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -6318,17 +6318,29 @@ route("GET", "/support", async (req, res, params, query, ctx) => {
   (function(){
     var lastTs = ${JSON.stringify(lastTs)};
     var hasThread = ${myMessages.length ? "true" : "false"};
+    // Guards against showing the same message twice - both from the strictly-greater-than
+    // "since" filter on the server (belt-and-suspenders) and from the optimistic bubble a
+    // send() adds locally possibly also coming back on the next poll() if the two overlap.
+    var seenIds = {};
+    Array.prototype.forEach.call(document.querySelectorAll('#scSupportThread [data-id]'), function(el){ seenIds[el.getAttribute('data-id')] = true; });
     function scrollDown(){ var t=document.getElementById('scSupportThread'); if(t) t.scrollTop = t.scrollHeight; }
     scrollDown();
     function bubbleEl(m){
       var div = document.createElement('div');
       div.className = 'chat-msg ' + (m.from === 'admin' ? 'from-admin' : 'from-asker');
+      div.setAttribute('data-id', m.id);
       div.textContent = m.text;
       var meta = document.createElement('span');
       meta.className = 'chat-meta';
       meta.textContent = new Date(m.createdAt).toLocaleString('he-IL');
       div.appendChild(meta);
       return div;
+    }
+    function appendIfNew(m){
+      if (seenIds[m.id]) return;
+      seenIds[m.id] = true;
+      var t = document.getElementById('scSupportThread');
+      if (t) { t.appendChild(bubbleEl(m)); scrollDown(); }
     }
     function setStatus(isOnline){
       var el = document.getElementById('scSupportStatus');
@@ -6344,8 +6356,7 @@ route("GET", "/support", async (req, res, params, query, ctx) => {
         .then(function(data){
           setStatus(data.online);
           (data.messages || []).forEach(function(m){
-            var t = document.getElementById('scSupportThread');
-            if (t) { t.appendChild(bubbleEl(m)); scrollDown(); }
+            appendIfNew(m);
             lastTs = m.createdAt;
           });
         }).catch(function(){});
@@ -6362,8 +6373,7 @@ route("GET", "/support", async (req, res, params, query, ctx) => {
           .then(function(data){
             if (!data.ok) { alert(data.error || 'שגיאה בשליחה - נסי שוב.'); return; }
             if (isFirst) { location.reload(); return; }
-            var t = document.getElementById('scSupportThread');
-            if (t) { t.appendChild(bubbleEl(data.message)); scrollDown(); }
+            appendIfNew(data.message);
             lastTs = data.message.createdAt;
             hasThread = true;
             var ta = document.getElementById('scSupportInput');
@@ -6435,7 +6445,7 @@ route("POST", "/support/send", async (req, res, params, query, ctx) => {
 route("GET", "/support/poll", async (req, res, params, query, ctx) => {
   const d = db.load();
   const key = supportKeyReadOnly(req, ctx);
-  const since = query.since ? new Date(query.since).getTime() : 0;
+  const since = query.get("since") ? new Date(query.get("since")).getTime() : 0;
   const messages = key
     ? (d.supportMessages || []).filter((m) => m.voterKey === key && new Date(m.createdAt).getTime() > since).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
     : [];
@@ -6477,11 +6487,14 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
   <script>
   (function(){
     var lastTs = ${JSON.stringify(lastTs)};
+    var seenIds = {};
+    Array.prototype.forEach.call(document.querySelectorAll('#scSupportThread [data-id]'), function(el){ seenIds[el.getAttribute('data-id')] = true; });
     function scrollDown(){ var t=document.getElementById('scSupportThread'); if(t) t.scrollTop = t.scrollHeight; }
     scrollDown();
     function bubbleEl(m){
       var div = document.createElement('div');
       div.className = 'chat-msg ' + (m.from === 'admin' ? 'from-admin' : 'from-asker');
+      div.setAttribute('data-id', m.id);
       div.textContent = m.text;
       var meta = document.createElement('span');
       meta.className = 'chat-meta';
@@ -6489,13 +6502,18 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
       div.appendChild(meta);
       return div;
     }
+    function appendIfNew(m){
+      if (seenIds[m.id]) return;
+      seenIds[m.id] = true;
+      var t = document.getElementById('scSupportThread');
+      if (t) { t.appendChild(bubbleEl(m)); scrollDown(); }
+    }
     function poll(){
       fetch('/admin/support/thread/${esc(params.key)}/poll?since=' + encodeURIComponent(lastTs), { headers: { 'Accept': 'application/json' } })
         .then(function(r){ return r.json(); })
         .then(function(data){
           (data.messages || []).forEach(function(m){
-            var t = document.getElementById('scSupportThread');
-            if (t) { t.appendChild(bubbleEl(m)); scrollDown(); }
+            appendIfNew(m);
             lastTs = m.createdAt;
           });
         }).catch(function(){});
@@ -6509,8 +6527,7 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
         .then(function(r){ return r.json(); })
         .then(function(data){
           if (!data.ok) { alert('שגיאה בשליחה - נסי שוב.'); return; }
-          var t = document.getElementById('scSupportThread');
-          if (t) { t.appendChild(bubbleEl(data.message)); scrollDown(); }
+          appendIfNew(data.message);
           lastTs = data.message.createdAt;
           var ta = document.getElementById('scSupportInput');
           if (ta) ta.value = '';
@@ -6526,7 +6543,7 @@ route("GET", "/admin/support/thread/:key/poll", async (req, res, params, query, 
   if (!requireRole(ctx.session, "admin")) return sendHtml(res, 401, JSON.stringify({ messages: [] }), { "Content-Type": "application/json; charset=utf-8" });
   const d = db.load();
   const voterKey = decodeSupportKey(params.key);
-  const since = query.since ? new Date(query.since).getTime() : 0;
+  const since = query.get("since") ? new Date(query.get("since")).getTime() : 0;
   const messages = (d.supportMessages || []).filter((m) => m.voterKey === voterKey && new Date(m.createdAt).getTime() > since).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   let anyMarkedRead = false;
   messages.forEach((m) => { if (m.from === "asker" && !m.read) { m.read = true; anyMarkedRead = true; } });
