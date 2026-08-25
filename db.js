@@ -225,6 +225,11 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // freelancerName, question, options: [{ text, votes }], voters: [], createdAt }
     // voters מכיל "customer:<id>" עבור לקוחות מחוברות, או "anon:<token>" עבור מצביעות
     // אנונימיות שהגיעו דרך קישור השיתוף - כדי למנוע הצבעה כפולה מאותו דפדפן.
+    // "סקר מהמערכת" (נוסף ב-2026-08-25): ספיר עצמה יכולה גם ליצור סקר, דרך פאנל הניהול -
+    // נשמר באותו מערך, רק עם source:"admin" (freelancerId: null, freelancerName: "SheCan")
+    // ו-audience: "freelancers"|"customers"|"both", שקובע מי בכלל רואה ויכולה להצביע בו
+    // (ר' pollVisibleToMe ב-server.js). סקר של עצמאית (ללא source, או source !== "admin")
+    // ממשיך להיות גלוי לכולן כרגיל, ואין הגבלת "סקר אחד בשבוע" לספיר.
     polls: [],
     // "מודליסטיות נדרשות" - עצמאית מפרסמת בקשה לעזרה ממודליסטית/תופרת (פרטים/מיקום/מתי),
     // כל גולשת (לקוחה או לא) יכולה לצפות ולפנות אליה דרך מערכת ההודעות הקיימת
@@ -404,6 +409,11 @@ function migrate(data) {
     // pending at migration time gets seen=false, so she still sees it once, the first time she
     // visits her dashboard after an admin actually approves her - same as any new signup.
     if (!("welcomePopupSeen" in f)) { f.welcomePopupSeen = f.status === "approved"; changed = true; }
+    // Set (2026-08-25) whenever she just introduced a brand-new subcategory at signup or via a
+    // later profile edit - see resolveCategorySelection/customSubcategoryNoteHtml in server.js.
+    // Surfaces a one-time review highlight for Sapir in the admin panel; cleared once she
+    // renames/confirms it there. Existing freelancers obviously never triggered this, so false.
+    if (!("customSubcategoryPending" in f)) { f.customSubcategoryPending = false; changed = true; }
     // An additional listing can be advertised independently of her main profile - e.g. she
     // may only want to pay to promote her balloon business, not her main makeup business -
     // so each listing gets its own isAdvertised/adPaymentStatus, same shape as the

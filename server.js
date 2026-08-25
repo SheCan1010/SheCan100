@@ -35,7 +35,13 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "
 // While this is false, server.js never calls buildJoinStoryImageBuffer/buildReviewStoryImageBuffer
 // at all, so approvals go back to sending the plain email with no image attachments (safe,
 // non-blocking, same as any other build failure).
-const STORY_IMAGES_ENABLED = false;
+// Turned back ON 2026-08-24, per explicit request, now that both real root causes of the
+// 2026-08-22 crash loop have been fixed for 2+ days (db.json base64-image bloat, and the
+// magazine flipbook eager-load) - plus the chromiumQueue serialization + 20s timeout above
+// already guard against the ORIGINAL (2026-08-19) trigger, overlapping Chromium launches. If
+// Render's logs show memory trouble again after this deploys, flip this back to false - that
+// alone (no other change) safely disables it again.
+const STORY_IMAGES_ENABLED = true;
 
 const http = require("http");
 const fs = require("fs");
@@ -398,14 +404,35 @@ function migrateEmbeddedPhotosToFiles(d) {
   if (migrateEmbeddedPhotosToFiles(d)) db.save();
 })();
 
+// Combines a cookie already set earlier in the request (via res.setHeader("Set-Cookie", ...) -
+// e.g. the scVisit visit-tracking cookie set by trackSiteVisit() before the route handler even
+// runs, near the bottom of this file) with whatever cookie THIS response also wants to set (e.g.
+// login setting sid+scUid). Required because res.writeHead(status, headers) does NOT merge an
+// earlier setHeader("Set-Cookie", ...) with a "Set-Cookie" key present in its own headers object -
+// it silently DROPS the earlier one instead (verified directly with a throwaway Node script:
+// writeHead's headers always win for a header name present in both places). Every response path
+// in this file funnels through sendHtml()/redirect() below, so merging here once covers all of
+// them - no need to touch the ~2 raw res.writeHead() calls elsewhere (static file/asset routes)
+// since those never pass a "Set-Cookie" key of their own, so the earlier setHeader value survives
+// untouched for them regardless.
+function mergedSetCookie(res, cookie) {
+  const toArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+  const merged = [...toArray(res.getHeader("Set-Cookie")), ...toArray(cookie)];
+  return merged.length ? merged : null;
+}
+
 function sendHtml(res, status, html, extraHeaders = {}) {
-  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", ...extraHeaders });
+  const merged = mergedSetCookie(res, extraHeaders["Set-Cookie"]);
+  const headers = { "Content-Type": "text/html; charset=utf-8", ...extraHeaders };
+  if (merged) headers["Set-Cookie"] = merged; else delete headers["Set-Cookie"];
+  res.writeHead(status, headers);
   res.end(html);
 }
 
 function redirect(res, location, cookie) {
+  const merged = mergedSetCookie(res, cookie);
   const headers = { Location: location };
-  if (cookie) headers["Set-Cookie"] = cookie;
+  if (merged) headers["Set-Cookie"] = merged;
   res.writeHead(302, headers);
   res.end();
 }
@@ -457,6 +484,30 @@ function subcatName(d, categoryId, subcategoryId) {
   const sub = subcategoriesOf(d, categoryId).find((s) => s.id === subcategoryId);
   return sub ? sub.name : "";
 }
+// Highlight box shown to Sapir in the admin panel (both the pending-approval cards and the
+// already-approved freelancers table) whenever a freelancer just introduced a brand-new
+// subcategory (see resolveCategorySelection / customSubcategoryPending) - lets her fix the
+// wording right there (renames the actual shared subcategory record, so the fix applies
+// everywhere it's used) or just confirm it's fine, either way clearing the flag so it doesn't
+// keep nagging her once she's looked at it.
+function customSubcategoryNoteHtml(f, d) {
+  if (!f.customSubcategoryPending) return "";
+  const subName = subcatName(d, f.categoryId, f.subcategoryId) || "";
+  const catNameStr = catName(d, f.categoryId) || "";
+  return `
+  <div class="panel" style="background:#FBF3EC;border:1px solid #E8D9C9;margin-top:8px;">
+    <p style="margin:0 0 8px;font-weight:700;">🆕 היא הוסיפה תת-תחום חדש: "${esc(subName)}" (בתחום ${esc(catNameStr)}) - כדאי לוודא שהניסוח תקין.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <form method="post" action="/admin/freelancer/${f.id}/subcategory-note/rename" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input type="text" name="newName" value="${esc(subName)}" maxlength="80" style="width:220px;" />
+        <button type="submit" class="btn btn-small btn-outline">עדכון שם תת-התחום</button>
+      </form>
+      <form method="post" action="/admin/freelancer/${f.id}/subcategory-note/dismiss">
+        <button type="submit" class="btn btn-small btn-outline">✓ בדקתי, זה בסדר</button>
+      </form>
+    </div>
+  </div>`;
+}
 // Count of approved reviews/recommendations for a freelancer's main profile (listingId
 // omitted) or for one specific additional listing (listingId passed) - used to sort
 // freelancer listings so whoever has the most recommendations shows up first, wherever
@@ -477,8 +528,13 @@ function avgRatingFor(d, freelancerId, listingId) {
 // delivery option she picked instead (online / comes to the customer) - so the line is never
 // just blank for a freelancer who works online-only or only does home visits.
 function locationLabel(d, cityId, offersOnline, offersHomeVisit) {
-  const city = cityName(d, cityId);
-  if (city) return city;
+  // cityName() itself falls back to the placeholder string "-" for an unknown/empty cityId (used
+  // on purpose elsewhere, e.g. admin lists, to flag an incomplete profile) - but that made THIS
+  // function's own "if (city) return city" always true, since "-" is a non-empty string, so the
+  // online/home-visit fallback below could never actually run. Guarding on cityId directly (and
+  // treating a stray "-" as "no real city") is the actual fix.
+  const city = cityId ? cityName(d, cityId) : "";
+  if (city && city !== "-") return city;
   if (offersOnline) return "שירות אונליין";
   if (offersHomeVisit) return "מגיעה אלייך";
   return "";
@@ -521,6 +577,10 @@ function findOrCreateCategory(d, name) {
   d.categories.push(category);
   return category;
 }
+// Returns { sub, isNew } - isNew is true only when a brand-new subcategory record was just
+// created (not when an existing one, matched case-insensitively, was reused instead). Callers
+// use isNew to flag "she just introduced a new subcategory" for a quick admin review (see
+// wasCustomSubcategory below, and customSubcategoryPending on the freelancer record).
 function findOrCreateSubcategory(d, categoryId, name) {
   const trimmed = (name || "").trim();
   if (!trimmed) return null;
@@ -528,30 +588,54 @@ function findOrCreateSubcategory(d, categoryId, name) {
   if (!category) return null;
   category.subcategories = category.subcategories || [];
   const existing = category.subcategories.find((s) => s.name.trim().toLowerCase() === trimmed.toLowerCase());
-  if (existing) return existing;
+  if (existing) return { sub: existing, isNew: false };
   const sub = { id: categoryId + "-custom-" + Date.now(), name: trimmed };
   category.subcategories.push(sub);
-  return sub;
+  return { sub, isNew: true };
 }
 // Resolves the category/subcategory a freelancer picked at registration or profile-update
-// time - handles the "אחר" (Other) option by finding-or-creating real category/subcategory
-// records from her typed text, so everything downstream (search, filtering, display) just
-// works with a normal categoryId/subcategoryId and never needs to know "אחר" was involved.
+// time - handles two different "אחר" (Other) escape hatches:
+// (1) categoryId === "__other__" - her field isn't in the top-level category list at all, so
+//     she typed a whole new category (and optionally a subcategory under it).
+// (2) an existing categoryId, but subcategoryId === "__other__" - her top-level field IS one
+//     of the existing categories, she just couldn't find her specific specialty in that
+//     category's subcategory list (added 2026-08-25, per explicit request - previously the
+//     only way to get a brand-new subcategory into the system was via path (1), even when the
+//     category itself already existed).
+// Both paths find-or-create real category/subcategory records from her typed text (reusing an
+// existing one by exact name match rather than creating a near-duplicate), so everything
+// downstream (search, filtering, display) just works with a normal categoryId/subcategoryId
+// and never needs to know "אחר" was involved - a brand-new subcategory shows up in every
+// category/subcategory dropdown site-wide from that point on, exactly like a built-in one.
+// wasCustomSubcategory is true whenever a genuinely NEW subcategory record was created (either
+// path) - the caller uses this to set customSubcategoryPending on the freelancer record, which
+// surfaces a review highlight for Sapir on the admin pending-approvals screen (see /admin GET).
 function resolveCategorySelection(d, body) {
   let categoryId = body.get("categoryId");
   let subcategoryId = body.get("subcategoryId") || "";
+  let wasCustomSubcategory = false;
   if (categoryId === "__other__") {
     const category = findOrCreateCategory(d, body.get("customCategory"));
     categoryId = category ? category.id : "";
     const subName = (body.get("customSubcategory") || "").trim();
     if (category && subName) {
-      const sub = findOrCreateSubcategory(d, category.id, subName);
-      subcategoryId = sub ? sub.id : "";
+      const result = findOrCreateSubcategory(d, category.id, subName);
+      subcategoryId = result ? result.sub.id : "";
+      wasCustomSubcategory = !!(result && result.isNew);
+    } else {
+      subcategoryId = "";
+    }
+  } else if (subcategoryId === "__other__") {
+    const subName = (body.get("customSubcategoryOnly") || "").trim();
+    if (categoryId && subName) {
+      const result = findOrCreateSubcategory(d, categoryId, subName);
+      subcategoryId = result ? result.sub.id : "";
+      wasCustomSubcategory = !!(result && result.isNew);
     } else {
       subcategoryId = "";
     }
   }
-  return { categoryId, subcategoryId };
+  return { categoryId, subcategoryId, wasCustomSubcategory };
 }
 
 // "כמה שנים את בתחום?" - required at signup (and separately for every additional field she
@@ -1303,11 +1387,21 @@ function pollCardHtml(poll, voterKey, redirectTarget, shareUrl, canManage) {
       </button>
     </form>`;
   }).join("");
+  // Admin-created surveys (source: "admin") are shown with a distinct "from the system" badge
+  // instead of the usual "מאת <freelancer>" attribution line, so they read clearly as an
+  // official SheCan survey rather than another freelancer's "מה דעתך?" poll - per explicit
+  // request. The badge also names who the survey is aimed at (audience), since an admin survey
+  // is only ever shown to its intended audience in the first place (see the visibility filter
+  // where activePolls is built) but she still wanted that spelled out on the card itself.
+  const audienceLabel = poll.audience === "freelancers" ? "עצמאיות" : poll.audience === "customers" ? "לקוחות" : "עצמאיות ולקוחות";
+  const attributionHtml = poll.source === "admin"
+    ? `<p class="muted" style="margin:0 0 8px;font-size:13px;"><span class="badge" style="margin-inline-end:6px;">📋 סקר מהמערכת · ${esc(audienceLabel)}</span>בסה"כ ${totalVotes} הצבעות</p>`
+    : `<p class="muted" style="margin:0 0 8px;font-size:13px;">מאת <a href="/freelancer/${poll.freelancerId}" style="color:var(--arena-dark);font-weight:800;text-decoration:underline;">${esc(poll.freelancerName)}</a> · בסה"כ ${totalVotes} הצבעות</p>`;
   return `
   <div id="poll-${poll.id}" class="arena-card">
     ${poll.closed ? `<span class="badge badge-outline" style="margin-bottom:6px;display:inline-block;">🔒 סגור להצבעות</span>` : ""}
     <p style="margin:0 0 4px;font-weight:800;font-size:17px;">${esc(poll.question)}</p>
-    <p class="muted" style="margin:0 0 8px;font-size:13px;">מאת <a href="/freelancer/${poll.freelancerId}" style="color:var(--arena-dark);font-weight:800;text-decoration:underline;">${esc(poll.freelancerName)}</a> · בסה"כ ${totalVotes} הצבעות</p>
+    ${attributionHtml}
     ${optionsHtml}
     <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span class="muted" style="font-size:13px;" id="pollShareUrl-${poll.id}">${esc(shareUrl)}</span>
@@ -1414,7 +1508,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update70 - 2026-08-24 - תיקון באג: הודעות בצ'אט התמיכה חזרו על עצמן בלולאה (since לא נקרא נכון מ-URLSearchParams)";
+const DEPLOY_MARKER = "update75 - 2026-08-25 - נוספה ספירת \"כניסות טהורות\" לאתר (ביקור אחד = כניסה אחת, לא כל טעינת עמוד) + מעקב מקור הגעה (ווטסאפ/מייל/אינסטגרם/פייסבוק/צ'אט/גוגל וכו) עם קישורים מתויגים לשיתוף";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -2546,7 +2640,18 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
       </div>`
   ) : `<p class="muted" style="text-align:center;margin-bottom:20px;">הסקרים כאן נוצרים על ידי העצמאיות שלנו - את מוזמנת לסמן תשובה בכל סקר שמעניין אותך.</p>`;
 
-  const activePolls = (d.polls || []).slice().reverse().slice(0, 20);
+  // A freelancer-created poll (no `source` field, or source !== "admin") stays visible to
+  // everyone exactly as before. An admin-created survey (source: "admin") is targeted - only
+  // shown to the audience she picked when creating it, and only to an actually logged-in
+  // customer/freelancer (never to an anonymous visitor, since "audience" has no meaning for
+  // someone we can't identify as either).
+  const pollVisibleToMe = (p) => {
+    if (p.source !== "admin") return true;
+    if (p.audience === "freelancers") return isFreelancer;
+    if (p.audience === "customers") return isCustomer;
+    return isCustomer || isFreelancer;
+  };
+  const activePolls = (d.polls || []).filter(pollVisibleToMe).slice().reverse().slice(0, 20);
   const pollsHtml = activePolls.length ? activePolls.map((p) => {
     const voterKey = arenaVoterKeyReadOnly(req, ctx);
     const canDeletePoll = isFreelancer && ctx.session.id === p.freelancerId;
@@ -2735,6 +2840,15 @@ route("POST", "/arena/poll/:id/vote", async (req, res, params, query, ctx) => {
   const redirectTo = safeNextUrl((body.get("redirectTo") || "").split("#")[0]) || "/arena";
   const hash = (body.get("redirectTo") || "").includes("#") ? "#" + body.get("redirectTo").split("#")[1] : "";
   if (!poll || poll.closed) return redirect(res, redirectTo + hash);
+  // Same audience gate as the display side (see pollVisibleToMe in /arena and the matching check
+  // in /arena/poll/:id) - a direct POST to this endpoint must not let someone vote on a
+  // targeted admin survey she was never shown in the first place.
+  if (poll.source === "admin") {
+    const isCustomerHere = requireRole(ctx.session, "customer");
+    const isFreelancerHere = requireRole(ctx.session, "freelancer");
+    const visible = poll.audience === "freelancers" ? isFreelancerHere : poll.audience === "customers" ? isCustomerHere : (isCustomerHere || isFreelancerHere);
+    if (!visible) return redirect(res, redirectTo + hash);
+  }
   const optionIndex = Number(body.get("optionIndex"));
   if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= poll.options.length) {
     return redirect(res, redirectTo + hash);
@@ -2826,6 +2940,15 @@ route("GET", "/arena/poll/:id", async (req, res, params, query, ctx) => {
   const d = db.load();
   const poll = (d.polls || []).find((p) => p.id === params.id);
   if (!poll) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הסקר הזה.</p>` }));
+  // Same audience gate as the /arena listing (see pollVisibleToMe there) - an admin survey
+  // aimed at freelancers-only (or customers-only) shouldn't become viewable/votable by anyone
+  // who happens to get the direct share link, even though the link itself isn't secret.
+  if (poll.source === "admin") {
+    const isCustomerHere = requireRole(ctx.session, "customer");
+    const isFreelancerHere = requireRole(ctx.session, "freelancer");
+    const visible = poll.audience === "freelancers" ? isFreelancerHere : poll.audience === "customers" ? isCustomerHere : (isCustomerHere || isFreelancerHere);
+    if (!visible) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הסקר הזה.</p>` }));
+  }
   const origin = getOrigin(req);
   const voterKey = arenaVoterKeyReadOnly(req, ctx);
   const canDeletePoll = requireRole(ctx.session, "freelancer") && ctx.session.id === poll.freelancerId;
@@ -2977,6 +3100,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${p.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
   const subcatOptionsForPrefill = (p.categoryId && p.categoryId !== "__other__")
     ? subcategoriesOf(d, p.categoryId).map((s) => `<option value="${s.id}" ${p.subcategoryId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")
+      + `<option value="__other__" ${p.subcategoryId === "__other__" ? "selected" : ""}>אחר - תת-התחום שלי לא ברשימה</option>`
     : "";
   const filesNote = isRetry ? ` <span style="color:var(--danger);font-weight:700;">(שימי לב - יש לצרף שוב, קבצים לא נשמרים אוטומטית)</span>` : "";
   const body = `
@@ -3019,7 +3143,10 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     ${isRetry ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
     <label>🌸 מה התחום שלך?
     <select name="categoryId" required onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBox');"><option value="">בחרי תחום</option>${catOptions}<option value="__other__" ${p.categoryId === "__other__" ? "selected" : ""}>אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>🌸 תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat">${p.categoryId && p.categoryId !== "__other__" ? subcatOptionsForPrefill : '<option value="">בחרי קודם תחום</option>'}</select></label>
+    <label>🌸 תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat" onchange="scToggleOtherSubcategory(this, 'scOtherSubcategoryBox')">${p.categoryId && p.categoryId !== "__other__" ? subcatOptionsForPrefill : '<option value="">בחרי קודם תחום</option>'}</select></label>
+    <div id="scOtherSubcategoryBox" style="display:${p.subcategoryId === "__other__" ? "block" : "none"};">
+      <label>🌸 מה שם תת-התחום שלך?<input type="text" name="customSubcategoryOnly" value="${esc(p.customSubcategoryOnly || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    </div>
     <div id="scOtherCategoryBox" style="display:${p.categoryId === "__other__" ? "block" : "none"};">
       <label>🌸 מה שם התחום שלך?<input type="text" name="customCategory" value="${esc(p.customCategory || "")}" placeholder="למשל: עיצוב אירועים" /></label>
       <label>🌸 תת-תחום (לא חובה)<input type="text" name="customSubcategory" value="${esc(p.customSubcategory || "")}" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
@@ -3041,7 +3168,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery4" accept="image/*" />
-    <label>🌸 ספרי לנו בכמה מילים על העסק שלך (עד 500 תווים)<textarea name="description" maxlength="500" placeholder="ספרי לנו מה את עושה ואיך את עוזרת ללקוחות שלך – כתבי את זה כאילו את מספרת לחברה, בצורה ברורה ומדויקת. זה מה שיגרום ללקוחות לבחור דווקא בך.">${esc(p.description || "")}</textarea></label>
+    <label>🌸 תארי את השירות שאת נותנת (עד 500 תווים)<textarea name="description" maxlength="500" placeholder="כאן את מתארת את השירות שאת נותנת - מה את עושה ואיך את עוזרת ללקוחות שלך. כתבי בגוף ראשון, בצורה אישית וחמימה, כאילו את מספרת לחברה - זה מה שיזמין לקוחות לקרוא ולהתחבר אלייך.">${esc(p.description || "")}</textarea></label>
     <label>🌸 תני ללקוחות סיבה טובה לבחור בך (עד 200 תווים) *</label>
     <p class="muted" style="margin:0 0 6px;font-size:13px;">* עסק בלי הטבה ללקוחות לא יאושר לפרסום - זה בדיוק מה שמושך אליך לקוחות חדשות.</p>
     <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן." required>${esc(p.dealText || "")}</textarea>
@@ -3140,6 +3267,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       name: body.get("name"), businessName: body.get("businessName"), email: body.get("email"),
       categoryId: body.get("categoryId"), subcategoryId: body.get("subcategoryId"),
       customCategory: body.get("customCategory"), customSubcategory: body.get("customSubcategory"),
+      customSubcategoryOnly: body.get("customSubcategoryOnly"),
       yearsInField: body.get("yearsInField"), cityId: body.get("cityId"), phone: body.get("phone"),
       hasWhatsapp: body.get("hasWhatsapp") === "1", offersOnline: body.get("offersOnline") === "1",
       offersHomeVisit: body.get("offersHomeVisit") === "1", instagram: body.get("instagram"),
@@ -3179,12 +3307,16 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   const galleryPhotos = ["gallery1", "gallery2", "gallery3", "gallery4"]
     .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
     .filter(Boolean);
-  const { categoryId, subcategoryId } = resolveCategorySelection(d, body);
+  const { categoryId, subcategoryId, wasCustomSubcategory } = resolveCategorySelection(d, body);
   const additionalListings = [0, 1, 2].map((i) => readExtraListingFromBody(d, body, "extra", i)).filter(Boolean);
   db.load().freelancers.push({
     id, name: body.get("name"), businessName: body.get("businessName"), email: body.get("email"),
     passwordHash: auth.hashPassword(body.get("password")), categoryId,
     subcategoryId,
+    // Set only when she just introduced a genuinely new subcategory (see resolveCategorySelection)
+    // - surfaces a one-time review highlight on the admin pending-approvals screen (/admin GET),
+    // cleared once Sapir renames/confirms it there (POST /admin/freelancer/:id/subcategory-note/*).
+    customSubcategoryPending: !!wasCustomSubcategory,
     additionalCategoryIds: body.getAll("additionalCategoryIds") || [],
     additionalListings,
     cityId: body.get("cityId"), phone: body.get("phone"), hasWhatsapp: body.get("hasWhatsapp") === "1",
@@ -3698,7 +3830,8 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const f = d.freelancers.find((x) => x.id === ctx.session.id);
   const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved");
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === f.categoryId ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const subcatOptions = subcategoriesOf(d, f.categoryId).map((s) => `<option value="${s.id}" ${s.id === f.subcategoryId ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const subcatOptions = subcategoriesOf(d, f.categoryId).map((s) => `<option value="${s.id}" ${s.id === f.subcategoryId ? "selected" : ""}>${esc(s.name)}</option>`).join("")
+    + `<option value="__other__">אחר - תת-התחום שלי לא ברשימה</option>`;
   const statusLabel = paymentStatusLabel(f.paymentStatus);
   const matchingCustomer = d.customers.find((c) => c.email === f.email);
   const profileUrl = `${getOrigin(req)}/freelancer/${f.id}`;
@@ -3858,7 +3991,10 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <label>שם העסק<input type="text" name="businessName" value="${esc(f.businessName)}" required /></label>
     <label>תחום
     <select name="categoryId" onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat"><option value="">ללא תת-תחום</option>${subcatOptions}</select></label>
+    <label>תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat" onchange="scToggleOtherSubcategory(this, 'scOtherSubcategoryBoxDash')"><option value="">ללא תת-תחום</option>${subcatOptions}</select></label>
+    <div id="scOtherSubcategoryBoxDash" style="display:none;">
+      <label>מה שם תת-התחום שלך?<input type="text" name="customSubcategoryOnly" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    </div>
     <div id="scOtherCategoryBoxDash" style="display:none;">
       <label>מה שם התחום שלך?<input type="text" name="customCategory" placeholder="למשל: עיצוב אירועים" /></label>
       <label>תת-תחום (לא חובה)<input type="text" name="customSubcategory" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
@@ -4221,6 +4357,10 @@ route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const resolvedCat = resolveCategorySelection(d, body);
   f.categoryId = resolvedCat.categoryId;
   f.subcategoryId = resolvedCat.subcategoryId;
+  // Only ever sets the flag to true here - never clears it - so an edit that doesn't touch the
+  // subcategory can't accidentally wipe out a still-unreviewed flag from earlier. Clearing only
+  // happens explicitly via the admin rename/dismiss actions (see customSubcategoryNoteHtml).
+  if (resolvedCat.wasCustomSubcategory) f.customSubcategoryPending = true;
   f.cityId = body.get("cityId");
   f.phone = body.get("phone");
   f.hasWhatsapp = body.get("hasWhatsapp") === "1";
@@ -4508,16 +4648,26 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // siteStats.dailyVisits so Sapir can see a trend, not just one flat lifetime total.
   const siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {}, realVisits: 0, dailyRealVisits: {} };
   const siteStatsDailyReal = siteStats.dailyRealVisits || {};
+  const siteStatsDailyRealEntries = siteStats.dailyRealUniqueEntries || {};
   const todayKey = new Date().toISOString().slice(0, 10);
   const todayVisits = siteStats.dailyVisits[todayKey] || 0;
   const todayRealVisits = siteStatsDailyReal[todayKey] || 0;
+  const todayRealEntries = siteStatsDailyRealEntries[todayKey] || 0;
   const last7Days = [];
   for (let i = 6; i >= 0; i--) {
     const dt = new Date();
     dt.setDate(dt.getDate() - i);
     const key = dt.toISOString().slice(0, 10);
-    last7Days.push({ key, count: siteStats.dailyVisits[key] || 0, realCount: siteStatsDailyReal[key] || 0 });
+    last7Days.push({ key, count: siteStats.dailyVisits[key] || 0, realCount: siteStatsDailyReal[key] || 0, entryCount: siteStatsDailyRealEntries[key] || 0 });
   }
+  // "מאיפה הן מגיעות" table - all-time real (non-bot) entries broken down by source, sorted by
+  // volume so the busiest channels are on top. See detectSource()/sourceLabel() near
+  // trackSiteVisit() at the bottom of this file for how a key is decided and translated.
+  const sourceCounts = siteStats.sourceCounts || {};
+  const totalAttributedEntries = Object.values(sourceCounts).reduce((a, b) => a + b, 0);
+  const sourceRows = Object.entries(sourceCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => ({ key, label: sourceLabel(key), count, pct: totalAttributedEntries ? Math.round((count / totalAttributedEntries) * 100) : 0 }));
   // Per-registered-user breakdown ("מי נכנסה וכמה פעמים") - only covers customers/freelancers
   // who logged in at least once since this was added (see identityCookie()/trackSiteVisit()) -
   // older visits weren't attributed to anyone, so this starts from zero and grows from here.
@@ -4568,6 +4718,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${todayRealVisits}</div>
         <div class="muted" style="margin-top:4px;">כניסות אמיתיות היום (משוערות)</div>
       </div>
+      <div style="flex:1;min-width:160px;background:#E7EDF5;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.realUniqueEntries || 0}</div>
+        <div class="muted" style="margin-top:4px;">כניסות טהורות לאתר (סה"כ, ביקורים אמיתיים בלבד)</div>
+      </div>
+      <div style="flex:1;min-width:160px;background:#E7EDF5;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${todayRealEntries}</div>
+        <div class="muted" style="margin-top:4px;">כניסות טהורות היום</div>
+      </div>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${confirmedDealsCount}</div>
         <div class="muted" style="margin-top:4px;">עסקאות שנסגרו (אושרו ע"י הלקוחה)</div>
@@ -4578,15 +4736,79 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <div class="muted" style="margin-top:4px;">עסקאות שממתינות לאישור הלקוחה</div>
       </div>` : ""}
     </div>
-    <p class="muted" style="margin-top:16px;margin-bottom:0;">🩶 = כל כניסה שנספרת (כולל בוטים וסורקים) &nbsp;|&nbsp; 🌸 = הערכת כניסות אמיתיות בלבד (אחרי סינון בוטים ידועים לפי User-Agent - הערכה, לא מדויקת ב-100%)</p>
+    <p class="muted" style="margin-top:16px;margin-bottom:0;">🩶 = כל כניסה שנספרת (כולל בוטים וסורקים, וכולל כל טעינת עמוד בנפרד) &nbsp;|&nbsp; 🌸 = הערכת כניסות אמיתיות בלבד (אחרי סינון בוטים, עדיין כל טעינת עמוד) &nbsp;|&nbsp; 🔵 = "כניסות טהורות" - ביקור שלם נספר פעם אחת בלבד (עד 30 דקות ברצף נחשבות אותה כניסה), אחרי סינון בוטים - זה המספר הכי קרוב ל"כמה פעמים מישהי נכנסה לאתר", לעומת 🩶/🌸 שסופרים כל טעינת עמוד בנפרד.</p>
     <p class="muted" style="margin-top:6px;margin-bottom:6px;">כניסות ב-7 הימים האחרונים:</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       ${last7Days.map((day) => `<div style="flex:1;min-width:80px;background:var(--white);border:1px solid var(--rose);border-radius:8px;padding:8px 4px;text-align:center;">
         <div style="font-size:16px;font-weight:700;color:var(--rose-dark);">🩶 ${day.count}</div>
         <div style="font-size:14px;font-weight:700;color:#8A6B2E;margin-top:2px;">🌸 ${day.realCount}</div>
+        <div style="font-size:14px;font-weight:700;color:#3E5C8A;margin-top:2px;">🔵 ${day.entryCount}</div>
         <div class="muted" style="font-size:11px;margin-top:4px;">${day.key.slice(5)}</div>
       </div>`).join("")}
     </div>
+  </div>
+
+  <div class="panel">
+    <h3>מאיפה הן מגיעות 🧭</h3>
+    <p class="muted">פירוט מקור לפי "כניסות טהורות" אמיתיות בלבד (🔵 מהפאנל למעלה) - כל שורה היא ביקור שלם אחד, לא טעינת עמוד. "ישירה / לא ידועה" כולל גם הקלדת הכתובת ישירות, וגם המון מקרים אמיתיים של ווטסאפ/מייל שהאפליקציה לא שולחת עליהם שום מידע לדפדפן - כדי לקבל מספרים מדויקים לערוצים האלה, השתמשי בקישורים המתויגים בפאנל הבא. מבוסס רק על ביקורים מרגע העדכון הזה (2026-08-25) והלאה - היסטוריה ישנה יותר לא סווגה.</p>
+    ${sourceRows.length ? `
+    <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+      <thead><tr style="text-align:right;"><th style="padding:6px 4px;border-bottom:1px solid var(--rose);">מקור</th><th style="padding:6px 4px;border-bottom:1px solid var(--rose);">כניסות</th><th style="padding:6px 4px;border-bottom:1px solid var(--rose);">אחוז</th></tr></thead>
+      <tbody>
+        ${sourceRows.map((r) => `<tr><td style="padding:6px 4px;border-bottom:1px solid #eee;">${esc(r.label)}</td><td style="padding:6px 4px;border-bottom:1px solid #eee;">${r.count}</td><td style="padding:6px 4px;border-bottom:1px solid #eee;">${r.pct}%</td></tr>`).join("")}
+      </tbody>
+    </table>` : `<p class="muted" style="margin-top:10px;">עדיין אין נתוני מקור - יופיעו כאן ברגע שיהיו כניסות חדשות לאתר.</p>`}
+  </div>
+
+  <div class="panel">
+    <h3>קישור לשיתוף עם מעקב מקור 🔗</h3>
+    <p class="muted">בוחרים איפה משתפות את הקישור, ואופציונלית לאיזה עמוד באתר (ברירת מחדל - עמוד הבית), ולוחצות "יצירת קישור". הקישור שייווצר יעבוד בדיוק כמו קישור רגיל, אבל כשיילחצו עליו זה יירשם במדויק בטבלה למעלה - כך שאין תלות בזיהוי אוטומטי (שלא תמיד עובד לווטסאפ/מייל).</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;">
+      <label style="flex:1;min-width:160px;">איפה משתפות?
+        <select id="scShareSrc">
+          <option value="whatsapp">ווטסאפ</option>
+          <option value="mail">מייל</option>
+          <option value="instagram">אינסטגרם</option>
+          <option value="facebook">פייסבוק</option>
+          <option value="chat">צ'אט / הודעה אחר</option>
+          <option value="sms">SMS</option>
+        </select>
+      </label>
+      <label style="flex:2;min-width:220px;">לאיזה עמוד (אופציונלי - ריק = עמוד הבית)
+        <input type="text" id="scSharePath" placeholder="לדוגמה: /freelancer/12345 או /join" />
+      </label>
+      <button type="button" class="btn btn-small" onclick="scBuildShareLink()">יצירת קישור</button>
+    </div>
+    <div id="scShareLinkResult" style="margin-top:12px;display:none;">
+      <input type="text" id="scShareLinkOutput" readonly style="width:100%;direction:ltr;text-align:left;" onclick="this.select();" />
+      <button type="button" class="btn btn-small btn-outline" style="margin-top:6px;" onclick="scCopyShareLink()">העתקת קישור</button>
+      <span id="scShareLinkCopied" class="muted" style="margin-inline-start:8px;display:none;">הועתק! ✓</span>
+    </div>
+    <script>
+      function scBuildShareLink() {
+        var src = document.getElementById('scShareSrc').value;
+        var rawPath = document.getElementById('scSharePath').value.trim();
+        var path = rawPath || '/';
+        if (path.charAt(0) !== '/') path = '/' + path;
+        var sep = path.indexOf('?') === -1 ? '?' : '&';
+        var url = window.location.origin + path + sep + 'src=' + encodeURIComponent(src);
+        document.getElementById('scShareLinkOutput').value = url;
+        document.getElementById('scShareLinkResult').style.display = 'block';
+        document.getElementById('scShareLinkCopied').style.display = 'none';
+      }
+      function scCopyShareLink() {
+        var input = document.getElementById('scShareLinkOutput');
+        input.select();
+        try {
+          navigator.clipboard.writeText(input.value).then(function () {
+            document.getElementById('scShareLinkCopied').style.display = 'inline';
+          });
+        } catch (e) {
+          document.execCommand('copy');
+          document.getElementById('scShareLinkCopied').style.display = 'inline';
+        }
+      }
+    </script>
   </div>
 
   ${adminTrendChartsHtml(d)}
@@ -4665,6 +4887,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         ${f.description ? `<p style="margin-top:10px;"><strong>על העסק:</strong> ${esc(f.description)}</p>` : ""}
         ${f.dealText ? `<p style="margin-top:6px;"><strong>ההטבה:</strong> ${esc(f.dealText)}</p>` : ""}
         ${(f.galleryPhotos && f.galleryPhotos.length) ? `<div class="gallery-scroll" style="margin-top:10px;">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />`).join("")}</div>` : ""}
+        ${customSubcategoryNoteHtml(f, d)}
         <div style="display:flex;gap:10px;margin-top:14px;">
           <form method="post" action="/admin/freelancer/${f.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
           <form method="post" action="/admin/freelancer/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
@@ -4792,16 +5015,41 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel">
+    <h3>📋 יצירת סקר מהמערכת</h3>
+    <p class="muted">סקר שאת יוצרת ומפרסמת בעצמך בזירה (בנפרד מהסקרים ב"מה דעתך?" שנוצרים על ידי עצמאיות) - את בוחרת למי הוא מיועד, ורק הקהל הזה יראה אותו ויוכל להצביע.</p>
+    <form method="post" action="/admin/survey">
+      <label>שאלת הסקר<input type="text" name="question" maxlength="200" required placeholder="לדוגמה: אילו נושאים תרצו שנעלה בקבוצת התמיכה הבאה?" /></label>
+      <label>תשובה 1<input type="text" name="option0" maxlength="80" required /></label>
+      <label>תשובה 2<input type="text" name="option1" maxlength="80" required /></label>
+      <label>תשובה 3 (לא חובה)<input type="text" name="option2" maxlength="80" /></label>
+      <label>תשובה 4 (לא חובה)<input type="text" name="option3" maxlength="80" /></label>
+      <label>למי הסקר מיועד?
+        <select name="audience">
+          <option value="both">גם לעצמאיות וגם ללקוחות</option>
+          <option value="freelancers">לעצמאיות בלבד</option>
+          <option value="customers">ללקוחות בלבד</option>
+        </select>
+      </label>
+      <button type="submit" class="btn" style="margin-top:10px;">פרסום הסקר בזירה</button>
+    </form>
+  </div>
+
+  <div class="panel">
     <h3>🥊 הזירה - סקרים פעילים (${allPolls.length})</h3>
     <p class="muted">הסקרים עולים לאוויר מיד עם הפרסום - אין צורך לאשר, רק למחוק אם משהו לא ראוי.</p>
-    ${allPolls.length ? allPolls.map((p) => `
+    ${allPolls.length ? allPolls.map((p) => {
+      const audienceLabel = p.audience === "freelancers" ? "עצמאיות בלבד" : p.audience === "customers" ? "לקוחות בלבד" : "עצמאיות ולקוחות";
+      const byLine = p.source === "admin"
+        ? `📋 סקר מהמערכת (${esc(audienceLabel)}) · ${new Date(p.createdAt).toLocaleDateString("he-IL")}`
+        : `מאת ${esc(p.freelancerName)} · ${new Date(p.createdAt).toLocaleDateString("he-IL")}`;
+      return `
       <div class="panel" style="background:var(--cream);">
-        <p class="muted" style="margin:0 0 4px;">מאת ${esc(p.freelancerName)} · ${new Date(p.createdAt).toLocaleDateString("he-IL")}</p>
+        <p class="muted" style="margin:0 0 4px;">${byLine}</p>
         <p style="margin:0;font-weight:700;">${esc(p.question)}</p>
         <p class="muted" style="margin:6px 0 0;">${(p.options || []).map((o) => `${esc(o.text)}: ${o.votes || 0}`).join(" · ")}</p>
         <form method="post" action="/admin/poll/${p.id}/delete" style="margin-top:10px;"><button class="btn btn-small btn-outline" type="submit">מחיקת הסקר</button></form>
       </div>
-    `).join("") : `<p class="muted">אין כרגע סקרים.</p>`}
+    `; }).join("") : `<p class="muted">אין כרגע סקרים.</p>`}
   </div>
 
   <div class="panel" data-badge="${pendingListings.length}">
@@ -5092,7 +5340,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td>${f.isAdvertised ? `<form method="post" action="/admin/freelancer/${f.id}/mark-ad-paid"><button class="btn btn-small ${f.adPaymentStatus === "paid" ? "" : "btn-outline"}" type="submit">${esc(adPaymentStatusLabel(f.adPaymentStatus))}</button></form>` : `<span class="muted">-</span>`}</td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-active"><button class="btn btn-small ${f.active === false ? "btn-outline" : ""}" type="submit">${f.active === false ? "⏸️ לא פעילה" : "🟢 פעילה"}</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/delete" onsubmit="return confirm('למחוק לצמיתות את ' + ${JSON.stringify(f.businessName || f.name)} + '? זו פעולה שלא ניתן לבטל.');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
-      </tr>`).join("")}
+      </tr>
+      ${f.customSubcategoryPending ? `<tr><td colspan="15" style="padding:0;">${customSubcategoryNoteHtml(f, d)}</td></tr>` : ""}`).join("")}
     </table></div>` : `<p class="muted">עדיין אין עצמאיות פעילות - זה יתמלא מהר ❤️</p>`}
   </div>
 
@@ -5626,6 +5875,32 @@ route("POST", "/admin/poll/:id/delete", async (req, res, params, query, ctx) => 
   redirect(res, `/admin?ok=${encodeURIComponent("הסקר הוסר.")}`);
 });
 
+// ----- סקר מהמערכת - כלי כללי לספיר ליצור סקר משלה (בשונה מהסקרים ב"מה דעתך?" שנוצרים על ידי
+// עצמאיות) ולבחור בעצמה מי תראה ותוכל להצביע בו: עצמאיות בלבד, לקוחות בלבד, או שתיהן. נשמר
+// באותו מערך d.polls כמו סקרי העצמאיות, רק עם source:"admin" ו-audience - כך שכל תשתית התצוגה,
+// ההצבעה, השיתוף והמחיקה הקיימת מתשמשת מחדש ללא שכפול קוד (ר' pollVisibleToMe ב-/arena, הבדיקה
+// המקבילה ב-/arena/poll/:id וב-/arena/poll/:id/vote, ו-pollCardHtml שמציג תג "סקר מהמערכת"
+// במקום "מאת <עצמאית>" עבור סקרים כאלה). בשונה מסקר של עצמאית - אין כאן הגבלה של סקר אחד לשבוע.
+route("POST", "/admin/survey", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const question = clip((body.get("question") || "").trim(), 200);
+  const optionTexts = [0, 1, 2, 3].map((i) => clip((body.get(`option${i}`) || "").trim(), 80)).filter(Boolean);
+  const audience = ["freelancers", "customers", "both"].includes(body.get("audience")) ? body.get("audience") : "both";
+  if (!question || optionTexts.length < 2) {
+    return redirect(res, `/admin?ok=${encodeURIComponent("נא למלא שאלה ולפחות שתי תשובות אפשריות לסקר.")}`);
+  }
+  const id = db.nextId("poll");
+  d.polls = d.polls || [];
+  d.polls.push({
+    id, source: "admin", audience, freelancerId: null, freelancerName: "SheCan", question,
+    options: optionTexts.map((t) => ({ text: t, votes: 0 })), voters: [], createdAt: new Date().toISOString(),
+  });
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הסקר פורסם בזירה!")}`);
+});
+
 route("POST", "/admin/story-question", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
@@ -6126,6 +6401,34 @@ route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx
   </div>
   `;
   sendHtml(res, 200, page({ title: `תמונות - ${f.businessName || f.name}`, session: ctx.session, body, query, noSidebars: true }));
+});
+
+// Both routes back the customSubcategoryNoteHtml highlight box - rename actually edits the
+// shared subcategory record (so a typo fix applies everywhere it's used, not just for this one
+// freelancer), while dismiss just clears the flag without changing anything. Either way the
+// flag is cleared, since both mean "Sapir has looked at this."
+route("POST", "/admin/freelancer/:id/subcategory-note/rename", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const f = d.freelancers.find((x) => x.id === params.id);
+  const newName = clip((body.get("newName") || "").trim(), 80);
+  if (f && newName) {
+    const category = d.categories.find((c) => c.id === f.categoryId);
+    const sub = category && (category.subcategories || []).find((s) => s.id === f.subcategoryId);
+    if (sub) sub.name = newName;
+    f.customSubcategoryPending = false;
+    db.save();
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("שם תת-התחום עודכן.")}`);
+});
+
+route("POST", "/admin/freelancer/:id/subcategory-note/dismiss", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (f) { f.customSubcategoryPending = false; db.save(); }
+  redirect(res, `/admin?ok=${encodeURIComponent("סומן כנבדק.")}`);
 });
 
 route("POST", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx) => {
@@ -6769,7 +7072,15 @@ route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
 // browsing. Kept as a simple hit counter (not unique visitors) to match how per-freelancer
 // f.viewCount already works elsewhere in the app - same trade-off, same reasoning.
 const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/icons/", "/push/"];
-const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/logout"]);
+// /support/poll: found and fixed 2026-08-25, while answering Sapir's question about whether the
+// visit numbers could be inflated. The support chat's own live-update script (see GET /support)
+// polls this endpoint every 3 seconds for as long as that page stays open - each tick is a
+// normal GET, with no prefix above catching it, so it was silently counting as a full "site
+// visit" the whole time (verified directly: 10 poll ticks -> totalVisits +10). A visitor who
+// left the chat open for 10 minutes alone would have added ~200 to the count. The matching admin
+// poll (GET /admin/support/thread/:key/poll) never had this problem - it already starts with
+// "/admin", covered by the prefix list above.
+const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/logout", "/support/poll"]);
 
 // Best-effort bot/crawler detection via User-Agent, added per Sapir's request after she noticed
 // a traffic spike with no promotion behind it - the raw totalVisits/dailyVisits counters above
@@ -6824,7 +7135,71 @@ function saveSiteStatsThrottled() {
 process.on("SIGTERM", () => { try { db.save(); } catch (e) {} process.exit(0); });
 process.on("SIGINT", () => { try { db.save(); } catch (e) {} process.exit(0); });
 
-function trackSiteVisit(method, pathname, session, req) {
+// Traffic-source detection, added 2026-08-25 per Sapir's request for "מאיפה היא הגיעה - צאט,
+// מייל, ווצאפ" alongside the pure-entries counter below. Two layers, in priority order:
+//
+// 1) A tagged link (?src=whatsapp etc.) - the RELIABLE method, since she chose this over
+//    referrer-only detection precisely because WhatsApp and mail apps routinely strip the
+//    Referer header (they either open an in-app browser that sends none, or hand off to the
+//    system browser with no referrer at all) - automatic detection alone would show most of her
+//    real WhatsApp/email shares as "ישירה - לא ידוע". The admin dashboard's new "קישור לשיתוף"
+//    panel builds these tagged links for her so she never has to type the parameter by hand.
+// 2) The Referer header - a best-effort fallback for organic traffic she didn't personally tag
+//    (someone finds her on Google, or another site links to her), classified into a handful of
+//    known buckets. Same-site referrers (someone clicking a link from one SheCan page to
+//    another) are deliberately NOT attributed as an external source - that's just browsing the
+//    site, not a new arrival from somewhere else.
+//
+// Only called for the FIRST hit of a session (see isNewVisitSession in trackSiteVisit) - a
+// source is captured once per visit, not once per page.
+const KNOWN_SRC_TAGS = {
+  whatsapp: "ווטסאפ", mail: "מייל", email: "מייל", instagram: "אינסטגרם", facebook: "פייסבוק",
+  chat: "צ'אט / הודעה", sms: "SMS", other: "אחר (מתויג)",
+};
+function detectSource(query, refererHeader, hostHeader) {
+  const tagRaw = (query.get("src") || "").toLowerCase().trim();
+  if (tagRaw) {
+    const key = tagRaw === "email" ? "mail" : tagRaw;
+    if (KNOWN_SRC_TAGS[key]) return { key, label: KNOWN_SRC_TAGS[key] };
+    const custom = tagRaw.replace(/[^a-z0-9_-]/g, "").slice(0, 30);
+    if (custom) return { key: `tag:${custom}`, label: custom };
+  }
+  const ref = String(refererHeader || "").trim();
+  if (!ref) return { key: "direct", label: "ישירה / לא ידועה" };
+  try {
+    const refHost = new URL(ref).hostname.replace(/^www\./, "");
+    const selfHost = String(hostHeader || "").split(":")[0].replace(/^www\./, "");
+    if (selfHost && (refHost === selfHost || refHost.endsWith("." + selfHost))) return null; // internal navigation - not an external source
+    if (/(^|\.)google\.[a-z.]+$/.test(refHost)) return { key: "google", label: "גוגל (חיפוש)" };
+    if (/(^|\.)bing\.com$/.test(refHost)) return { key: "bing", label: "Bing (חיפוש)" };
+    if (["facebook.com", "m.facebook.com", "l.facebook.com", "lm.facebook.com"].includes(refHost)) return { key: "facebook", label: "פייסבוק" };
+    if (refHost === "instagram.com" || refHost === "l.instagram.com") return { key: "instagram", label: "אינסטגרם" };
+    if (refHost === "whatsapp.com" || refHost === "wa.me" || refHost === "web.whatsapp.com" || refHost === "api.whatsapp.com") return { key: "whatsapp", label: "ווטסאפ" };
+    if (refHost === "mail.google.com") return { key: "mail", label: "מייל (Gmail)" };
+    if (/^outlook\.(live|office|office365)\.com$/.test(refHost)) return { key: "mail", label: "מייל (Outlook)" };
+    if (refHost === "t.co" || refHost === "twitter.com" || refHost === "x.com") return { key: "twitter", label: "טוויטר / X" };
+    if (refHost === "tiktok.com") return { key: "tiktok", label: "טיקטוק" };
+    return { key: `other:${refHost}`, label: refHost };
+  } catch (e) {
+    return { key: "direct", label: "ישירה / לא ידועה" };
+  }
+}
+// Turns a stored source key back into a Hebrew label for display in the admin panel - kept as a
+// function (not stored alongside the counts) so relabeling/retranslating never requires touching
+// old data, only this lookup.
+function sourceLabel(key) {
+  if (key === "direct") return "ישירה / לא ידועה";
+  if (key === "google") return "גוגל (חיפוש)";
+  if (key === "bing") return "Bing (חיפוש)";
+  if (key === "twitter") return "טוויטר / X";
+  if (key === "tiktok") return "טיקטוק";
+  if (KNOWN_SRC_TAGS[key]) return KNOWN_SRC_TAGS[key];
+  if (key.startsWith("other:")) return key.slice(6);
+  if (key.startsWith("tag:")) return key.slice(4);
+  return key;
+}
+
+function trackSiteVisit(method, pathname, session, req, res, query) {
   if (method !== "GET") return;
   if (session && session.role === "admin") return;
   if (SITE_VISIT_SKIP_EXACT.has(pathname)) return;
@@ -6843,11 +7218,49 @@ function trackSiteVisit(method, pathname, session, req) {
     d.siteStats.realVisits = (d.siteStats.realVisits || 0) + 1;
     d.siteStats.dailyRealVisits[today] = (d.siteStats.dailyRealVisits[today] || 0) + 1;
   }
+
+  // "Pure entries" (unique visits/sessions, not page loads) - added 2026-08-25 per Sapir's
+  // request for a count of only the ARRIVAL, not "מה שקורה אח״כ" (whatever she does on the site
+  // afterward). A "session" here is marked by the scVisit cookie: the first non-skipped GET
+  // without it is a new entry; every GET after that, for as long as she keeps browsing, refreshes
+  // the cookie's 30-minute expiry WITHOUT counting again - so one long browsing session is one
+  // entry, and only a real gap of 30+ minutes of inactivity starts a new one. Same total/real
+  // split as the raw hit counters above, for the same bot-filtering reason.
+  d.siteStats.uniqueEntries = d.siteStats.uniqueEntries || 0;
+  d.siteStats.dailyUniqueEntries = d.siteStats.dailyUniqueEntries || {};
+  d.siteStats.realUniqueEntries = d.siteStats.realUniqueEntries || 0;
+  d.siteStats.dailyRealUniqueEntries = d.siteStats.dailyRealUniqueEntries || {};
+  d.siteStats.sourceCounts = d.siteStats.sourceCounts || {};
+  d.siteStats.dailySourceCounts = d.siteStats.dailySourceCounts || {};
+  const cookies = auth.parseCookies(req);
+  const VISIT_COOKIE_MAXAGE = 1800; // 30 min - matches the common "session" window (same default GA uses), easy to explain
+  if (!cookies.scVisit) {
+    const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    res.setHeader("Set-Cookie", `scVisit=${token}; HttpOnly; Path=/; Max-Age=${VISIT_COOKIE_MAXAGE}`);
+    d.siteStats.uniqueEntries += 1;
+    d.siteStats.dailyUniqueEntries[today] = (d.siteStats.dailyUniqueEntries[today] || 0) + 1;
+    if (!bot) {
+      d.siteStats.realUniqueEntries += 1;
+      d.siteStats.dailyRealUniqueEntries[today] = (d.siteStats.dailyRealUniqueEntries[today] || 0) + 1;
+      // Source is only tallied for the "real" (non-bot) side - a crawler hitting fresh every time
+      // with no cookie jar would otherwise just spam the "ישירה" bucket with noise.
+      const src = detectSource(query, req.headers["referer"], req.headers.host);
+      if (src) {
+        d.siteStats.sourceCounts[src.key] = (d.siteStats.sourceCounts[src.key] || 0) + 1;
+        d.siteStats.dailySourceCounts[today] = d.siteStats.dailySourceCounts[today] || {};
+        d.siteStats.dailySourceCounts[today][src.key] = (d.siteStats.dailySourceCounts[today][src.key] || 0) + 1;
+      }
+    }
+  } else {
+    // Same visit, later page - just slide the expiry so a long session doesn't lapse mid-browse.
+    res.setHeader("Set-Cookie", `scVisit=${cookies.scVisit}; HttpOnly; Path=/; Max-Age=${VISIT_COOKIE_MAXAGE}`);
+  }
+
   // Per-registered-user visit count, via the long-lived scUid identity cookie (see
   // identityCookie() above) - works whether or not she's currently logged in, as long as she's
   // logged in at least once on this browser before. Silently no-ops for anyone without the
   // cookie (never logged in, or a plain anonymous visitor) - nothing to attribute the visit to.
-  const scUid = (auth.parseCookies(req).scUid || "").split(":");
+  const scUid = (cookies.scUid || "").split(":");
   if (scUid.length === 2) {
     const [uRole, uId] = scUid;
     const list = uRole === "customer" ? d.customers : uRole === "freelancer" ? d.freelancers : null;
@@ -6863,7 +7276,7 @@ const server = http.createServer(async (req, res) => {
     const { session, sid } = getSession(req);
     const match = routes.find((r) => r.method === req.method && r.regex.test(u.pathname));
     if (!match) return sendHtml(res, 404, page({ title: "לא נמצא", session, body: "<p>הדף הזה לא קיים - בואי נחזור <a href=\"/\">הביתה</a> ❤️</p>" }));
-    trackSiteVisit(req.method, u.pathname, session, req);
+    trackSiteVisit(req.method, u.pathname, session, req, res, u.searchParams);
     const m = u.pathname.match(match.regex);
     const params = {};
     match.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
