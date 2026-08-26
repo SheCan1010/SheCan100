@@ -1523,7 +1523,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update77 - 2026-08-26 - נוסף 'מאגרי קהילה' לאתר (8 סוגים: גמ\"חים/השכרות/סדנאות/חוגים/מסירות/מכירת יד 2 (חדש)/מורות פרטיות/המלצות מוצרים) + כפתור ניווט 'קהילת SheCan' (#5d5e56) + שיתוף קישור לחפץ במסירות/מכירות";
+const DEPLOY_MARKER = "update78 - 2026-08-26 - תג 'חדש' ליד כפתור הזירה בתפריט כשיש סקר מהמערכת שעדיין לא נצפה, מותאם אישית לפי קהל היעד (עצמאיות/לקוחות)";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -2527,6 +2527,16 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
   const currentFreelancer = isFreelancer ? d.freelancers.find((f) => f.id === ctx.session.id) : null;
   const origin = getOrigin(req);
 
+  // Record that this account visited the arena just now, so the "🥊 הזירה" nav badge (see
+  // nav() in layout.js) knows not to flag any poll published before this moment as "new" for
+  // her anymore. Only logged-in customers/freelancers get tracked - matches every other
+  // account-based badge on the site (unread chat, admin pending count, etc).
+  if (isCustomer || isFreelancer) {
+    d.arenaLastSeen = d.arenaLastSeen || {};
+    d.arenaLastSeen[`${ctx.session.role}:${ctx.session.id}`] = new Date().toISOString();
+    db.save();
+  }
+
   // ---- Section 1: אתן שואלות, המומחיות עונות ----
   const catOptions = d.categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
   const approvedQuestions = (d.arenaQuestions || []).filter((q) => q.status === "approved").slice().reverse();
@@ -2965,6 +2975,15 @@ route("GET", "/arena/poll/:id", async (req, res, params, query, ctx) => {
     const isFreelancerHere = requireRole(ctx.session, "freelancer");
     const visible = poll.audience === "freelancers" ? isFreelancerHere : poll.audience === "customers" ? isCustomerHere : (isCustomerHere || isFreelancerHere);
     if (!visible) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הסקר הזה.</p>` }));
+    // She reached this specific poll directly (e.g. a shared link) - counts as "seen" just
+    // like visiting the main /arena listing, so the nav badge (see nav() in layout.js) clears.
+    const isCustomerSeen = requireRole(ctx.session, "customer");
+    const isFreelancerSeen = requireRole(ctx.session, "freelancer");
+    if (isCustomerSeen || isFreelancerSeen) {
+      d.arenaLastSeen = d.arenaLastSeen || {};
+      d.arenaLastSeen[`${ctx.session.role}:${ctx.session.id}`] = new Date().toISOString();
+      db.save();
+    }
   }
   const origin = getOrigin(req);
   const voterKey = arenaVoterKeyReadOnly(req, ctx);

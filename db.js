@@ -234,6 +234,12 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // (ר' pollVisibleToMe ב-server.js). סקר של עצמאית (ללא source, או source !== "admin")
     // ממשיך להיות גלוי לכולן כרגיל, ואין הגבלת "סקר אחד בשבוע" לספיר.
     polls: [],
+    // "כניסה אחרונה לזירה" (נוסף 2026-08-26) - מתי לקוחה/עצמאית מחוברת ביקרה לאחרונה ב-/arena,
+    // כדי שנוכל לסמן לה תג "חדש" ליד כפתור "🥊 הזירה" בתפריט כשיש סקר מהמערכת (source:"admin")
+    // שמיועד לקהל שלה ופורסם אחרי הביקור האחרון שלה - בלי לדרוש שהיא כבר תפתח את הזירה כדי לדעת
+    // שיש שם משהו חדש. מפתח: "customer:<id>" או "freelancer:<id>", ערך: ISO timestamp.
+    // אורחת לא מחוברת לא מקבלת תג (בדיוק כמו שאר תגי ה"חדש" באתר, הכל מבוסס-חשבון).
+    arenaLastSeen: {},
     // "מודליסטיות נדרשות" - עצמאית מפרסמת בקשה לעזרה ממודליסטית/תופרת (פרטים/מיקום/מתי),
     // כל גולשת (לקוחה או לא) יכולה לצפות ולפנות אליה דרך מערכת ההודעות הקיימת
     // (POST /freelancer/:id/message, כמו בכל פנייה אחרת לעצמאית). הבקשה מוסרת רק ע"י
@@ -336,6 +342,7 @@ function migrate(data) {
   if (!Array.isArray(data.arenaQuestions)) { data.arenaQuestions = []; changed = true; }
   if (!Array.isArray(data.consultations)) { data.consultations = []; changed = true; }
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
+  if (!data.arenaLastSeen || typeof data.arenaLastSeen !== "object") { data.arenaLastSeen = {}; changed = true; }
   if (!Array.isArray(data.patternmakerRequests)) { data.patternmakerRequests = []; changed = true; }
   if (!Array.isArray(data.communityListings)) { data.communityListings = []; changed = true; }
   (data.communityListings || []).forEach((c) => {

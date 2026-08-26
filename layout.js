@@ -69,6 +69,23 @@ function badge(count) {
   return count > 0 ? `<span class="unread-badge">${count > 9 ? "9+" : count}</span>` : "";
 }
 
+// How many admin-published "system surveys" (d.polls with source:"admin") are new for this
+// account since she last visited the arena - i.e. published after her arenaLastSeen timestamp
+// (see GET /arena and GET /arena/poll/:id in server.js, which stamp that timestamp) AND
+// targeted at her role's audience. Same audience logic as pollVisibleToMe in server.js, kept in
+// sync by hand since layout.js can't require server.js (circular require). Freelancer-created
+// polls aren't counted here - only Sapir's own system surveys, since those are the ones she'd
+// want to make sure get noticed. Anonymous visitors and admin's own session never get a badge.
+function arenaUnseenPollCount(session) {
+  if (!session || (session.role !== "customer" && session.role !== "freelancer")) return 0;
+  const d = db.load();
+  const key = `${session.role}:${session.id}`;
+  const lastSeen = (d.arenaLastSeen || {})[key];
+  const lastSeenAt = lastSeen ? new Date(lastSeen).getTime() : 0;
+  const audienceMatches = (p) => p.audience === "both" || p.audience === (session.role === "freelancer" ? "freelancers" : "customers");
+  return (d.polls || []).filter((p) => p.source === "admin" && audienceMatches(p) && new Date(p.createdAt).getTime() > lastSeenAt).length;
+}
+
 // Green version of badge() (vs. the red "unread" one above), used only on the admin's own
 // "ניהול" nav link - a quick, always-visible signal that something is waiting on her, without
 // needing to actually open /admin to find out. Per explicit request.
@@ -136,7 +153,7 @@ function nav(session) {
           <a class="nav-link" href="/magazine">מגזין SheCan</a>
           <a class="nav-link nav-link-community" href="/community">קהילת SheCan</a>
           <a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>
-          <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה</a>
+          <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${badge(arenaUnseenPollCount(session))}</a>
           <a class="nav-link" href="/patternmakers">✂️ מודליסטיות</a>
         </nav>
         <nav class="nav-side" aria-label="חשבון">${right}</nav>
