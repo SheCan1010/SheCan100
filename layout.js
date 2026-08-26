@@ -95,7 +95,8 @@ function pendingAdminCount() {
   const openSupportMessages = Object.values(supportByKey).filter((msgs) => msgs.some((m) => m.from === "asker" && !m.read)).length;
   let pendingListings = 0;
   d.freelancers.forEach((f) => (f.additionalListings || []).forEach((l) => { if (l.status === "pending") pendingListings++; }));
-  return pendingFreelancers + pendingReviews + pendingStories + pendingArenaQuestions + pendingConsultations + unreadMessages + openSupportMessages + pendingListings;
+  const pendingCommunityListings = (d.communityListings || []).filter((c) => c.status === "pending").length;
+  return pendingFreelancers + pendingReviews + pendingStories + pendingArenaQuestions + pendingConsultations + unreadMessages + openSupportMessages + pendingListings + pendingCommunityListings;
 }
 
 function nav(session) {
@@ -133,6 +134,7 @@ function nav(session) {
           <a class="nav-link" href="/deals">הטבות SheCan</a>
           <a class="nav-link" href="/stories">SheCan Stories</a>
           <a class="nav-link" href="/magazine">מגזין SheCan</a>
+          <a class="nav-link nav-link-community" href="/community">קהילת SheCan</a>
           <a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה</a>
           <a class="nav-link" href="/patternmakers">✂️ מודליסטיות</a>
@@ -228,6 +230,10 @@ a{color:inherit;text-decoration:none;}
 /* "יש לי עסק" - emphasized CTA within the regular nav flow. */
 .nav-link-cta{background:#fff7f0;border:1.5px solid #cfa193;color:#8a5240;font-weight:800;}
 .nav-link-cta:hover, .nav-link-cta.nav-active{background:#fbe9df;border-color:#b98576;}
+/* "קהילת SheCan" (מאגרי קהילה) - צבע ייעודי לפי בקשה מפורשת (#5d5e56, אפור-חום מושחם), כדי
+   שהכפתור יבלוט בנפרד מכל שאר קישורי הניווט - כיתוב בהיר על רקע כהה, בדיוק כמו "הזירה". */
+.nav-link-community{background:#5d5e56;border:1.5px solid #5d5e56;color:var(--white);font-weight:800;}
+.nav-link-community:hover, .nav-link-community.nav-active{background:#46473f;border-color:#46473f;color:var(--white);}
 main{min-height:60vh;padding:18px 0 60px;}
 /* Text halo: instead of one big translucent box wrapping the entire page content (which used
    to sit behind panels/cards too, even though those are already opaque), the halo now only
@@ -483,6 +489,16 @@ form .field{margin-bottom:6px;}
    pages with the sidebar sponsor/ad slots eating into that width - the card itself is a touch
    smaller (shorter photo, tighter body padding below) to keep 3-per-row comfortable. */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:14px;}
+/* "מאגרי קהילה" hub tiles - like .cat-card but roomier (icon + title + one-line description +
+   an approved-count pill), one per resource type on the /community landing page. */
+.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;}
+.hub-card{background:var(--white);border-radius:14px;padding:26px 20px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.05);}
+.hub-card:hover{background:var(--rose);color:var(--white);}
+.hub-card:hover .hub-card-count{background:rgba(255,255,255,.28);}
+.hub-card-icon{font-size:38px;display:block;margin-bottom:10px;}
+.hub-card-title{font-size:19px;font-weight:800;margin-bottom:6px;}
+.hub-card-desc{font-size:13.5px;line-height:1.5;opacity:.9;margin-bottom:12px;min-height:40px;}
+.hub-card-count{display:inline-block;font-size:12px;font-weight:700;padding:3px 12px;border-radius:12px;background:var(--rose-dark);color:#fff;}
 .card{background:var(--white);border-radius:14px;overflow:hidden;box-shadow:0 3px 14px rgba(207,161,147,.35);display:flex;flex-direction:column;}
 /* Uniform solid accent color (no more diagonal gradient) behind initials/contained logos, so
    every card without a real photo reads as one consistent color instead of a partial-looking
@@ -1612,6 +1628,29 @@ function scCopyLink(inputId){
     navigator.clipboard.writeText(input.value).catch(function(){ document.execCommand("copy"); });
   } else {
     document.execCommand("copy");
+  }
+}
+// "שיתוף קישור לחפץ" - כפתור על עמוד פריט ב"מאגרי קהילה" (מסירות/מכירת יד 2, ר' server.js),
+// שקורא לפרטים (כותרת/קישור) מ-data attributes על הכפתור עצמו במקום מוזרקים ל-onclick כטקסט
+// גולמי, כדי לא להסתבך עם מירכאות/תווים מיוחדים בכותרת הפריט. במובייל שתומך בזה נפתח תפריט
+// השיתוף המובנה של המכשיר (כולל ווטסאפ ישירות); בלי תמיכה נופל להעתקת הקישור ללוח, עם
+// אישור ויזואלי קצר על הכפתור עצמו; בלי אף אחד מהשניים (דפדפן ישן מאוד) נופל ל-prompt.
+function scShareCommunityItem(btn){
+  var title = btn.getAttribute("data-share-title") || "";
+  var url = btn.getAttribute("data-share-url") || "";
+  if (navigator.share) {
+    navigator.share({ title: title, url: url }).catch(function(){});
+    return;
+  }
+  var originalText = btn.textContent;
+  function showCopied(){
+    btn.textContent = "✓ הקישור הועתק!";
+    setTimeout(function(){ btn.textContent = originalText; }, 2200);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(showCopied).catch(function(){ window.prompt("העתיקי את הקישור:", url); });
+  } else {
+    window.prompt("העתיקי את הקישור:", url);
   }
 }
 // Free, automatic live-filtering of the currently-loaded results grid as she types or

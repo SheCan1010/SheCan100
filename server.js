@@ -539,6 +539,19 @@ function locationLabel(d, cityId, offersOnline, offersHomeVisit) {
   if (offersHomeVisit) return "מגיעה אלייך";
   return "";
 }
+// The icon paired with locationLabel() above wherever it's shown (card/profile) - added
+// 2026-08-25 per explicit request, after Sapir noticed the pin icon (📍) stayed put even when
+// the text next to it had already fallen back to "שירות אונליין"/"מגיעה אלייך" (no real city),
+// which visually contradicted itself. Mirrors locationLabel()'s exact branching so the icon can
+// never drift out of sync with the text it sits beside - a real city keeps the pin, online
+// service gets a laptop, a home-visit-only freelancer gets a car.
+function locationIcon(d, cityId, offersOnline, offersHomeVisit) {
+  const city = cityId ? cityName(d, cityId) : "";
+  if (city && city !== "-") return "📍";
+  if (offersOnline) return "💻";
+  if (offersHomeVisit) return "🚗";
+  return "📍";
+}
 // Short "X שנים בתחום" form for the card - e.g. "0-2 שנים בתחום" - the full option label
 // (used on the join form) has a parenthetical explanation like "(מתחילה את הדרך)" that's too
 // long to show on the compact card, so this drops it.
@@ -1106,6 +1119,7 @@ function freelancerCard(f, d, opts = {}) {
   const catNameStr = catName(d, f.categoryId);
   const cardFieldLabel = subcatName(d, f.categoryId, f.subcategoryId) || catNameStr;
   const cardLocation = locationLabel(d, f.cityId, f.offersOnline, f.offersHomeVisit) + (extraCats.length ? ` · גם ב${extraCats.join(", ")}` : "");
+  const cardLocationIcon = locationIcon(d, f.cityId, f.offersOnline, f.offersHomeVisit);
   // Redesigned card body (per explicit request): business name stays as-is, category sits
   // directly under it with no icon, then a thin divider in the name's own text color, then
   // location + years-in-field - that whole top block has a fixed min-height (.card-top) so
@@ -1125,7 +1139,7 @@ function freelancerCard(f, d, opts = {}) {
         <div class="card-name-divider"></div>
       </div>
       <div class="card-meta-block">
-        ${cardLocation ? `<div class="card-meta-row">📍 ${esc(cardLocation)}</div>` : ""}
+        ${cardLocation ? `<div class="card-meta-row">${cardLocationIcon} ${esc(cardLocation)}</div>` : ""}
         ${f.yearsInField ? `<div class="card-meta-row">🌱 ${esc(yearsInFieldShortLabel(f.yearsInField))}</div>` : ""}
       </div>
       ${badges.length ? `<div class="card-badges">${badges.join(" ")}</div>` : ""}
@@ -1156,6 +1170,7 @@ function additionalListingCard(f, listing, d) {
   const reviewCount = reviewCountFor(d, f.id, listing.id);
   const listingFieldLabel = subcatName(d, listing.categoryId, listing.subcategoryId) || catNameStr;
   const listingLocation = locationLabel(d, f.cityId, listing.offersOnline, listing.offersHomeVisit);
+  const listingLocationIcon = locationIcon(d, f.cityId, listing.offersOnline, listing.offersHomeVisit);
   return `
   <a class="${cardClass}" href="/freelancer/${f.id}/listing/${listing.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${listing.offersHomeVisit ? "1" : "0"}">
     ${cardPhotoHtml(null, listing.logoDataUri, listing.businessName, "card-photo")}
@@ -1166,7 +1181,7 @@ function additionalListingCard(f, listing, d) {
         <div class="card-name-divider"></div>
       </div>
       <div class="card-meta-block">
-        ${listingLocation ? `<div class="card-meta-row">📍 ${esc(listingLocation)}</div>` : ""}
+        ${listingLocation ? `<div class="card-meta-row">${listingLocationIcon} ${esc(listingLocation)}</div>` : ""}
         ${listing.yearsInField ? `<div class="card-meta-row">🌱 ${esc(yearsInFieldShortLabel(listing.yearsInField))}</div>` : ""}
       </div>
       ${badges.length ? `<div class="card-badges">${badges.join(" ")}</div>` : ""}
@@ -1508,7 +1523,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update75 - 2026-08-25 - נוספה ספירת \"כניסות טהורות\" לאתר (ביקור אחד = כניסה אחת, לא כל טעינת עמוד) + מעקב מקור הגעה (ווטסאפ/מייל/אינסטגרם/פייסבוק/צ'אט/גוגל וכו) עם קישורים מתויגים לשיתוף";
+const DEPLOY_MARKER = "update77 - 2026-08-26 - נוסף 'מאגרי קהילה' לאתר (8 סוגים: גמ\"חים/השכרות/סדנאות/חוגים/מסירות/מכירת יד 2 (חדש)/מורות פרטיות/המלצות מוצרים) + כפתור ניווט 'קהילת SheCan' (#5d5e56) + שיתוף קישור לחפץ במסירות/מכירות";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -1859,6 +1874,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const profileReviewCount = reviewCountFor(d, f.id);
   const profileAvgRating = avgRatingFor(d, f.id);
   const profileLocation = locationLabel(d, f.cityId, f.offersOnline, f.offersHomeVisit);
+  const profileLocationIcon = locationIcon(d, f.cityId, f.offersOnline, f.offersHomeVisit);
   // Redesigned profile header (per explicit request): horizontal layout, logo on the right,
   // name/years/rating/location beside it, contact details in their own column further left,
   // "נעים להכיר" removed entirely in favor of her own description text directly.
@@ -1878,7 +1894,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
           <h1 class="profile-header-name">${esc(f.businessName || f.name)}</h1>
           ${f.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(f.yearsInField))}</div>` : ""}
           ${profileAvgRating !== null ? `<div class="profile-stars-row">${starRow(Math.round(profileAvgRating))}${profileReviewCount > 5 ? `<span class="profile-review-count-small">(${profileReviewCount})</span>` : ""}</div>` : ""}
-          ${profileLocation ? `<div class="profile-header-location">📍 ${esc(profileLocation)}</div>` : ""}
+          ${profileLocation ? `<div class="profile-header-location">${profileLocationIcon} ${esc(profileLocation)}</div>` : ""}
         </div>
       </div>
       ${contactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${contactRows}</div>` : ""}
@@ -1971,6 +1987,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   const listingReviewCount = reviewCountFor(d, f.id, l.id);
   const listingAvgRating = avgRatingFor(d, f.id, l.id);
   const listingLocation = locationLabel(d, f.cityId, l.offersOnline, l.offersHomeVisit);
+  const listingLocationIcon = locationIcon(d, f.cityId, l.offersOnline, l.offersHomeVisit);
   const listingContactRows = [
     f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
     (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
@@ -1988,7 +2005,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
           <h1 class="profile-header-name">${esc(l.businessName)}</h1>
           ${l.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(l.yearsInField))}</div>` : ""}
           ${listingAvgRating !== null ? `<div class="profile-stars-row">${starRow(Math.round(listingAvgRating))}${listingReviewCount > 5 ? `<span class="profile-review-count-small">(${listingReviewCount})</span>` : ""}</div>` : ""}
-          ${listingLocation ? `<div class="profile-header-location">📍 ${esc(listingLocation)}</div>` : ""}
+          ${listingLocation ? `<div class="profile-header-location">${listingLocationIcon} ${esc(listingLocation)}</div>` : ""}
         </div>
       </div>
       ${listingContactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${listingContactRows}</div>` : ""}
@@ -2970,18 +2987,33 @@ route("GET", "/arena/poll/:id", async (req, res, params, query, ctx) => {
 // מנגנון פנייה חדש לא נבנה כאן בכוונה, רק קישור לפרופיל עם עוגן ל-#scMessageBox, כדי לעשות
 // שימוש חוזר במערכת ההודעות/הטלפון/הוואטסאפ הקיימת. הבקשה מוסרת רק ע"י מי שפרסמה אותה
 // (בדיקת בעלות freelancerId === session.id), בדיוק כמו דפוס המחיקה העצמית של הסקרים בזירה. -----
+// Redesigned 2026-08-25 per explicit request: title leads with the actual need ("דרושה
+// מודליסטית ל: <תחום>") instead of the poster's business name, a single compact meta line
+// holds תחום/מיקום/מחיר/תאריך together (was three separate lines including a big decorative
+// "✂️" photo block that added height with no real information), and the description is
+// clamped to 3 lines so one long request doesn't blow out the whole grid row - the poster's
+// name moved to a small "מאת" line near the contact button instead of being the headline.
+// r.field is optional for backward compatibility with requests posted before this field
+// existed (falls back to omitting the "ל: ..." part of the title and the 🎯 row item).
 function patternmakerCard(r, d) {
   const f = d.freelancers.find((x) => x.id === r.freelancerId);
   const name = esc(r.freelancerName || (f && (f.businessName || f.name)) || "עצמאית");
+  const field = esc(r.field || "");
+  const metaParts = [
+    field ? `🎯 ${field}` : "",
+    `📍 ${esc(r.location)}`,
+    `💰 ${esc(r.price || "ללא תשלום")}`,
+    `🗓 ${esc(r.when)}`,
+  ].filter(Boolean);
   return `
   <div class="card">
-    <div class="card-photo">✂️</div>
-    <div class="card-body">
-      <h3>${name}</h3>
-      <p class="muted" style="margin:4px 0;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)} · 💰 ${esc(r.price || "ללא תשלום")}</p>
-      <p style="margin:8px 0;">${esc(r.details)}</p>
+    <div class="card-body" style="padding:14px;">
+      <h3 style="margin:0 0 6px;font-size:16px;line-height:1.3;">✂️ דרושה מודליסטית${field ? ` ל: ${field}` : ""}</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:13px;">${metaParts.join(" · ")}</p>
+      <p style="margin:0 0 10px;font-size:14px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${esc(r.details)}</p>
+      <p class="muted" style="margin:0 0 8px;font-size:12px;">מאת: ${name}</p>
       ${f && f.status === "approved" && f.active !== false
-        ? `<a class="btn btn-small" style="margin-top:8px;text-align:center;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
+        ? `<a class="btn btn-small" style="text-align:center;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
         : `<p class="muted" style="font-size:12px;">הפרופיל שפרסם/ה את הבקשה כרגע לא זמין.</p>`}
     </div>
   </div>`;
@@ -3000,10 +3032,11 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
     <div class="panel" style="max-width:560px;margin:0 auto 24px;">
       <h3>פרסום בקשה חדשה</h3>
       <form method="post" action="/patternmakers/add">
-        <label>פרטי הבקשה<textarea name="details" required maxlength="500" placeholder="לדוגמה: צריכה עזרה בתפירת שמלות ערב, כמות קטנה..."></textarea></label>
+        <label>תחום (למה בדיוק את צריכה עזרה)<input type="text" name="field" required maxlength="80" placeholder="לדוגמה: שמלות ערב, תיקונים, בגדי ים..." /></label>
         <label>מיקום<input type="text" name="location" required maxlength="100" placeholder="לדוגמה: תל אביב, או אצלי בסטודיו" /></label>
-        <label>מתי<input type="text" name="when" required maxlength="100" placeholder="לדוגמה: בהקדם / יום שלישי בבוקר" /></label>
         <label>מחיר<input type="text" name="price" maxlength="100" placeholder="לדוגמה: 150 ₪ - או השאירי ריק ויוצג 'ללא תשלום'" /></label>
+        <label>תאריך<input type="text" name="when" required maxlength="100" placeholder="לדוגמה: בהקדם / יום שלישי בבוקר" /></label>
+        <label>תיאור<textarea name="details" required maxlength="500" placeholder="לדוגמה: צריכה עזרה בתפירת שמלות ערב, כמות קטנה..."></textarea></label>
         <button class="btn" type="submit" style="margin-top:10px;">פרסום הבקשה</button>
       </form>
     </div>
@@ -3012,8 +3045,9 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
       <h3>הבקשות שלך</h3>
       ${myRequests.map((r) => `
         <div style="border-top:1px solid var(--rose);padding:10px 0;">
+          <p style="margin:0 0 4px;font-weight:700;">✂️ דרושה מודליסטית${r.field ? ` ל: ${esc(r.field)}` : ""}</p>
           <p style="margin:0 0 4px;">${esc(r.details)}</p>
-          <p class="muted" style="margin:0 0 8px;font-size:13px;">📍 ${esc(r.location)} · 🕒 ${esc(r.when)} · 💰 ${esc(r.price || "ללא תשלום")}</p>
+          <p class="muted" style="margin:0 0 8px;font-size:13px;">📍 ${esc(r.location)} · 💰 ${esc(r.price || "ללא תשלום")} · 🗓 ${esc(r.when)}</p>
           <form method="post" action="/patternmakers/${r.id}/delete" onsubmit="return confirm('הבקשה כבר לא רלוונטית? היא תוסר לצמיתות.');">
             <button class="btn btn-small btn-outline" type="submit">הבקשה כבר לא רלוונטית - הסרה</button>
           </form>
@@ -3035,19 +3069,20 @@ route("POST", "/patternmakers/add", async (req, res, params, query, ctx) => {
   const f = d.freelancers.find((x) => x.id === ctx.session.id);
   if (!f) return redirect(res, "/patternmakers");
   const body = await readBody(req);
+  const field = clip((body.get("field") || "").trim(), 80);
   const details = clip((body.get("details") || "").trim(), 500);
   const location = clip((body.get("location") || "").trim(), 100);
   const when = clip((body.get("when") || "").trim(), 100);
   // מחיר הוא שדה חופשי ולא חובה - ברירת המחדל כשלא מולא כלום היא "ללא תשלום", לפי בקשה מפורשת.
   const price = clip((body.get("price") || "").trim(), 100) || "ללא תשלום";
-  if (!details || !location || !when) {
-    return redirect(res, `/patternmakers?err=${encodeURIComponent("נא למלא פרטים, מיקום ומתי.")}`);
+  if (!field || !details || !location || !when) {
+    return redirect(res, `/patternmakers?err=${encodeURIComponent("נא למלא תחום, פרטים, מיקום ותאריך.")}`);
   }
   const id = db.nextId("patternmakerRequest");
   d.patternmakerRequests = d.patternmakerRequests || [];
   d.patternmakerRequests.push({
     id, freelancerId: f.id, freelancerName: f.businessName || f.name,
-    details, location, when, price, createdAt: new Date().toISOString(),
+    field, details, location, when, price, createdAt: new Date().toISOString(),
   });
   db.save();
   redirect(res, `/patternmakers?ok=${encodeURIComponent("הבקשה שלך פורסמה!")}`);
@@ -3062,6 +3097,712 @@ route("POST", "/patternmakers/:id/delete", async (req, res, params, query, ctx) 
     db.save();
   }
   redirect(res, `/patternmakers?ok=${encodeURIComponent("הבקשה הוסרה.")}`);
+});
+
+// ===================== "מאגרי קהילה" (נוסף 2026-08-26) =====================
+// שמונה סוגי משאבים קהילתיים שכולם חיים באותה רשימה אחת (d.communityListings), מובחנים
+// לפי type - ר' ההערה על communityListings ב-db.js. tags הם רשימת תת-קטגוריות חופשית לכל
+// סוג, לבחירה בטופס ההוספה ולסינון בדף הדפדוף.
+const COMMUNITY_TYPE_ORDER = ["gemach", "rental", "workshop", "class", "giveaway", "sale", "tutor", "product"];
+// אפשרות תגובה (כוכבים + טקסט, ר' d.reviews עם type:"community") קיימת רק ב-3 מתוך 8
+// הסוגים - חוגים, מורות פרטיות והמלצות מוצרים - לא בשאר. נבדק גם בטופס (מוצג רק לסוגים
+// האלה) וגם ב-route עצמו (הגנה כפולה - ר' POST /community/:type/:id/review).
+const COMMUNITY_REVIEWABLE_TYPES = ["class", "tutor", "product"];
+const COMMUNITY_TYPES = {
+  gemach: {
+    label: "גמ\"חים", singular: "גמ\"ח", icon: "🤲",
+    desc: "השאלת חפצים בחינם - מציוד תינוקות ועד כלי עבודה",
+    tags: ["ציוד תינוקות", "כלי עבודה", "ביגוד", "שמלות כלה וערב", "ציוד רפואי", "ספרים ומשחקים", "אחר"],
+  },
+  rental: {
+    label: "השכרות", singular: "השכרה", icon: "📦",
+    desc: "השכרת ציוד לאירועים, קמפינג ועוד",
+    tags: ["ציוד לאירועים", "קמפינג וטיולים", "ציוד לתינוקות", "ריהוט", "אחר"],
+  },
+  workshop: {
+    label: "סדנאות", singular: "סדנה", icon: "🎨",
+    desc: "סדנאות חד-פעמיות ומעגליות בתחומים מגוונים",
+    tags: ["בישול ואפייה", "אמנות ויצירה", "העצמה אישית", "הורות", "עסקים", "אחר"],
+  },
+  class: {
+    label: "חוגים", singular: "חוג", icon: "🎯",
+    desc: "חוגים קבועים לילדים ולמבוגרים",
+    tags: ["ספורט ותנועה", "אמנות", "מוזיקה", "שפות", "מדעים וטכנולוגיה", "אחר"],
+  },
+  // "מסירות" - חפצים שכבר לא צריכים ואפשר למסור למישהי אחרת בחינם (לא הלוואה כמו גמ"ח -
+  // מסירה חד-פעמית וסופית). בשונה מ-6 הסוגים האחרים, פרסום פריט כאן דורש חשבון לקוחה מחובר
+  // (ר' route GET/POST /community/giveaway/add) כדי שהמפרסמת תוכל אחר כך להיכנס ל"אזור
+  // האישי" שלה ולהוריד את הפריט לגמרי ברגע שהוא כבר נמסר - ר' communityListing.ownerCustomerId.
+  giveaway: {
+    label: "מסירות", singular: "מסירה", icon: "🎁",
+    desc: "חפצים שכבר לא צריכות - נמסרים בחינם למי שיכולה להשתמש בהם",
+    tags: ["ריהוט", "ציוד תינוקות", "ביגוד", "מכשירי חשמל", "ספרים וצעצועים", "אחר"],
+  },
+  // "מכירת יד 2" - בדיוק כמו "מסירות" (אותה דרישת חשבון לקוחה מחובר + הורדה עצמית ברגע
+  // שהפריט כבר נמכר, ר' communityAddUrl/take-down למטה), רק עם שדה price - חפצים שרוצות
+  // למכור, לא למסור בחינם. נוסף לפי בקשה מפורשת של שפיר.
+  sale: {
+    label: "מכירת יד 2", singular: "פריט למכירה", icon: "💰",
+    desc: "חפצים שכבר לא צריכות ורוצות למכור - במחיר שהגדירה המוכרת",
+    tags: ["ריהוט", "ציוד תינוקות", "ביגוד", "מכשירי חשמל", "ספרים וצעצועים", "אחר"],
+  },
+  tutor: {
+    label: "מורות פרטיות", singular: "מורה פרטית", icon: "📚",
+    desc: "שיעורים פרטיים בכל הגילאים והתחומים",
+    tags: ["מתמטיקה", "אנגלית", "עברית", "מדעים", "מוזיקה", "שפה נוספת", "אחר"],
+  },
+  // "המלצות מוצרים" - שונה משאר הסוגים באופיו: לא שירות/פריט למסירה/השכרה עם פרטי קשר, אלא
+  // תוכן ביקורת (UGC) - מוצר שקנו, עם דגם/מחיר/איפה קנו. לכן אין כאן עיר/כתובת/טלפון/מייל
+  // ציבוריים בכלל - ר' הטיפול המותנה לפי type==="product" בטופס ההוספה ובפאנל הניהול.
+  product: {
+    label: "המלצות מוצרים", singular: "המלצה", icon: "🛍️",
+    desc: "מוצרים שנשים קנו וממליצות עליהם - למה שווה לקנות ומאיפה",
+    tags: ["אלקטרוניקה", "טיפוח ויופי", "בית ומטבח", "אופנה", "תינוקות וילדים", "אחר"],
+  },
+};
+function communityApprovedCount(d, type) {
+  return (d.communityListings || []).filter((c) => c.type === type && c.status === "approved").length;
+}
+// "הוספת פריט" מנתבת לטופס הנכון לפי סוג - "מסירות" ו"מכירת יד 2" עוברות תמיד דרך טופס
+// ייעודי שדורש חשבון לקוחה מחובר (ר' ההערה על COMMUNITY_TYPES.giveaway), כל השאר דרך הטופס
+// הפתוח הרגיל.
+function communityAddUrl(type) {
+  if (type === "giveaway") return "/community/giveaway/add";
+  if (type === "sale") return "/community/sale/add";
+  return `/community/add?type=${type}`;
+}
+// תגובות (כוכבים + טקסט) על פריט מאגר קהילה - קיים רק ב-3 סוגים (ר' COMMUNITY_REVIEWABLE_TYPES).
+// נשמר ב-d.reviews עם type:"community" ו-targetId=מזהה הפריט - אותה תשתית וכרטיס תצוגה
+// (reviewCard) בדיוק כמו ביקורות על עצמאית, כדי לא לשכפל קוד. מתפרסם מיד (status:"approved")
+// כמו ביקורות עצמאיות, עם גיבוי מחיקה-לאחר-מעשה בפאנל הניהול (אותו route גנרי POST
+// /admin/review/:id/delete). לקוחה יכולה להשאיר תגובה אחת בלבד לכל פריט - שליחה נוספת מעדכנת
+// את הקיימת (upsert), כמו ביקורת על עצמאית.
+function communityReviewsSectionHtml(c, d, ctx) {
+  const listingReviews = (d.reviews || []).filter((r) => r.type === "community" && r.targetId === c.id && r.status === "approved")
+    .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const isCustomer = requireRole(ctx.session, "customer");
+  const customer = isCustomer ? d.customers.find((cu) => cu.id === ctx.session.id) : null;
+  const myExistingReview = customer ? (d.reviews || []).find((r) => r.type === "community" && r.targetId === c.id && r.authorCustomerId === customer.id) : null;
+  return `
+  <div class="panel">
+    <h3>תגובות (${listingReviews.length})</h3>
+    ${listingReviews.length ? listingReviews.map(reviewCard).join("") : `<p class="muted">עוד אין תגובות - רוצה להיות הראשונה?</p>`}
+    <div style="margin-top:${listingReviews.length ? "18px" : "6px"};">
+      ${isCustomer ? `
+      <h4 style="margin:0 0 10px;text-align:center;">${myExistingReview ? "עדכון התגובה שלך" : "מה דעתך?"}</h4>
+      <form method="post" action="/community/${c.type}/${c.id}/review">
+        ${starInputHtml(myExistingReview ? myExistingReview.rating : 5)}
+        <textarea name="text" placeholder="ספרי לנו מה דעתך..." required style="margin-top:10px;">${esc(myExistingReview ? myExistingReview.text : "")}</textarea>
+        <button class="btn" style="margin-top:12px;" type="submit">${myExistingReview ? "עדכון התגובה" : "שליחה"}</button>
+      </form>` : `<p class="muted" style="text-align:center;"><a href="/login?role=customer&next=${encodeURIComponent(`/community/${c.type}/${c.id}`)}">מתחברות</a> או <a href="/signup">נרשמות בחינם</a> כדי להגיב.</p>`}
+    </div>
+  </div>`;
+}
+// כרטיס ברשת הדפדוף - אותו מבנה CSS בדיוק כמו freelancerCard (card/card-photo/card-body/
+// card-top/card-name-divider) כדי שהתצוגה תרגיש כמו חלק טבעי מהאתר, לא מסך נפרד. בלי תמונה
+// אמיתית מוצג אייקון גדול של הסוג (🤲/📦 וכו') בתוך card-photo, במקום ראשי תיבות - כי אלה
+// לרוב "דברים" (ציוד, שיעור) ולא "מישהי", בשונה מכרטיס עצמאית. "sale" מציג גם מחיר וגם
+// עיר/כתובת יחד (בשונה מ-"product" שמציג רק מחיר/דגם/איפה נקנה, בלי עיר בכלל).
+function communityCard(c, d) {
+  const meta = COMMUNITY_TYPES[c.type] || {};
+  const photoStyle = c.photoDataUri ? `background-image:url('${esc(c.photoDataUri)}');background-size:cover;background-position:center;` : "";
+  const locationRow = c.cityId ? `<div class="card-meta-row">📍 ${esc(cityName(d, c.cityId))}${c.address ? ` - ${esc(c.address)}` : ""}</div>` : (c.address ? `<div class="card-meta-row">📍 ${esc(c.address)}</div>` : "");
+  const metaBlock = c.type === "product"
+    ? [c.price ? `<div class="card-meta-row">💰 ${esc(c.price)}</div>` : "", c.whereBought ? `<div class="card-meta-row">🛒 ${esc(c.whereBought)}</div>` : ""].join("")
+    : c.type === "sale"
+    ? [c.price ? `<div class="card-meta-row">💰 ${esc(c.price)}</div>` : "", locationRow].join("")
+    : locationRow;
+  return `
+  <a class="card" href="/community/${c.type}/${c.id}">
+    <div class="card-photo" style="${photoStyle}">${c.photoDataUri ? "" : (meta.icon || "✨")}</div>
+    <div class="card-body">
+      <div class="card-top">
+        <h3 class="card-name">${esc(c.title)}</h3>
+        <div class="card-category">${esc(c.tag || meta.singular || "")}</div>
+        <div class="card-name-divider"></div>
+      </div>
+      <div class="card-meta-block">${metaBlock}</div>
+      <div class="card-info">
+        ${c.description ? `<div style="margin:2px 0;">${detailLine("📝", esc(c.description), "justify-content:center;")}</div>` : ""}
+        <span class="btn btn-small card-view-btn">לצפייה בפרטים</span>
+      </div>
+    </div>
+  </a>`;
+}
+
+// עמוד ריכוז - 8 האריחים, אחד לכל סוג מאגר, עם מספר הפריטים המאושרים בכל אחד.
+route("GET", "/community", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const tilesHtml = COMMUNITY_TYPE_ORDER.map((type) => {
+    const meta = COMMUNITY_TYPES[type];
+    const count = communityApprovedCount(d, type);
+    return `
+    <a class="hub-card" href="/community/${type}">
+      <span class="hub-card-icon">${meta.icon}</span>
+      <div class="hub-card-title">${esc(meta.label)}</div>
+      <div class="hub-card-desc">${esc(meta.desc)}</div>
+      <span class="hub-card-count">${count ? `${count} ${count === 1 ? meta.singular : meta.label} ${count === 1 ? "" : "פעילים"}`.trim() : "בקרוב"}</span>
+    </a>`;
+  }).join("");
+  const body = `
+  <div class="hero" style="padding-top:0;">
+    <h1 style="font-size:40px;">מאגרי הקהילה</h1>
+    <p>כל המשאבים הקהילתיים של עצמאיות ומשפחות - במקום אחד, לפי תחום.</p>
+  </div>
+  <div class="hub-grid" style="margin-bottom:30px;">${tilesHtml}</div>
+  <p style="text-align:center;"><a class="btn btn-outline btn-small" href="/community/add">רוצה להוסיף פריט למאגר? לחצי כאן</a></p>
+  `;
+  sendHtml(res, 200, page({ title: "מאגרי קהילה", session: ctx.session, body, query }));
+});
+
+// טופס הוספת פריט - פתוח לכולן, בלי צורך בהתחברות (בדומה ל"צרי קשר") - כל פריט שנשלח כאן
+// עובר לתור אישור המנהלת (status:"pending", source:"self") לפני שהוא מתפרסם.
+// חשוב: הראוט הזה חייב להירשם *לפני* GET /community/:type - אחרת "add" היה נתפס בטעות
+// כפרמטר :type (שלא קיים בו COMMUNITY_TYPES) והראוט הזה מעולם לא היה נדרש (404 קבוע).
+// "מסירות" ו"מכירת יד 2" לא חלק מהטופס הפתוח הזה - הן מנותבות לטפסים הייעודיים שלהן
+// (התחברות כלקוחה נדרשת) - ר' ההערה על COMMUNITY_TYPES.giveaway.
+const OPEN_COMMUNITY_TYPE_ORDER = COMMUNITY_TYPE_ORDER.filter((t) => t !== "giveaway" && t !== "sale");
+route("GET", "/community/add", async (req, res, params, query, ctx) => {
+  if (query.get("type") === "giveaway") return redirect(res, "/community/giveaway/add");
+  if (query.get("type") === "sale") return redirect(res, "/community/sale/add");
+  const d = db.load();
+  const preselect = OPEN_COMMUNITY_TYPE_ORDER.includes(query.get("type")) ? query.get("type") : "gemach";
+  const typeOptions = OPEN_COMMUNITY_TYPE_ORDER.map((t) => `<option value="${t}" ${preselect === t ? "selected" : ""}>${esc(COMMUNITY_TYPES[t].label)}</option>`).join("");
+  const body = `
+  <h1 class="section-title" style="margin-top:0;">הוספת פריט למאגרי הקהילה</h1>
+  <p class="muted" style="text-align:center;margin-top:-10px;">מלאי את הפרטים - הפריט יעבור אישור של צוות SheCan לפני שהוא מתפרסם, בדיוק כמו הרשמת עצמאית חדשה.</p>
+  <div class="panel narrow-panels">
+    <form method="post" action="/community/add" enctype="multipart/form-data">
+      <label>איזה סוג פריט את מוסיפה?<select name="type" id="scCommunityType" onchange="scCommunityOnTypeChange(this.value)">${typeOptions}</select></label>
+      <label id="scCommunityTitleLabel">שם הפריט / העסק<input type="text" name="title" required /></label>
+      <label>סוג מדויק<select name="tag" id="scCommunityTag"></select></label>
+      <div id="scContactFieldsGroup">
+        <label>עיר${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}</label>
+        <label>כתובת (רחוב ומספר, לא חובה)<input type="text" name="address" placeholder="למשל: הרצל 12" /></label>
+      </div>
+      <label>תיאור<textarea name="description" maxlength="500" placeholder="ספרי בקצרה על הפריט - קהל יעד, מה כלול וכו'"></textarea></label>
+      <div id="scContactFieldsGroup2">
+        <label>טלפון ליצירת קשר<input type="text" name="phone" placeholder="050-1234567" /></label>
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" style="width:auto;" /><span>אותו מספר זמין גם ב-WhatsApp</span></label>
+        <label>אימייל (לא חובה)<input type="email" name="email" /></label>
+      </div>
+      <div id="scProductFieldsGroup" style="display:none;">
+        <label>דגם (לא חובה)<input type="text" name="model" placeholder="למשל: דגם XR200" /></label>
+        <label>מחיר (לא חובה)<input type="text" name="price" placeholder="למשל: 149 ₪" /></label>
+        <label>איפה קנית (לא חובה)<input type="text" name="whereBought" placeholder="למשל: שם חנות או אתר" /></label>
+      </div>
+      <label>תמונה<input type="file" name="photo" accept="image/*" /></label>
+      <label>שמך (לצוות SheCan בלבד, לא יפורסם)<input type="text" name="contactName" /></label>
+      <button class="btn" style="width:100%;margin-top:16px;" type="submit">שליחה לאישור</button>
+    </form>
+  </div>
+  <p class="muted" style="text-align:center;">רוצה למסור או למכור חפץ שכבר לא צריכה? <a href="/community/giveaway/add" style="color:var(--rose-dark);font-weight:700;">מסירות</a> ו<a href="/community/sale/add" style="color:var(--rose-dark);font-weight:700;">מכירות יד 2</a> מתפרסמות דרך האזור האישי שלך כלקוחה - כדי שתוכלי אחר כך לסמן שהפריט כבר נמסר/נמכר.</p>
+  <script>
+    var scCommunityTagsByType = ${JSON.stringify(Object.fromEntries(OPEN_COMMUNITY_TYPE_ORDER.map((t) => [t, COMMUNITY_TYPES[t].tags])))};
+    function scCommunityUpdateTags(type) {
+      var sel = document.getElementById('scCommunityTag');
+      sel.innerHTML = (scCommunityTagsByType[type] || []).map(function(t){ return '<option value="' + t + '">' + t + '</option>'; }).join('');
+    }
+    function scCommunityOnTypeChange(type) {
+      scCommunityUpdateTags(type);
+      var isProduct = (type === 'product');
+      document.getElementById('scContactFieldsGroup').style.display = isProduct ? 'none' : '';
+      document.getElementById('scContactFieldsGroup2').style.display = isProduct ? 'none' : '';
+      document.getElementById('scProductFieldsGroup').style.display = isProduct ? '' : 'none';
+      var titleLabel = document.getElementById('scCommunityTitleLabel');
+      var titleInput = titleLabel.querySelector('input');
+      titleLabel.firstChild.textContent = isProduct ? 'שם המוצר' : 'שם הפריט / העסק';
+      titleInput.placeholder = isProduct ? 'למשל: שואב אבק רובוטי' : '';
+    }
+    scCommunityOnTypeChange(document.getElementById('scCommunityType').value);
+  </script>
+  `;
+  sendHtml(res, 200, page({ title: "הוספת פריט למאגרי קהילה", session: ctx.session, body, query }));
+});
+
+// טופס "מסירות" - אחד משני הסוגים (עם "מכירת יד 2" למטה) שדורשים חשבון לקוחה מחובר (ולא
+// פתוחים לכולן כמו השאר), כי המפרסמת צריכה להיות מסוגלת אחר כך להיכנס ל"אזור האישי" שלה
+// (GET /account) ולהוריד את הפריט בעצמה ברגע שהוא כבר נמסר - ר' route DELETE-like למטה
+// (POST /account/community/:id/take-down).
+// חשוב: הראוטים האלה חייבים להירשם *לפני* GET /community/:type/:id - אחרת "/community/
+// giveaway/add" היה נתפס בטעות כ-:type="giveaway" + :id="add" (בדיוק כמו הבאג עם /community/add
+// שתוקן למעלה).
+route("GET", "/community/giveaway/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/giveaway/add")}`);
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  const meta = COMMUNITY_TYPES.giveaway;
+  const tagOptions = meta.tags.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  const body = `
+  <h1 class="section-title" style="margin-top:0;">${meta.icon} מסירת חפץ</h1>
+  <p class="muted" style="text-align:center;margin-top:-10px;">${esc(meta.desc)} - הפריט יעבור אישור של צוות SheCan לפני שהוא מתפרסם. ברגע שהחפץ כבר נמסר, תוכלי להוריד אותו בעצמך מה<a href="/account">אזור האישי</a> שלך.</p>
+  <div class="panel narrow-panels">
+    <form method="post" action="/community/giveaway/add" enctype="multipart/form-data">
+      <label>מה מוסרים?<input type="text" name="title" required placeholder="למשל: עגלת תינוק" /></label>
+      <label>סוג מדויק<select name="tag">${tagOptions}</select></label>
+      <label>עיר${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}</label>
+      <label>כתובת (רחוב ומספר, לא חובה)<input type="text" name="address" placeholder="למשל: הרצל 12" /></label>
+      <label>תיאור<textarea name="description" maxlength="500" placeholder="מצב החפץ, למה מתאים וכו'"></textarea></label>
+      <label>טלפון ליצירת קשר (לא חובה)<input type="text" name="phone" placeholder="050-1234567" /></label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" style="width:auto;" /><span>אותו מספר זמין גם ב-WhatsApp</span></label>
+      <label>אימייל ליצירת קשר<input type="email" name="email" value="${esc(customer.email)}" /></label>
+      <label>תמונה של החפץ<input type="file" name="photo" accept="image/*" /></label>
+      <button class="btn" style="width:100%;margin-top:16px;" type="submit">שליחה לאישור</button>
+    </form>
+  </div>
+  `;
+  sendHtml(res, 200, page({ title: "מסירת חפץ", session: ctx.session, body, query }));
+});
+
+route("POST", "/community/giveaway/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/giveaway/add")}`);
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/community/giveaway/add?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי שוב.")}`);
+  const title = (body.get("title") || "").trim();
+  if (!title) return redirect(res, `/community/giveaway/add?err=${encodeURIComponent("צריך למלא לפחות מה מוסרים.")}`);
+  const d = db.load();
+  const customer = d.customers.find((cu) => cu.id === ctx.session.id);
+  const c = {
+    id: db.nextId("communityListing"),
+    type: "giveaway", title,
+    tag: body.get("tag") || "",
+    cityId: body.get("city") || "",
+    address: clip((body.get("address") || "").trim(), 200),
+    description: clip(body.get("description"), 500),
+    phone: (body.get("phone") || "").trim(),
+    hasWhatsapp: body.get("hasWhatsapp") === "1",
+    email: (body.get("email") || "").trim() || customer.email,
+    photoDataUri: fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES),
+    contactName: customer.name || "",
+    ownerCustomerId: customer.id,
+    source: "self",
+    status: "pending",
+    viewCount: 0,
+    createdAt: new Date().toISOString(),
+    approvedAt: null,
+  };
+  d.communityListings.push(c);
+  db.save();
+  redirect(res, `/account?ok=${encodeURIComponent("תודה! הפריט נשלח לאישור, ויופיע כאן ברשימת המסירות שלך.")}`);
+});
+
+// טופס "מכירת יד 2" - כמו "מסירות" למעלה (חשבון לקוחה מחובר, הורדה עצמית מהאזור האישי -
+// ר' ההערה שם), בתוספת שדה price יחיד. נוסף לפי בקשה מפורשת: "כמו המסירה רק עם מחיר".
+route("GET", "/community/sale/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/sale/add")}`);
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  const meta = COMMUNITY_TYPES.sale;
+  const tagOptions = meta.tags.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  const body = `
+  <h1 class="section-title" style="margin-top:0;">${meta.icon} מכירת חפץ</h1>
+  <p class="muted" style="text-align:center;margin-top:-10px;">${esc(meta.desc)} - הפריט יעבור אישור של צוות SheCan לפני שהוא מתפרסם. ברגע שהחפץ כבר נמכר, תוכלי להוריד אותו בעצמך מה<a href="/account">אזור האישי</a> שלך.</p>
+  <div class="panel narrow-panels">
+    <form method="post" action="/community/sale/add" enctype="multipart/form-data">
+      <label>מה מוכרים?<input type="text" name="title" required placeholder="למשל: עגלת תינוק" /></label>
+      <label>סוג מדויק<select name="tag">${tagOptions}</select></label>
+      <label>מחיר<input type="text" name="price" required placeholder="למשל: 150 ₪" /></label>
+      <label>עיר${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}</label>
+      <label>כתובת (רחוב ומספר, לא חובה)<input type="text" name="address" placeholder="למשל: הרצל 12" /></label>
+      <label>תיאור<textarea name="description" maxlength="500" placeholder="מצב החפץ, למה מתאים וכו'"></textarea></label>
+      <label>טלפון ליצירת קשר (לא חובה)<input type="text" name="phone" placeholder="050-1234567" /></label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" style="width:auto;" /><span>אותו מספר זמין גם ב-WhatsApp</span></label>
+      <label>אימייל ליצירת קשר<input type="email" name="email" value="${esc(customer.email)}" /></label>
+      <label>תמונה של החפץ<input type="file" name="photo" accept="image/*" /></label>
+      <button class="btn" style="width:100%;margin-top:16px;" type="submit">שליחה לאישור</button>
+    </form>
+  </div>
+  `;
+  sendHtml(res, 200, page({ title: "מכירת חפץ", session: ctx.session, body, query }));
+});
+
+route("POST", "/community/sale/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/sale/add")}`);
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/community/sale/add?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי שוב.")}`);
+  const title = (body.get("title") || "").trim();
+  const price = clip((body.get("price") || "").trim(), 50);
+  if (!title || !price) return redirect(res, `/community/sale/add?err=${encodeURIComponent("צריך למלא לפחות מה מוכרים ומחיר.")}`);
+  const d = db.load();
+  const customer = d.customers.find((cu) => cu.id === ctx.session.id);
+  const c = {
+    id: db.nextId("communityListing"),
+    type: "sale", title, price,
+    tag: body.get("tag") || "",
+    cityId: body.get("city") || "",
+    address: clip((body.get("address") || "").trim(), 200),
+    description: clip(body.get("description"), 500),
+    phone: (body.get("phone") || "").trim(),
+    hasWhatsapp: body.get("hasWhatsapp") === "1",
+    email: (body.get("email") || "").trim() || customer.email,
+    photoDataUri: fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES),
+    contactName: customer.name || "",
+    ownerCustomerId: customer.id,
+    source: "self",
+    status: "pending",
+    viewCount: 0,
+    createdAt: new Date().toISOString(),
+    approvedAt: null,
+  };
+  d.communityListings.push(c);
+  db.save();
+  redirect(res, `/account?ok=${encodeURIComponent("תודה! הפריט נשלח לאישור, ויופיע כאן ברשימת המכירות שלך.")}`);
+});
+
+// דפדוף בתוך סוג מאגר אחד (למשל /community/gemach) - סינון לפי תג ועיר, בדיוק כמו חיפוש
+// עצמאיות: סרגל סינון + רשת כרטיסים.
+route("GET", "/community/:type", async (req, res, params, query, ctx) => {
+  const meta = COMMUNITY_TYPES[params.type];
+  if (!meta) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, הסוג הזה לא קיים.</p>` }));
+  const d = db.load();
+  const tag = query.get("tag") || "";
+  const cityId = query.get("city") || "";
+  const q = (query.get("q") || "").trim().toLowerCase();
+  let items = (d.communityListings || []).filter((c) => c.type === params.type && c.status === "approved");
+  if (tag) items = items.filter((c) => c.tag === tag);
+  if (cityId) items = items.filter((c) => c.cityId === cityId);
+  if (q) items = items.filter((c) => `${c.title} ${c.description || ""}`.toLowerCase().includes(q));
+  items = items.slice().sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
+  const tagOptions = meta.tags.map((t) => `<option value="${esc(t)}" ${tag === t ? "selected" : ""}>${esc(t)}</option>`).join("");
+  const body = `
+  <p class="muted" style="text-align:center;"><a href="/community" style="color:var(--rose-dark);font-weight:700;">מאגרי קהילה</a> › ${esc(meta.label)}</p>
+  <h1 class="section-title" style="margin-top:2px;">${esc(meta.label)}</h1>
+  <p class="muted" style="text-align:center;margin-top:-10px;">${esc(meta.desc)}</p>
+  <form class="search-box" method="get" action="/community/${params.type}">
+    <div class="search-row"><input type="text" name="q" value="${esc(query.get("q") || "")}" placeholder="חפשי לפי שם או תיאור" /></div>
+    <div class="search-row" style="margin-top:10px;">
+      <select name="tag"><option value="">כל הסוגים</option>${tagOptions}</select>
+      ${cityAutocompleteHtml({ fieldName: "city", selectedId: cityId, selectedName: cityId ? cityName(d, cityId) : "", placeholder: "מאיזו עיר?" })}
+      <button class="btn" type="submit">חפשי</button>
+    </div>
+  </form>
+  ${items.length ? `<div class="grid">${items.map((c) => communityCard(c, d)).join("")}</div>` : `<p class="muted" style="text-align:center;">עדיין אין פריטים תואמים - ${meta.label === "מורות פרטיות" ? "" : "אולי "}את יכולה <a href="${communityAddUrl(params.type)}" style="color:var(--rose-dark);font-weight:700;">להיות הראשונה להוסיף</a>.</p>`}
+  `;
+  sendHtml(res, 200, page({ title: meta.label, session: ctx.session, body, query }));
+});
+
+// עמוד פריט בודד - בנוי כמו עמוד פרופיל עצמאית (כותרת/תג/עיר, ואז פרטי יצירת קשר). "מסירות"
+// ו"מכירת יד 2" מקבלות גם כפתור "שיתוף קישור לחפץ" (ר' scShareCommunityItem ב-layout.js),
+// לפי בקשה מפורשת - שאר הסוגים לא, כדי לא להוסיף כפתור שלא התבקש.
+route("GET", "/community/:type/:id", async (req, res, params, query, ctx) => {
+  const meta = COMMUNITY_TYPES[params.type];
+  const d = db.load();
+  const c = meta && (d.communityListings || []).find((x) => x.id === params.id && x.type === params.type && x.status === "approved");
+  if (!c) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הפריט הזה.</p>` }));
+  c.viewCount = (c.viewCount || 0) + 1;
+  saveSiteStatsThrottled();
+  // "המלצות מוצרים" מציגות דגם/מחיר/איפה קנו במקום פרטי קשר - ר' ההערה על
+  // COMMUNITY_TYPES.product. "מכירת יד 2" מציגה מחיר בנוסף לפרטי קשר (זו עדיין עסקה בין שתי
+  // אנשים). שאר הסוגים מציגים טלפון/WhatsApp/מייל כרגיל.
+  const contactRows = c.type === "product"
+    ? [
+        c.model ? `<div class="profile-detail-row"><span class="profile-detail-icon">🏷️</span><span>דגם: ${esc(c.model)}</span></div>` : "",
+        c.price ? `<div class="profile-detail-row"><span class="profile-detail-icon">💰</span><span>${esc(c.price)}</span></div>` : "",
+        c.whereBought ? `<div class="profile-detail-row"><span class="profile-detail-icon">🛒</span><span>נקנה ב: ${esc(c.whereBought)}</span></div>` : "",
+      ].filter(Boolean).join("")
+    : [
+        c.type === "sale" && c.price ? `<div class="profile-detail-row"><span class="profile-detail-icon">💰</span><span>${esc(c.price)}</span></div>` : "",
+        c.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(c.phone)}">${esc(c.phone)}</a></div>` : "",
+        (c.hasWhatsapp && c.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(c.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
+        c.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="mailto:${esc(c.email)}">${esc(c.email)}</a></div>` : "",
+      ].filter(Boolean).join("");
+  const shareUrl = `${getOrigin(req)}/community/${c.type}/${c.id}`;
+  const shareButtonHtml = (c.type === "giveaway" || c.type === "sale")
+    ? `<p style="text-align:center;margin-top:14px;"><button type="button" class="btn btn-small btn-outline" data-share-title="${esc(c.title)}" data-share-url="${esc(shareUrl)}" onclick="scShareCommunityItem(this)">📤 שיתוף קישור לחפץ</button></p>`
+    : "";
+  const body = `
+  <p class="muted" style="text-align:center;"><a href="/community" style="color:var(--rose-dark);font-weight:700;">מאגרי קהילה</a> › <a href="/community/${params.type}" style="color:var(--rose-dark);font-weight:700;">${esc(meta.label)}</a> › ${esc(c.title)}</p>
+  <div class="panel profile-detail profile-merged">
+    <div class="profile-header-row">
+      <div class="profile-header-namelogo">
+        ${c.photoDataUri
+          ? `<div class="profile-header-logo" style="background-image:url('${esc(c.photoDataUri)}');background-size:cover;background-position:center;"></div>`
+          : `<div class="profile-header-logo">${meta.icon}</div>`}
+        <div class="profile-header-info">
+          <h1 class="profile-header-name">${esc(c.title)}</h1>
+          ${c.tag ? `<div class="profile-header-years">🏷️ ${esc(c.tag)}</div>` : ""}
+          ${c.cityId ? `<div class="profile-header-location">📍 ${esc(cityName(d, c.cityId))}${c.address ? ` - ${esc(c.address)}` : ""}</div>` : (c.address ? `<div class="profile-header-location">📍 ${esc(c.address)}</div>` : "")}
+        </div>
+      </div>
+      ${contactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${contactRows}</div>` : ""}
+    </div>
+    ${c.description ? `<p class="profile-header-desc">${esc(c.description)}</p>` : ""}
+  </div>
+  ${shareButtonHtml}
+  ${COMMUNITY_REVIEWABLE_TYPES.includes(params.type) ? communityReviewsSectionHtml(c, d, ctx) : ""}
+  <p style="text-align:center;"><a class="btn btn-outline btn-small" href="${communityAddUrl(params.type)}">הוספת פריט דומה למאגר</a></p>
+  `;
+  sendHtml(res, 200, page({ title: c.title, session: ctx.session, body, query }));
+});
+
+route("POST", "/community/:type/:id/review", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent(`/community/${params.type}/${params.id}`)}`);
+  // הגנה כפולה: גם הטופס וגם ה-route בודקים ש-3 הסוגים האלה בלבד ניתנים לתגובה - ר' ההערה
+  // על COMMUNITY_REVIEWABLE_TYPES.
+  if (!COMMUNITY_REVIEWABLE_TYPES.includes(params.type)) return redirect(res, `/community/${params.type}/${params.id}`);
+  const d = db.load();
+  const c = (d.communityListings || []).find((x) => x.id === params.id && x.type === params.type && x.status === "approved");
+  const backUrl = `/community/${params.type}/${params.id}`;
+  if (!c) return redirect(res, "/community");
+  const body = await readBody(req);
+  const text = (body.get("text") || "").trim();
+  if (!text) return redirect(res, `${backUrl}?err=${encodeURIComponent("צריך לכתוב כמה מילים.")}`);
+  const customer = d.customers.find((cu) => cu.id === ctx.session.id);
+  const rating = Math.min(5, Math.max(1, Math.round(Number(body.get("rating")) || 5)));
+  const existing = (d.reviews || []).find((r) => r.type === "community" && r.targetId === c.id && r.authorCustomerId === customer.id);
+  if (existing) {
+    existing.rating = rating;
+    existing.text = text;
+    existing.updatedAt = new Date().toISOString();
+  } else {
+    d.reviews.push({
+      id: db.nextId("review"), type: "community", targetId: c.id, communityType: params.type,
+      authorCustomerId: customer.id, authorName: customer.name, isAnonymous: false,
+      rating, text, photoDataUri: null, status: "approved", createdAt: new Date().toISOString(),
+      response: "", responseDate: null,
+    });
+  }
+  db.save();
+  redirect(res, `${backUrl}?ok=${encodeURIComponent(existing ? "התגובה שלך עודכנה!" : "תודה על התגובה!")}`);
+});
+
+route("POST", "/community/add", async (req, res, params, query, ctx) => {
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/community/add?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי שוב.")}`);
+  const type = COMMUNITY_TYPES[body.get("type")] ? body.get("type") : null;
+  const title = (body.get("title") || "").trim();
+  if (!type || !title) return redirect(res, `/community/add?err=${encodeURIComponent("צריך למלא לפחות סוג ושם.")}`);
+  // "מסירות" ו"מכירת יד 2" לא עוברות דרך הטופס הפתוח הזה - הן דורשות חשבון לקוחה מחובר
+  // (ר' ההערה על COMMUNITY_TYPES.giveaway למעלה), כדי שהמפרסמת תוכל אחר כך להוריד את הפריט
+  // בעצמה.
+  if (type === "giveaway") return redirect(res, "/community/giveaway/add");
+  if (type === "sale") return redirect(res, "/community/sale/add");
+  const d = db.load();
+  const c = {
+    id: db.nextId("communityListing"),
+    type, title,
+    tag: body.get("tag") || "",
+    cityId: body.get("city") || "",
+    address: clip((body.get("address") || "").trim(), 200),
+    description: clip(body.get("description"), 500),
+    phone: (body.get("phone") || "").trim(),
+    hasWhatsapp: body.get("hasWhatsapp") === "1",
+    email: (body.get("email") || "").trim(),
+    photoDataUri: fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES),
+    contactName: (body.get("contactName") || "").trim(),
+    // שלושת השדות האלה רלוונטיים רק ל-type:"product" (ר' ההערה על COMMUNITY_TYPES.product) -
+    // נשמרים ריקים בכל שאר הסוגים כי הטופס לא מציג אותם שם.
+    model: clip((body.get("model") || "").trim(), 100),
+    price: clip((body.get("price") || "").trim(), 50),
+    whereBought: clip((body.get("whereBought") || "").trim(), 150),
+    ownerCustomerId: null,
+    source: "self",
+    status: "pending",
+    viewCount: 0,
+    createdAt: new Date().toISOString(),
+    approvedAt: null,
+  };
+  d.communityListings.push(c);
+  db.save();
+  redirect(res, `/community/add?ok=${encodeURIComponent("תודה! הפריט נשלח לאישור ויתפרסם בקרוב.")}`);
+});
+
+// ----- Admin: ניהול מאגרי הקהילה -----
+// לפי בקשה מפורשת של שפיר: ניהול נפרד לגמרי לכל אחד מ-8 הסוגים (לא פאנל אחד משולב), כדי
+// שיהיה אפשר לעקוב אחרי כל מאגר בנפרד - כל פאנל מכיל: ממתינים לאישור, טבלת פריטים מאושרים
+// עם מחיקה, טופס הוספה ישירה שמתפרסם מיד (source:"admin", status:"approved"), ושליטה על
+// מחיר התחום (d.settings.communityTypePricing[type]) - כל אלה בתוך panel אחד לכל type, עם
+// data-badge שסופר את הממתינים של אותו סוג בדיוק, כמו שאר הפאנלים בעמוד הניהול.
+function communityAdminPanelHtml(type, d) {
+  const meta = COMMUNITY_TYPES[type];
+  // "המלצות מוצרים" הוא תוכן/ביקורת, לא שירות עם פרטי קשר - ר' ההערה על COMMUNITY_TYPES.product.
+  // "מכירת יד 2" הוא שירות עם פרטי קשר רגילים, פלוס שדה מחיר - ר' ההערה על COMMUNITY_TYPES.sale.
+  const isProduct = type === "product";
+  const isSale = type === "sale";
+  const pending = (d.communityListings || []).filter((c) => c.type === type && c.status === "pending");
+  const approved = (d.communityListings || []).filter((c) => c.type === type && c.status === "approved")
+    .slice().sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
+  const price = (d.settings.communityTypePricing && d.settings.communityTypePricing[type]) || 0;
+  const tagOptions = meta.tags.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  return `
+  <div class="panel" data-badge="${pending.length}">
+    <h3>${meta.icon} ${esc(meta.label)} - ניהול נפרד</h3>
+    <p class="muted">${esc(meta.desc)}</p>
+
+    <h4 style="margin-top:18px;">ממתינים לאישור (${pending.length})</h4>
+    ${pending.length ? pending.map((c) => `
+      <div class="panel" style="background:var(--cream);">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+          ${c.photoDataUri ? `<img src="${esc(c.photoDataUri)}" alt="" style="width:90px;height:90px;object-fit:cover;border-radius:10px;flex-shrink:0;" />` : ""}
+          <div style="flex:1;min-width:220px;">
+            <h4 style="margin:0 0 6px;">${esc(c.title)}${c.tag ? ` <span class="muted" style="font-weight:600;">(${esc(c.tag)})</span>` : ""}</h4>
+            ${isProduct ? `
+            ${c.model ? `<p class="muted" style="margin:2px 0;">🏷️ דגם: ${esc(c.model)}</p>` : ""}
+            ${c.price ? `<p class="muted" style="margin:2px 0;">💰 ${esc(c.price)}</p>` : ""}
+            ${c.whereBought ? `<p class="muted" style="margin:2px 0;">🛒 נקנה ב: ${esc(c.whereBought)}</p>` : ""}
+            ` : `
+            ${isSale && c.price ? `<p class="muted" style="margin:2px 0;">💰 ${esc(c.price)}</p>` : ""}
+            ${c.cityId ? `<p class="muted" style="margin:2px 0;">📍 ${esc(cityName(d, c.cityId))}${c.address ? ` - ${esc(c.address)}` : ""}</p>` : (c.address ? `<p class="muted" style="margin:2px 0;">📍 ${esc(c.address)}</p>` : "")}
+            ${c.phone ? `<p class="muted" style="margin:2px 0;">📞 ${esc(c.phone)}${c.hasWhatsapp ? " (גם WhatsApp)" : ""}</p>` : ""}
+            ${c.email ? `<p class="muted" style="margin:2px 0;">📧 ${esc(c.email)}</p>` : ""}
+            `}
+            ${c.contactName ? `<p class="muted" style="margin:2px 0;">נשלח ע"י: ${esc(c.contactName)}</p>` : ""}
+          </div>
+        </div>
+        ${c.description ? `<p style="margin-top:10px;">${esc(c.description)}</p>` : ""}
+        <div style="display:flex;gap:10px;margin-top:14px;">
+          <form method="post" action="/admin/community/${c.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
+          <form method="post" action="/admin/community/${c.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+        </div>
+      </div>`).join("") : `<p class="muted">אין כרגע פריטים ממתינים לאישור.</p>`}
+
+    <h4 style="margin-top:22px;">פריטים מאושרים (${approved.length})</h4>
+    ${approved.length ? (isProduct ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם מוצר</th><th>דגם</th><th>מחיר</th><th>איפה נקנה</th><th>מקור</th><th>צפיות</th><th>מחיקה</th></tr>
+      ${approved.map((c) => `<tr>
+        <td>${esc(c.title)}</td><td>${esc(c.model || "-")}</td><td>${esc(c.price || "-")}</td><td>${esc(c.whereBought || "-")}</td>
+        <td>${c.source === "admin" ? "הוזן ע\"י המנהלת" : "הרשמה עצמית"}</td><td>${c.viewCount || 0}</td>
+        <td><form method="post" action="/admin/community/${c.id}/delete" onsubmit="return confirm('למחוק לצמיתות את ' + ${JSON.stringify(c.title || "")} + '? זו פעולה שלא ניתן לבטל.');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
+      </tr>`).join("")}
+    </table></div>` : isSale ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>סוג מדויק</th><th>מחיר</th><th>עיר</th><th>כתובת</th><th>מקור</th><th>צפיות</th><th>מחיקה</th></tr>
+      ${approved.map((c) => `<tr>
+        <td>${esc(c.title)}</td><td>${esc(c.tag || "-")}</td><td>${esc(c.price || "-")}</td><td>${c.cityId ? esc(cityName(d, c.cityId)) : "-"}</td><td>${esc(c.address || "-")}</td>
+        <td>${c.source === "admin" ? "הוזן ע\"י המנהלת" : "הרשמה עצמית"}</td><td>${c.viewCount || 0}</td>
+        <td><form method="post" action="/admin/community/${c.id}/delete" onsubmit="return confirm('למחוק לצמיתות את ' + ${JSON.stringify(c.title || "")} + '? זו פעולה שלא ניתן לבטל.');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
+      </tr>`).join("")}
+    </table></div>` : `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>סוג מדויק</th><th>עיר</th><th>כתובת</th><th>מקור</th><th>צפיות</th><th>מחיקה</th></tr>
+      ${approved.map((c) => `<tr>
+        <td>${esc(c.title)}</td><td>${esc(c.tag || "-")}</td><td>${c.cityId ? esc(cityName(d, c.cityId)) : "-"}</td><td>${esc(c.address || "-")}</td>
+        <td>${c.source === "admin" ? "הוזן ע\"י המנהלת" : "הרשמה עצמית"}</td><td>${c.viewCount || 0}</td>
+        <td><form method="post" action="/admin/community/${c.id}/delete" onsubmit="return confirm('למחוק לצמיתות את ' + ${JSON.stringify(c.title || "")} + '? זו פעולה שלא ניתן לבטל.');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
+      </tr>`).join("")}
+    </table></div>`) : `<p class="muted">עדיין אין פריטים מאושרים בסוג הזה.</p>`}
+
+    <h4 style="margin-top:22px;">הוספה ישירה ע"י המנהלת (מתפרסמת מיד, בלי אישור)</h4>
+    <form method="post" action="/admin/community-add" enctype="multipart/form-data" class="narrow-panels">
+      <input type="hidden" name="type" value="${type}" />
+      <label>${isProduct ? "שם המוצר" : "שם הפריט / העסק"}<input type="text" name="title" required /></label>
+      <label>סוג מדויק<select name="tag"><option value="">--</option>${tagOptions}</select></label>
+      ${isProduct ? `
+      <label>דגם (לא חובה)<input type="text" name="model" placeholder="למשל: דגם XR200" /></label>
+      <label>מחיר (לא חובה)<input type="text" name="price" placeholder="למשל: 149 ₪" /></label>
+      <label>איפה נקנה (לא חובה)<input type="text" name="whereBought" placeholder="למשל: שם חנות או אתר" /></label>
+      ` : `
+      <label>עיר${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}</label>
+      <label>כתובת (רחוב ומספר, לא חובה)<input type="text" name="address" placeholder="למשל: הרצל 12" /></label>
+      `}
+      ${isSale ? `<label>מחיר<input type="text" name="price" placeholder="למשל: 150 ₪" /></label>` : ""}
+      <label>תיאור<textarea name="description" maxlength="500"></textarea></label>
+      ${isProduct ? "" : `
+      <label>טלפון ליצירת קשר<input type="text" name="phone" placeholder="050-1234567" /></label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" style="width:auto;" /><span>אותו מספר זמין גם ב-WhatsApp</span></label>
+      <label>אימייל (לא חובה)<input type="email" name="email" /></label>
+      `}
+      <label>תמונה (לא חובה)<input type="file" name="photo" accept="image/*" /></label>
+      <button class="btn btn-small" style="margin-top:6px;" type="submit">הוספה ופרסום מיידי</button>
+    </form>
+
+    <h4 style="margin-top:22px;">מחיר לתחום "${esc(meta.label)}"</h4>
+    <p class="muted">קובע כמה עולה להירשם/להתפרסם במאגר הזה (0 = בחינם). המספר הזה נשמר ברקע - אפשר להשתמש בו בעתיד להצגה או לחיוב.</p>
+    <form method="post" action="/admin/community-price" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <input type="hidden" name="type" value="${type}" />
+      <input type="number" name="price" value="${price}" min="0" step="1" style="max-width:140px;" />
+      <span class="muted">₪</span>
+      <button class="btn btn-small btn-outline" type="submit">שמירת מחיר</button>
+    </form>
+  </div>`;
+}
+
+route("POST", "/admin/community/:id/approve", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const c = (d.communityListings || []).find((x) => x.id === params.id);
+  if (c) { c.status = "approved"; c.approvedAt = new Date().toISOString(); }
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הפריט אושר! הוא כבר באוויר.")}`);
+});
+
+route("POST", "/admin/community/:id/reject", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const c = (d.communityListings || []).find((x) => x.id === params.id);
+  if (c) c.status = "rejected";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הפריט נדחה.")}`);
+});
+
+route("POST", "/admin/community/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.communityListings = (d.communityListings || []).filter((x) => x.id !== params.id);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הפריט נמחק.")}`);
+});
+
+// הוספה ישירה ע"י המנהלת - מתפרסמת מיד (status:"approved"), בלי לעבור תור אישור, כי המנהלת
+// עצמה כבר "אישרה" אותה בכך שהיא זו שהזינה את הפרטים.
+route("POST", "/admin/community-add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי שוב.")}`);
+  const type = COMMUNITY_TYPES[body.get("type")] ? body.get("type") : null;
+  const title = (body.get("title") || "").trim();
+  if (!type || !title) return redirect(res, `/admin?err=${encodeURIComponent("צריך למלא לפחות סוג ושם.")}`);
+  const d = db.load();
+  const now = new Date().toISOString();
+  const c = {
+    id: db.nextId("communityListing"),
+    type, title,
+    tag: body.get("tag") || "",
+    cityId: body.get("city") || "",
+    address: clip((body.get("address") || "").trim(), 200),
+    description: clip(body.get("description"), 500),
+    phone: (body.get("phone") || "").trim(),
+    hasWhatsapp: body.get("hasWhatsapp") === "1",
+    email: (body.get("email") || "").trim(),
+    photoDataUri: fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES),
+    contactName: "",
+    model: clip((body.get("model") || "").trim(), 100),
+    price: clip((body.get("price") || "").trim(), 50),
+    whereBought: clip((body.get("whereBought") || "").trim(), 150),
+    ownerCustomerId: null,
+    source: "admin",
+    status: "approved",
+    viewCount: 0,
+    createdAt: now,
+    approvedAt: now,
+  };
+  d.communityListings.push(c);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הפריט נוסף ופורסם.")}`);
+});
+
+route("POST", "/admin/community-price", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const type = COMMUNITY_TYPES[body.get("type")] ? body.get("type") : null;
+  if (!type) return redirect(res, "/admin");
+  const d = db.load();
+  const price = Math.max(0, parseInt(body.get("price"), 10) || 0);
+  if (!d.settings.communityTypePricing) d.settings.communityTypePricing = {};
+  d.settings.communityTypePricing[type] = price;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("המחיר נשמר.")}`);
+});
+
+// "מסירות"/"מכירת יד 2" שהיא פרסמה - היחידים מבין 8 סוגי מאגרי הקהילה שדורשים חשבון לקוחה,
+// בדיוק כדי שהיא תוכל לראות ולהוריד אותם בעצמה כאן ברגע שהחפץ כבר נמסר/נמכר (ר' route POST
+// /account/community/:id/take-down למטה) - לא מציגים "rejected" כאן, אין לזה תועלת.
+route("POST", "/account/community/:id/take-down", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const g = (d.communityListings || []).find((c) => c.id === params.id && (c.type === "giveaway" || c.type === "sale") && c.ownerCustomerId === ctx.session.id);
+  if (!g) {
+    return redirect(res, `/account?err=${encodeURIComponent("לא מצאנו את הפריט הזה אצלך.")}`);
+  }
+  const wasSale = g.type === "sale";
+  d.communityListings = d.communityListings.filter((c) => c.id !== params.id);
+  db.save();
+  redirect(res, `/account?ok=${encodeURIComponent(wasSale ? "הפריט הוסר - כל הכבוד על המכירה! ❤️" : "הפריט הוסר - תודה שמסרת אותו הלאה! ❤️")}`);
 });
 
 // ----- Central deals page - all active coupon offers in one place -----
@@ -3680,6 +4421,16 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
     }
     return freelancerCard(f, d);
   }).filter(Boolean);
+  // "מסירות"/"מכירת יד 2" שהיא פרסמה במאגרי קהילה - היחידים מבין 8 סוגי המאגר שדורשים
+  // חשבון לקוחה מחובר, בדיוק כדי שהיא תוכל לראות ולהוריד אותם בעצמה כאן ברגע שהחפץ כבר
+  // נמסר/נמכר (ר' route POST /account/community/:id/take-down) - לא מציגים "rejected" כאן,
+  // אין לזה תועלת.
+  const myGiveaways = (d.communityListings || [])
+    .filter((c) => c.type === "giveaway" && c.ownerCustomerId === customer.id && c.status !== "rejected")
+    .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const myForSale = (d.communityListings || [])
+    .filter((c) => c.type === "sale" && c.ownerCustomerId === customer.id && c.status !== "rejected")
+    .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const myReviews = d.reviews.filter((r) => r.authorCustomerId === customer.id);
   const matchingFreelancerAccount = d.freelancers.find((f) => f.email === customer.email);
   const revealedCoupons = (customer.revealedCoupons || [])
@@ -3780,6 +4531,40 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
   <div class="panel">
     <h3 style="display:flex;align-items:center;justify-content:center;gap:8px;"><span>❤️</span><span>העצמאיות שאהבת</span></h3>
     ${favCards.length ? `<div class="grid">${favCards.join("")}</div>` : `<p class="muted">עוד לא שמרת אף אחת - תסתכלי קצת סביב ותמצאי מישהי שמדברת אלייך.</p>`}
+  </div>
+
+  <div class="panel">
+    <h3 style="display:flex;align-items:center;justify-content:center;gap:8px;"><span>🎁</span><span>המסירות שלך</span></h3>
+    ${myGiveaways.length ? myGiveaways.map((g) => `
+      <div class="panel" style="background:var(--cream);display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div style="display:flex;gap:14px;align-items:center;flex:1;min-width:220px;">
+          ${g.photoDataUri ? `<img src="${esc(g.photoDataUri)}" alt="" style="width:60px;height:60px;object-fit:cover;border-radius:10px;flex-shrink:0;" />` : `<span style="font-size:32px;">🎁</span>`}
+          <div>
+            <strong>${esc(g.title)}</strong>
+            <div class="muted" style="font-size:13px;">${g.status === "pending" ? "ממתין לאישור" : g.status === "approved" ? "פורסם ומוצג באתר" : ""}</div>
+          </div>
+        </div>
+        <form method="post" action="/account/community/${g.id}/take-down" onsubmit="return confirm('החפץ כבר נמסר ואפשר להוריד את הפרסום? זו פעולה שלא ניתן לבטל.');">
+          <button class="btn btn-small btn-outline" type="submit">כבר נמסר - הסרה</button>
+        </form>
+      </div>`).join("") : `<p class="muted">עוד לא פרסמת חפץ למסירה - <a href="/community/giveaway/add" style="color:var(--rose-dark);font-weight:700;">אפשר להוסיף כאן</a>.</p>`}
+  </div>
+
+  <div class="panel">
+    <h3 style="display:flex;align-items:center;justify-content:center;gap:8px;"><span>💰</span><span>המכירות שלך</span></h3>
+    ${myForSale.length ? myForSale.map((g) => `
+      <div class="panel" style="background:var(--cream);display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div style="display:flex;gap:14px;align-items:center;flex:1;min-width:220px;">
+          ${g.photoDataUri ? `<img src="${esc(g.photoDataUri)}" alt="" style="width:60px;height:60px;object-fit:cover;border-radius:10px;flex-shrink:0;" />` : `<span style="font-size:32px;">💰</span>`}
+          <div>
+            <strong>${esc(g.title)}</strong>${g.price ? ` <span class="muted">- ${esc(g.price)}</span>` : ""}
+            <div class="muted" style="font-size:13px;">${g.status === "pending" ? "ממתין לאישור" : g.status === "approved" ? "פורסם ומוצג באתר" : ""}</div>
+          </div>
+        </div>
+        <form method="post" action="/account/community/${g.id}/take-down" onsubmit="return confirm('החפץ כבר נמכר ואפשר להוריד את הפרסום? זו פעולה שלא ניתן לבטל.');">
+          <button class="btn btn-small btn-outline" type="submit">כבר נמכר - הסרה</button>
+        </form>
+      </div>`).join("") : `<p class="muted">עוד לא פרסמת חפץ למכירה - <a href="/community/sale/add" style="color:var(--rose-dark);font-weight:700;">אפשר להוסיף כאן</a>.</p>`}
   </div>
 
   <div class="panel">
@@ -4571,6 +5356,11 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // same after-the-fact delete backstop here as for freelancer reviews.
   const publishedSiteReviews = d.reviews.filter((r) => r.type === "site" && r.status === "approved")
     .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  // תגובות על מאגרי קהילה (חוגים/מורות פרטיות/המלצות מוצרים - ר' COMMUNITY_REVIEWABLE_TYPES)
+  // מתפרסמות מיד באותו אופן - אותו גיבוי מחיקה-לאחר-מעשה.
+  const publishedCommunityReviews = d.reviews.filter((r) => r.type === "community" && r.status === "approved")
+    .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const communityAdminPanelsHtml = COMMUNITY_TYPE_ORDER.map((type) => communityAdminPanelHtml(type, d)).join("");
   const pendingStories = (d.stories || []).filter((s) => s.status === "pending");
   // Used both for the delete table and the "story of the week" manual-pick dropdown below.
   const approvedStoriesForAdmin = (d.stories || []).filter((s) => s.status === "approved").map((s) => {
@@ -4931,6 +5721,23 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     `).join("") : `<p class="muted">עוד אין ביקורות שפורסמו.</p>`}
   </div>
 
+  <div class="panel">
+    <h3>תגובות על מאגרי קהילה - חוגים/מורות פרטיות/המלצות מוצרים (${publishedCommunityReviews.length})</h3>
+    <p class="muted">אלה עולות אוטומטית ברגע שלקוחה כותבת אותן - אין צורך לאשר, רק למחוק אם משהו לא ראוי.</p>
+    ${publishedCommunityReviews.length ? publishedCommunityReviews.map((r) => {
+      const target = (d.communityListings || []).find((c) => c.id === r.targetId);
+      const targetMeta = target ? COMMUNITY_TYPES[target.type] : null;
+      const targetLabel = target ? `${esc(target.title)} (${esc(targetMeta ? targetMeta.label : target.type)})` : "פריט שנמחק";
+      return `
+      <div class="review">
+        ${starRow(r.rating)} <strong>${esc(r.authorName)}</strong> <span class="muted">על: ${targetLabel}</span>
+        <p class="muted" style="margin:8px 0;">${esc(r.text)}</p>
+        <form method="post" action="/admin/review/${r.id}/delete" style="display:inline" onsubmit="return confirm('למחוק את התגובה הזו?');"><button class="btn btn-small btn-outline" type="submit">מחיקת התגובה</button></form>
+      </div>
+      `;
+    }).join("") : `<p class="muted">עוד אין תגובות שפורסמו.</p>`}
+  </div>
+
   <div class="panel" data-badge="${pendingStories.length}">
     <h3>סיפורים ממתינים לאישור (${pendingStories.length})</h3>
     ${pendingStories.length ? pendingStories.map((s) => {
@@ -5074,6 +5881,12 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע תחומים נוספים שממתינים לאישור.</p>`}
   </div>
+
+  <div class="panel">
+    <h3>🤲 מאגרי קהילה - ניהול</h3>
+    <p class="muted">שמונה מאגרים נפרדים: גמ"חים, השכרות, סדנאות, חוגים, מסירות, מכירת יד 2, מורות פרטיות והמלצות מוצרים. לכל מאגר יש כאן ניהול נפרד משלו - אישור/דחייה, טבלת פריטים מאושרים עם מחיקה, הוספה ישירה שלך שמתפרסמת מיד, ושליטה על המחיר של התחום.</p>
+  </div>
+  ${communityAdminPanelsHtml}
 
   <div class="panel">
     <h3>לוגו האתר</h3>

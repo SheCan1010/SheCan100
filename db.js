@@ -189,6 +189,9 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
         "מה הדבר שאת הכי אוהבת לראות קורה אצל הלקוחות שלך בסוף התהליך?",
         "איפה את רואה את העסק שלך בשנים הקרובות? (חלום קטן או גדול שבא לך להגשים).",
       ],
+      // "מאגרי קהילה" (נוסף 2026-08-26) - מחיר אופציונלי לכל אחד מ-8 סוגי המאגר (0 = בחינם),
+      // נשמר ברקע דרך פאנל הניהול - ר' communityTypePricing ב-server.js (POST /admin/community-price).
+      communityTypePricing: { gemach: 0, rental: 0, workshop: 0, class: 0, giveaway: 0, sale: 0, tutor: 0, product: 0 },
     },
     contactMessages: [], // הודעות שהושארו בעמוד "צרי קשר"
     // "לתמיכה לחצי 💬" - כפתור צף שמופיע בכל עמוד באתר, לכל מי שנכנסת (כולל גולשות שלא
@@ -239,6 +242,20 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // price הוא שדה חופשי, ברירת מחדל "ללא תשלום" כשלא מולא (ר' migrate למטה לגבי בקשות ישנות).
     // { id, freelancerId, freelancerName, details, location, when, price, createdAt }
     patternmakerRequests: [],
+    // "מאגרי קהילה" (נוסף 2026-08-26) - שמונה סוגי משאבים קהילתיים שכולם חיים באותה רשימה
+    // אחת, מובחנים לפי type - ר' COMMUNITY_TYPES ב-server.js לפירוט המלא של כל סוג (תווית,
+    // אייקון, תגיות משנה). tag הוא תת-קטגוריה חופשית מתוך רשימת התגים של אותו type.
+    // "giveaway" (מסירות) ו-"sale" (מכירת יד 2) שונים מ-6 הסוגים האחרים: פרסום פריט בהם דורש
+    // חשבון לקוחה מחובר (ownerCustomerId), כדי שהמפרסמת תוכל אחר כך להיכנס ל"אזור האישי" שלה
+    // ולהוריד את הפריט בעצמה ברגע שהוא כבר נמסר/נמכר - ר' POST /account/community/:id/take-down.
+    // "product" (המלצות מוצרים) הוא תוכן ביקורת (UGC), לא שירות עם פרטי קשר - model/price/
+    // whereBought מחליפים שם את city/address/phone/email. "sale" משתמש גם ב-price וגם
+    // ב-city/address/phone/email יחד, כי זו עדיין עסקה בין שתי אנשים עם יצירת קשר אמיתית.
+    // { id, type, title, tag, cityId, address, description, phone, hasWhatsapp, email,
+    //   photoDataUri, contactName, model, price, whereBought, ownerCustomerId,
+    //   source: "self"|"admin", status: "pending"|"approved"|"rejected", viewCount,
+    //   createdAt, approvedAt }
+    communityListings: [],
     // Each main category can have subcategories, so an area like "יופי וטיפוח" can be
     // broken down into "מאפרת כלות וערב", "מניקוריסטית ולק ג'ל" וכו'. A freelancer picks
     // a main category (required) and, if that category has subcategories, an optional
@@ -299,7 +316,7 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     admins: [
       { id: "1", email: "admin@shecan.co.il", name: "ספיר", passwordHash: null, pushSubscriptions: [] },
     ],
-    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1, patternmakerRequest: 1, supportMessage: 1 },
+    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1, patternmakerRequest: 1, supportMessage: 1, communityListing: 1 },
   };
 }
 
@@ -320,6 +337,10 @@ function migrate(data) {
   if (!Array.isArray(data.consultations)) { data.consultations = []; changed = true; }
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
   if (!Array.isArray(data.patternmakerRequests)) { data.patternmakerRequests = []; changed = true; }
+  if (!Array.isArray(data.communityListings)) { data.communityListings = []; changed = true; }
+  (data.communityListings || []).forEach((c) => {
+    if (typeof c.viewCount !== "number") { c.viewCount = 0; changed = true; }
+  });
   if (!Array.isArray(data.supportMessages)) { data.supportMessages = []; changed = true; }
   // supportMessages היה במקור רשומה אחת לכל שאלה (question/answer/status) - שודרג לצ'אט
   // אמיתי (הודעות בודדות עם from:"asker"/"admin"). כל רשומה ישנה בצורה הזו מפוצלת להודעת
@@ -365,6 +386,7 @@ function migrate(data) {
   if (!("consultationReply" in data.nextId)) { data.nextId.consultationReply = 1; changed = true; }
   if (!("poll" in data.nextId)) { data.nextId.poll = 1; changed = true; }
   if (!("patternmakerRequest" in data.nextId)) { data.nextId.patternmakerRequest = 1; changed = true; }
+  if (!("communityListing" in data.nextId)) { data.nextId.communityListing = 1; changed = true; }
   if (!("supportMessage" in data.nextId)) { data.nextId.supportMessage = 1; changed = true; }
   // Older saves may have categories without a subcategories list yet - attach the
   // matching default breakdown by name where we have one, otherwise leave it browsable
