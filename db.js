@@ -415,6 +415,12 @@ function migrate(data) {
   if (!Array.isArray(data.tehillimSalvationStories)) { data.tehillimSalvationStories = []; changed = true; }
   // מוודא ש-kabbalot תמיד קיים כמערך על כל רשומת שם ישנה (הגנה זהה לזו שמעל, לרמה מקוננת).
   (data.tehillimNames || []).forEach((n) => { if (!Array.isArray(n.kabbalot)) { n.kabbalot = []; changed = true; } });
+  // מוסיף claimed לכל יחידה ישנה שנוצרה לפני שהשדה הזה נוסף (2026-08-26, כשנפתחה האפשרות
+  // לקחת יחידה גם בלי התחברות) - claimed נגזר מ-claimedByCustomerId הישן כדי לא לאבד מצב
+  // "נלקח" קיים על יחידות שכבר נלקחו ע"י לקוחה מחוברת לפני העדכון.
+  (data.tehillimBooks || []).forEach((b) => {
+    (b.units || []).forEach((u) => { if (typeof u.claimed !== "boolean") { u.claimed = Boolean(u.claimedByCustomerId); changed = true; } });
+  });
   if (!Array.isArray(data.communityListings)) { data.communityListings = []; changed = true; }
   (data.communityListings || []).forEach((c) => {
     if (typeof c.viewCount !== "number") { c.viewCount = 0; changed = true; }

@@ -550,8 +550,20 @@ form .field{margin-bottom:6px;}
 .hub-card-title{font-size:19px;font-weight:800;margin-bottom:6px;}
 .hub-card-desc{font-size:13.5px;line-height:1.5;opacity:.9;margin-bottom:12px;min-height:40px;}
 .hub-card-count{display:inline-block;font-size:12px;font-weight:700;padding:3px 12px;border-radius:12px;background:var(--rose-dark);color:#fff;}
-/* "מתחזקות ומחזקות" (תהילים קהילתי, נוסף 2026-08-26) - שורת סטטיסטיקה (ספרים שנסגרו/פרקים
-   שנקראו/שמות לתפילה) + גריד יחידות (ימי השבוע, וגריד קומפקטי יותר של 150 הפרקים). */
+/* "בלב אחד" (תהילים קהילתי, נוסף 2026-08-26, שונה שם מ"מתחזקות ומחזקות") - שורת סטטיסטיקה
+   (ספרים שנסגרו/פרקים שנקראו/שמות לתפילה) + גריד יחידות (ימי השבוע, וגריד קומפקטי יותר של
+   150 הפרקים). */
+/* ציטוט זכרון בראש העמוד - טיפוגרפיה גדולה ומכובדת, בלי צבעוניות עליזה, לפי ההקשר ההיסטורי
+   הכבד של הציטוט (השואה). גופן serif (אם קיים במערכת) לתחושה חגיגית יותר משאר האתר. */
+.tehillim-quote{max-width:640px;margin:0 auto 24px;text-align:center;padding:10px 16px 4px;}
+.tehillim-quote-text{font-family:Georgia,"Times New Roman",serif;font-size:24px;font-weight:700;line-height:1.4;color:#3a3b35;margin:0;}
+.tehillim-quote-attribution{font-size:13.5px;color:#8a8b83;margin:10px 0 0;}
+/* גריד 150 הפרקים ארוך מאד - עטוף ב-details/summary ומכווץ כברירת מחדל (לפי בקשה מפורשת
+   לצמצם אותו), עם summary בולט וניתן ללחיצה לפתיחה/סגירה. */
+.tehillim-chapters-details summary{cursor:pointer;font-weight:700;color:var(--rose-dark);padding:8px 0;list-style:none;}
+.tehillim-chapters-details summary::-webkit-details-marker{display:none;}
+.tehillim-chapters-details summary::before{content:"▸ ";}
+.tehillim-chapters-details[open] summary::before{content:"▾ ";}
 .tehillim-stats-row{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin:0 0 22px;}
 .tehillim-stat{background:var(--white);border-radius:12px;padding:14px 20px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.05);min-width:110px;}
 .tehillim-stat-num{display:block;font-size:26px;font-weight:800;color:var(--rose-dark);}

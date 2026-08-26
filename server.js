@@ -1560,7 +1560,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update83 - 2026-08-26 - קהילת \"מתחזקות ומחזקות\": רשימת שמות לתפילה, שני ספרי תהילים מקבילים (יומי ולפי פרקים) עם לקיחה/קריאה/סגירה ופתיחה אוטומטית, סטטיסטיקות, קבלות, וסיפורי ישועות";
+const DEPLOY_MARKER = "update84 - 2026-08-26 - שינוי שם \"בלב אחד\" (היה מתחזקות ומחזקות) + לקיחת פרק בלי התחברות + ציטוט בראש העמוד + פרקים בגימטריה עברית + גריד פרקים מתקפל + ריבוע מאוחד \"שמלות להשכרה\"";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -3541,7 +3541,11 @@ async function notifyCommunitySubscribers(c, d, req) {
 // עמוד ריכוז - 8 האריחים, אחד לכל סוג מאגר, עם מספר הפריטים המאושרים בכל אחד.
 route("GET", "/community", async (req, res, params, query, ctx) => {
   const d = db.load();
-  const tilesHtml = COMMUNITY_TYPE_ORDER.map((type) => {
+  // "דרושות שמלות" (dressWanted) לא מקבלת ריבוע אוטומטי משלה יותר - במקום זה מוצגת ריבוע
+  // משולב "שמלות להשכרה" (ר' תחת הלולאה) שמוביל לעמוד ביניים עם 2 אופציות (לפרסם שמלה
+  // להשכרה / להעלות בקשה לשמלה) - ldressWanted עצמו נשאר תשתית מלאה כרגיל (טופס/אישור/עמוד
+  // סוג/כרטיס) ורק הכניסה אליו מ-hub הוחלפה. ר' route GET /community/dresses למטה.
+  const tilesHtml = COMMUNITY_TYPE_ORDER.filter((t) => t !== "dressWanted").map((type) => {
     const meta = COMMUNITY_TYPES[type];
     const count = communityApprovedCount(d, type);
     return `
@@ -3552,14 +3556,24 @@ route("GET", "/community", async (req, res, params, query, ctx) => {
       <span class="hub-card-count">${count ? `${count} ${count === 1 ? meta.singular : meta.label} ${count === 1 ? "" : "פעילים"}`.trim() : "בקרוב"}</span>
     </a>`;
   }).join("");
-  // "מתחזקות ומחזקות" (תהילים קהילתי) לא חלק מ-COMMUNITY_TYPE_ORDER הרגיל - אין לו תור אישור
-  // אדמין ולא מבנה gemach/rental/וכו' רגיל, אלא מנגנון ייעודי משלו (ר' route GET /community/tehillim
-  // למטה) - לכן הריבוע שלו נבנה כאן ידנית ומצורף לפני שאר הריבועים האוטומטיים.
+  // ריבוע משולב במקום "דרושות שמלות" הישן - מוביל לעמוד ביניים עם 2 האופציות שביקשה שפיר.
+  const dressesCount = communityApprovedCount(d, "rental") + communityApprovedCount(d, "dressWanted");
+  const dressesTileHtml = `
+    <a class="hub-card" href="/community/dresses">
+      <span class="hub-card-icon">👗</span>
+      <div class="hub-card-title">שמלות להשכרה</div>
+      <div class="hub-card-desc">לפרסם שמלה להשכרה, או להעלות בקשה לשמלה שאת מחפשת</div>
+      <span class="hub-card-count">${dressesCount ? `${dressesCount} פעילים` : "בקרוב"}</span>
+    </a>`;
+  // "בלב אחד" (תהילים קהילתי, שמו הקודם "מתחזקות ומחזקות") לא חלק מ-COMMUNITY_TYPE_ORDER
+  // הרגיל - אין לו תור אישור אדמין ולא מבנה gemach/rental/וכו' רגיל, אלא מנגנון ייעודי משלו
+  // (ר' route GET /community/tehillim למטה) - לכן הריבוע שלו נבנה כאן ידנית. ממוקם בסוף הרשת
+  // (לא בהתחלה) לפי בקשה מפורשת.
   const tehillimTileHtml = `
     <a class="hub-card" href="/community/tehillim">
       <span class="hub-card-icon">🕯️</span>
-      <div class="hub-card-title">מתחזקות ומחזקות</div>
-      <div class="hub-card-desc">רשימת שמות לתפילה, ותהילים קהילתי - קחי על עצמך פרק או יום</div>
+      <div class="hub-card-title">בלב אחד</div>
+      <div class="hub-card-desc">רשימת שמות לתפילה, ותהילים קהילתי - קחי על עצמך פרק או יום, גם בלי להתחבר</div>
       <span class="hub-card-count">קהילה חיה</span>
     </a>`;
   const body = `
@@ -3567,10 +3581,40 @@ route("GET", "/community", async (req, res, params, query, ctx) => {
     <h1 style="font-size:40px;">מאגרי הקהילה</h1>
     <p>כל המשאבים הקהילתיים של עצמאיות ומשפחות - במקום אחד, לפי תחום.</p>
   </div>
-  <div class="hub-grid" style="margin-bottom:30px;">${tehillimTileHtml}${tilesHtml}</div>
+  <div class="hub-grid" style="margin-bottom:30px;">${dressesTileHtml}${tilesHtml}${tehillimTileHtml}</div>
   <p style="text-align:center;"><a class="btn btn-outline btn-small" href="/community/add">רוצה להוסיף פריט למאגר? לחצי כאן</a></p>
   `;
   sendHtml(res, 200, page({ title: "מאגרי קהילה", session: ctx.session, body, query }));
+});
+
+// עמוד ביניים "שמלות להשכרה" - מציג 2 אופציות ברורות (לפי בקשה מפורשת): לפרסם שמלה להשכרה
+// (מובילה לטופס ההוספה הפתוח עם type=rental מוכן מראש - העסקה עצמה עוברת דרך COMMUNITY_TYPES.
+// rental הרגיל, עם תגית שמלות הערב), או להעלות בקשה לשמלה שמחפשות (מובילה לטופס עם
+// type=dressWanted מוכן מראש - COMMUNITY_TYPES.dressWanted הרגיל). חשוב: הראוט הזה חייב
+// להירשם *לפני* GET /community/:type - אחרת "dresses" היה נתפס בטעות כ-:type.
+route("GET", "/community/dresses", async (req, res, params, query, ctx) => {
+  const body = `
+  <h1 class="section-title" style="margin-top:0;">👗 שמלות להשכרה</h1>
+  <p class="muted" style="text-align:center;margin-top:-10px;">מפרסמת שמלה להשכרה, או מחפשת שמלה? בחרי מה מתאים לך.</p>
+  <div class="hub-grid" style="max-width:640px;margin:20px auto;">
+    <a class="hub-card" href="/community/add?type=rental&tag=${encodeURIComponent(DRESS_TAG)}">
+      <span class="hub-card-icon">📤</span>
+      <div class="hub-card-title">לפרסם שמלה להשכרה</div>
+      <div class="hub-card-desc">יש לך שמלה שאת משכירה? פרסמי אותה כאן</div>
+    </a>
+    <a class="hub-card" href="/community/add?type=dressWanted">
+      <span class="hub-card-icon">🙋‍♀️</span>
+      <div class="hub-card-title">להעלות בקשה לשמלה</div>
+      <div class="hub-card-desc">מחפשת שמלה? ספרי לנו מה את צריכה</div>
+    </a>
+  </div>
+  <p style="text-align:center;">
+    <a href="/community/rental?tag=${encodeURIComponent(DRESS_TAG)}" style="color:var(--rose-dark);font-weight:700;">לצפייה בשמלות שיש כרגע להשכרה</a>
+    &nbsp;·&nbsp;
+    <a href="/community/dressWanted" style="color:var(--rose-dark);font-weight:700;">לצפייה בבקשות לשמלה</a>
+  </p>
+  `;
+  sendHtml(res, 200, page({ title: "שמלות להשכרה", session: ctx.session, body, query }));
 });
 
 // טופס הוספת פריט - פתוח לכולן, בלי צורך בהתחברות (בדומה ל"צרי קשר") - כל פריט שנשלח כאן
@@ -3585,6 +3629,10 @@ route("GET", "/community/add", async (req, res, params, query, ctx) => {
   if (query.get("type") === "sale") return redirect(res, "/community/sale/add");
   const d = db.load();
   const preselect = OPEN_COMMUNITY_TYPE_ORDER.includes(query.get("type")) ? query.get("type") : "gemach";
+  // תגית מוכנה מראש (למשל מ"שמלות להשכרה" ב-/community/dresses שמגיעה עם
+  // ?type=rental&tag=<DRESS_TAG>) - נבחרת אוטומטית ב-scCommunityUpdateTags למטה, רק אם היא
+  // באמת קיימת ברשימת התגיות של הסוג שנבחר.
+  const presetTag = query.get("tag") || "";
   const typeOptions = OPEN_COMMUNITY_TYPE_ORDER.map((t) => `<option value="${t}" ${preselect === t ? "selected" : ""}>${esc(COMMUNITY_TYPES[t].label)}</option>`).join("");
   const body = `
   <h1 class="section-title" style="margin-top:0;">הוספת פריט למאגרי הקהילה</h1>
@@ -3630,9 +3678,12 @@ route("GET", "/community/add", async (req, res, params, query, ctx) => {
   <script>
     var scCommunityTagsByType = ${JSON.stringify(Object.fromEntries(OPEN_COMMUNITY_TYPE_ORDER.map((t) => [t, COMMUNITY_TYPES[t].tags])))};
     var scDressTag = ${JSON.stringify(DRESS_TAG)};
+    var scPresetTag = ${JSON.stringify(presetTag)};
     function scCommunityUpdateTags(type) {
       var sel = document.getElementById('scCommunityTag');
-      sel.innerHTML = (scCommunityTagsByType[type] || []).map(function(t){ return '<option value="' + t + '">' + t + '</option>'; }).join('');
+      var tags = scCommunityTagsByType[type] || [];
+      sel.innerHTML = tags.map(function(t){ return '<option value="' + t + '">' + t + '</option>'; }).join('');
+      if (scPresetTag && tags.indexOf(scPresetTag) !== -1) { sel.value = scPresetTag; scPresetTag = ''; }
     }
     // שדות "פרטי שמלה" (מחיר/צבע/אורך/קהל יעד) מוצגים רק כשהסוג הוא "השכרות" והתגית
     // שנבחרה היא בדיוק תגית שמלות הערב - נבדק גם בשינוי סוג וגם בשינוי תגית (ר' onchange
@@ -3792,17 +3843,25 @@ route("POST", "/community/sale/add", async (req, res, params, query, ctx) => {
 
 // דפדוף בתוך סוג מאגר אחד (למשל /community/gemach) - סינון לפי תג ועיר, בדיוק כמו חיפוש
 // עצמאיות: סרגל סינון + רשת כרטיסים.
-// ===================== "מתחזקות ומחזקות" - תהילים קהילתי (נוסף 2026-08-26) =====================
+// ===================== "בלב אחד" - תהילים קהילתי (נוסף 2026-08-26, שונה שם מ"מתחזקות
+// ומחזקות" ב-2026-08-26 לפי בקשה) =====================
 // ריבוע נוסף בקהילת SheCan, לפי בקשה מפורשת - שונה מהותית מ-9 סוגי COMMUNITY_TYPES (לא רשימת
 // פריטים עם אישור אדמין, אלא מנגנון חי: רשימת שמות לתפילה, שני "ספרי תהילים" מקבילים
-// שמתחלקים ליחידות (יומי - 7 ימות השבוע; לפי פרקים - כל 150 הפרקים בנפרד) שכל לקוחה יכולה
-// "לקחת על עצמה" יחידה, לקרוא אותה (קישור לטקסט המדויק והמדוייק ב-Sefaria.org - מקור מהימן
-// ומדויק לטקסט תהילים, ולא משוחזר כאן מהזיכרון כדי לא להסתכן בטעות בטקסט קדוש) ולסמן שקראה -
-// כשכל יחידות הספר נקראו הוא "נסגר" ונפתח ספר חדש מאותו סוג אוטומטית. בנוסף: סיפורי ישועות,
-// ואפשרות לפרסם שם עם סיפור קצר שלקוחות אחרות יכולות לכתוב לידו קבלה קטנה שקיבלו על עצמן.
+// שמתחלקים ליחידות (יומי - 7 ימות השבוע; לפי פרקים - כל 150 הפרקים בנפרד, עם תווית פרק
+// בגימטריה עברית - "פרק א'", "פרק ב'" וכו') שכל אחת יכולה "לקחת על עצמה" יחידה - כולל מי
+// שלא מחוברת בכלל כלקוחה, לפי בקשה מפורשת "כל אחת יכולה לקחת פרק גם אם היא לא מחוברת" -
+// לקרוא אותה (קישור לטקסט המדויק והמדוייק ב-Sefaria.org - מקור מהימן ומדויק לטקסט תהילים,
+// ולא משוחזר כאן מהזיכרון כדי לא להסתכן בטעות בטקסט קדוש) ולסמן שקראה - כשכל יחידות הספר
+// נקראו הוא "נסגר" ונפתח ספר חדש מאותו סוג אוטומטית. בנוסף: סיפורי ישועות, ואפשרות לפרסם שם
+// עם סיפור קצר שלקוחות אחרות יכולות לכתוב לידו קבלה קטנה שקיבלו על עצמן. בראש העמוד מובא
+// ציטוט זכרון גדול על נתינה לזולת (ר' tehillimQuoteHtml למטה).
 // ניהול: כל התוכן מתפרסם מיד (בלי תור אישור, בדיוק כמו ביקורות באתר) עם כפתורי מחיקה
 // שמוצגים רק לאדמין ישירות על אותו עמוד ציבורי - לפי בקשה מפורשת "לנהל תמיד את מה שקורה
 // מאחורה... למחוק כל תגובה שלא מתאימה", בלי לבנות פאנל ניהול נפרד ולשכפל את כל הרינדור.
+// לקיחת יחידה בלי התחברות: מזוהה כ-claimedByCustomerId===null אבל claimed===true (בשונה
+// מ"לא נלקחה בכלל" שהוא claimed===false) - במצב הזה, מכיוון שאין דרך לזהות "אותה מבקרת" שוב
+// בביקור הבא, כל מי שנכנסת לעמוד היחידה יכולה לסמן "קראתי" (שיטת כבוד, כמו במעגלי תהילים
+// אמיתיים) - רק לקיחה של לקוחה מחוברת ספציפית שמורה למי שהתחברה בתור אותה לקוחה בדיוק.
 
 // חלוקה שבועית מסורתית ומאומתת (7 ימים) - ולא חלוקה חודשית (30 יום), כדי להישען על מקור
 // מאומת בלבד (הבחירה ל"יומי" = "יום בשבוע" ולא "יום בחודש" נעשתה כדי להימנע משחזור לא
@@ -3816,7 +3875,24 @@ const TEHILLIM_WEEKLY_DIVISION = [
   { label: "יום שישי", from: 107, to: 119 },
   { label: "שבת", from: 120, to: 150 },
 ];
-const TEHILLIM_CHAPTERS_DIVISION = Array.from({ length: 150 }, (_, i) => ({ label: `פרק ${i + 1}`, from: i + 1, to: i + 1 }));
+// ממיר מספר (1 עד 150 - טווח פרקי תהילים) לגימטריה עברית עם גרש/גרשיים תקניים (מספר בן
+// אות אחת מקבל גרש בסופו כמו א', מספר בן כמה אותיות מקבל גרשיים לפני האות האחרונה כמו י"א),
+// כולל הכלל המקובל שמחליף 15/16 ב-ט"ו/ט"ז במקום י"ה/י"ו כדי לא לכתוב צירוף שנחשב משם ה'.
+// משמש לתווית "פרק א'", "פרק ב'" וכו' בספר התהילים המחולק לפי פרקים - ר' TEHILLIM_CHAPTERS_DIVISION.
+function hebrewGematria(num) {
+  const ones = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];
+  const tens = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
+  const hundreds = num >= 100 ? "ק" : "";
+  const rest = num % 100;
+  let restLetters;
+  if (rest === 15) restLetters = "טו";
+  else if (rest === 16) restLetters = "טז";
+  else restLetters = tens[Math.floor(rest / 10)] + ones[rest % 10];
+  const letters = hundreds + restLetters;
+  if (letters.length <= 1) return letters + "'";
+  return letters.slice(0, -1) + "\"" + letters.slice(-1);
+}
+const TEHILLIM_CHAPTERS_DIVISION = Array.from({ length: 150 }, (_, i) => ({ label: `פרק ${hebrewGematria(i + 1)}`, from: i + 1, to: i + 1 }));
 // 4 אופציות קבלה קטנה, בדיוק לפי בקשה מפורשת - 3 קבועות + "אחר" עם טקסט חופשי.
 const TEHILLIM_KABBALAH_OPTIONS = {
   "asher-yatzar": "קריאת \"אשר יצר\" מתוך הכתוב במשך שבוע",
@@ -3834,7 +3910,7 @@ function createTehillimBook(division) {
   return {
     id: db.nextId("tehillimBook"),
     division,
-    units: template.map((t, i) => ({ index: i, label: t.label, from: t.from, to: t.to, claimedByCustomerId: null, claimedAt: null, read: false, readAt: null })),
+    units: template.map((t, i) => ({ index: i, label: t.label, from: t.from, to: t.to, claimed: false, claimedByCustomerId: null, claimedAt: null, read: false, readAt: null })),
     status: "open",
     createdAt: new Date().toISOString(),
     closedAt: null,
@@ -3858,19 +3934,23 @@ function tehillimUnitHtml(book, unit, session, d) {
   let statusHtml;
   if (unit.read) {
     statusHtml = `<span class="muted" style="font-size:12px;">✅ נקרא${claimer ? ` ע"י ${esc(claimer.name.split(" ")[0])}` : ""}</span>`;
-  } else if (unit.claimedByCustomerId) {
+  } else if (unit.claimed && unit.claimedByCustomerId) {
+    // נלקחה ע"י לקוחה מחוברת מזוהה - רק היא (בדיוק כמו קודם) רואה את כפתור הקריאה/סימון.
     statusHtml = claimedByMe
       ? `<a class="btn btn-small" href="/community/tehillim/${book.id}/unit/${unit.index}">לקריאה ולסימון שקראתי</a>`
       : `<span class="muted" style="font-size:12px;">נלקח ע"י ${claimer ? esc(claimer.name.split(" ")[0]) : "מישהי"}</span>`;
+  } else if (unit.claimed) {
+    // נלקחה בלי התחברות - אין דרך לזהות "אותה מבקרת" שוב, אז הקישור להשלמת הקריאה פתוח לכולן
+    // (ר' ההערה למעלה על שיטת הכבוד באיזור הזה).
+    statusHtml = `<a class="btn btn-small btn-outline" href="/community/tehillim/${book.id}/unit/${unit.index}">נלקח ע"י אורחת - לקריאה ולסימון שקראתי</a>`;
   } else {
-    statusHtml = session && session.role === "customer"
-      ? `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/claim" style="margin:0;"><button class="btn btn-small btn-outline" type="submit">אני לוקחת על עצמי</button></form>`
-      : `<span class="muted" style="font-size:12px;">פנוי</span>`;
+    // פנויה - כל אחת יכולה לקחת, גם בלי התחברות כלקוחה, לפי בקשה מפורשת.
+    statusHtml = `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/claim" style="margin:0;"><button class="btn btn-small btn-outline" type="submit">אני לוקחת על עצמי</button></form>`;
   }
-  const adminRelease = (session && session.role === "admin" && unit.claimedByCustomerId && !unit.read)
+  const adminRelease = (session && session.role === "admin" && unit.claimed && !unit.read)
     ? `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/release" style="margin:4px 0 0;" onsubmit="return confirm('לשחרר את היחידה הזו בחזרה לפנויה?');"><button class="btn btn-small btn-outline" type="submit" style="font-size:11px;">שחרור (אדמין)</button></form>`
     : "";
-  return `<div class="tehillim-unit ${unit.read ? "tehillim-unit-read" : unit.claimedByCustomerId ? "tehillim-unit-claimed" : ""}">
+  return `<div class="tehillim-unit ${unit.read ? "tehillim-unit-read" : unit.claimed ? "tehillim-unit-claimed" : ""}">
     <span class="tehillim-unit-label">${esc(unit.label)}</span>
     <span class="tehillim-unit-status">${statusHtml}</span>
     ${adminRelease}
@@ -3936,7 +4016,7 @@ route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
       <label>סיפור קצר (לא חובה)<textarea name="story" maxlength="500" placeholder="ספרי בקצרה מה קורה, אם את רוצה"></textarea></label>
       <button class="btn" style="width:100%;margin-top:10px;" type="submit">הוספה לרשימה</button>
     </form>
-  </div>` : `<p class="muted" style="text-align:center;"><a href="/login?role=customer&next=${encodeURIComponent("/community/tehillim")}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כלקוחה</a> כדי להוסיף שם לתפילה או לקחת על עצמך פרק.</p>`;
+  </div>` : `<p class="muted" style="text-align:center;"><a href="/login?role=customer&next=${encodeURIComponent("/community/tehillim")}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כלקוחה</a> כדי להוסיף שם לתפילה (לקיחת פרק פתוחה לכולן, גם בלי התחברות).</p>`;
 
   const addStoryFormHtml = isCustomer ? `
   <div class="panel" style="max-width:560px;margin:0 auto 14px;">
@@ -3947,10 +4027,18 @@ route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
     </form>
   </div>` : "";
 
+  // ציטוט זכרון בראש העמוד, בגדול - לפי בקשה מפורשת. עיצוב מכובד ומאופק (ר' .tehillim-quote*
+  // ב-layout.js) בלי אייקונים קלילים, בהתחשב בהקשר ההיסטורי הכבד של הציטוט.
+  const quoteHtml = `
+  <div class="tehillim-quote">
+    <p class="tehillim-quote-text">"הדבר הכי גדול זה לעשות טוב למישהו אחר"</p>
+    <p class="tehillim-quote-attribution">האדמו"ר מפיאסצנה, בתופת של תקופת השואה ומחנות ההשמדה</p>
+  </div>`;
   const body = `
-  <p class="muted" style="text-align:center;"><a href="/community" style="color:var(--rose-dark);font-weight:700;">מאגרי קהילה</a> › מתחזקות ומחזקות</p>
-  <h1 class="section-title" style="margin-top:2px;">🕯️ מתחזקות ומחזקות</h1>
-  <p class="muted" style="text-align:center;margin-top:-10px;">רשימת שמות לתפילה, ותהילים קהילתי - כל אחת יכולה לקחת על עצמה פרק או יום ולסמן שקראה.</p>
+  ${quoteHtml}
+  <p class="muted" style="text-align:center;"><a href="/community" style="color:var(--rose-dark);font-weight:700;">מאגרי קהילה</a> › בלב אחד</p>
+  <h1 class="section-title" style="margin-top:2px;">🕯️ בלב אחד</h1>
+  <p class="muted" style="text-align:center;margin-top:-10px;">רשימת שמות לתפילה, ותהילים קהילתי - כל אחת יכולה לקחת על עצמה פרק או יום ולסמן שקראה, גם בלי להתחבר.</p>
 
   <div class="tehillim-stats-row">
     <div class="tehillim-stat"><span class="tehillim-stat-num">${closedBooksCount}</span><span class="tehillim-stat-label">ספרים נסגרו</span></div>
@@ -3967,9 +4055,14 @@ route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
   <div class="panel">
     <h3>📖 תהילים לפי פרקים (150 פרקים)</h3>
     <p class="muted" style="font-size:13px;">ספר מס' ${esc(String(chaptersBook.id))} - כל 150 הפרקים נקראים, נפתח ספר חדש אוטומטית.</p>
-    <div class="tehillim-chapters-grid">
-      ${chaptersBook.units.map((u) => tehillimUnitHtml(chaptersBook, u, ctx.session, d)).join("")}
-    </div>
+    <!-- רשימה ארוכה (150 יחידות) - מכווצת כברירת מחדל בתוך details/summary כדי לא להציף
+         את העמוד, לפי בקשה מפורשת לצמצם אותה. -->
+    <details class="tehillim-chapters-details">
+      <summary>להצגת כל 150 הפרקים (לחצי לפתיחה/סגירה)</summary>
+      <div class="tehillim-chapters-grid">
+        ${chaptersBook.units.map((u) => tehillimUnitHtml(chaptersBook, u, ctx.session, d)).join("")}
+      </div>
+    </details>
   </div>
 
   <h2 class="section-title" style="margin-top:30px;">שמות לתפילה</h2>
@@ -3985,7 +4078,7 @@ route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
     return `<div class="panel" style="background:var(--cream);margin-bottom:10px;"><p style="margin:0;font-size:14px;line-height:1.4;">${esc(s.text)}</p><p class="muted" style="margin:6px 0 0;font-size:12px;">${author ? esc(author.name.split(" ")[0]) : "אנונימית"} · ${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</p>${del}</div>`;
   }).join("") : `<p class="muted" style="text-align:center;">עדיין אין סיפורים - היי הראשונה לשתף.</p>`}
   `;
-  sendHtml(res, 200, page({ title: "מתחזקות ומחזקות", session: ctx.session, body, query }));
+  sendHtml(res, 200, page({ title: "בלב אחד", session: ctx.session, body, query }));
 });
 
 route("POST", "/community/tehillim/names/add", async (req, res, params, query, ctx) => {
@@ -4076,13 +4169,17 @@ route("POST", "/community/tehillim/salvation-stories/:id/delete", async (req, re
   redirect(res, `/community/tehillim?ok=${encodeURIComponent("הסיפור הוסר.")}`);
 });
 
+// לקיחת יחידה פתוחה לכולן - גם בלי התחברות כלקוחה (לפי בקשה מפורשת). אם יש session של לקוחה
+// מחוברת נשמר גם claimedByCustomerId (כדי לשמור על ההתנהגות הקודמת - רק היא תוכל לסמן קראתי
+// מרשימת היחידות עצמה); אורחת לא מחוברת מקבלת claimed=true בלי customerId, וכל אחת שתיכנס
+// לעמוד היחידה הספציפי הזה תוכל להשלים את הסימון (ר' ההערה על "שיטת הכבוד" למעלה).
 route("POST", "/community/tehillim/:bookId/unit/:unitIndex/claim", async (req, res, params, query, ctx) => {
-  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/tehillim")}`);
   const d = db.load();
   const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
   const unit = book && book.units[parseInt(params.unitIndex, 10)];
-  if (book && unit && !unit.claimedByCustomerId && !unit.read) {
-    unit.claimedByCustomerId = ctx.session.id;
+  if (book && unit && !unit.claimed && !unit.read) {
+    unit.claimed = true;
+    unit.claimedByCustomerId = (ctx.session && ctx.session.role === "customer") ? ctx.session.id : null;
     unit.claimedAt = new Date().toISOString();
     db.save();
   }
@@ -4094,7 +4191,7 @@ route("POST", "/community/tehillim/:bookId/unit/:unitIndex/release", async (req,
   const d = db.load();
   const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
   const unit = book && book.units[parseInt(params.unitIndex, 10)];
-  if (unit && !unit.read) { unit.claimedByCustomerId = null; unit.claimedAt = null; }
+  if (unit && !unit.read) { unit.claimed = false; unit.claimedByCustomerId = null; unit.claimedAt = null; }
   db.save();
   redirect(res, `/community/tehillim?ok=${encodeURIComponent("היחידה שוחררה.")}`);
 });
@@ -4104,7 +4201,9 @@ route("GET", "/community/tehillim/:bookId/unit/:unitIndex", async (req, res, par
   const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
   const unit = book && book.units[parseInt(params.unitIndex, 10)];
   if (!book || !unit) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את זה.</p>` }));
-  const isClaimer = ctx.session && ctx.session.role === "customer" && ctx.session.id === unit.claimedByCustomerId;
+  // אם נלקחה בלי התחברות (claimed=true, בלי claimedByCustomerId) - כל מי שמגיעה לעמוד היחידה
+  // הספציפי הזה יכולה להשלים את הסימון (אין דרך לזהות "אותה מבקרת" שוב, ר' ההערה למעלה).
+  const isClaimer = unit.claimed && (!unit.claimedByCustomerId || (ctx.session && ctx.session.role === "customer" && ctx.session.id === unit.claimedByCustomerId));
   const isAdmin = ctx.session && ctx.session.role === "admin";
   const body = `
   <h1 class="section-title">${esc(unit.label)}</h1>
@@ -4115,8 +4214,8 @@ route("GET", "/community/tehillim/:bookId/unit/:unitIndex", async (req, res, par
       ? `<p style="margin-top:16px;font-weight:700;">✅ כבר סומן כנקרא</p>`
       : (isClaimer || isAdmin)
         ? `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/read" style="margin-top:16px;"><button class="btn" type="submit">✅ סימנתי שקראתי</button></form>`
-        : `<p class="muted" style="margin-top:16px;">${unit.claimedByCustomerId ? "היחידה הזו נלקחה על ידי מישהי אחרת." : "עדיין לא נלקחה - אפשר לקחת אותה מעמוד מתחזקות ומחזקות."}</p>`}
-    <p class="muted" style="margin-top:16px;"><a href="/community/tehillim">← חזרה לעמוד מתחזקות ומחזקות</a></p>
+        : `<p class="muted" style="margin-top:16px;">${unit.claimed ? "היחידה הזו נלקחה על ידי מישהי אחרת." : "עדיין לא נלקחה - אפשר לקחת אותה מעמוד בלב אחד."}</p>`}
+    <p class="muted" style="margin-top:16px;"><a href="/community/tehillim">← חזרה לעמוד בלב אחד</a></p>
   </div>
   `;
   sendHtml(res, 200, page({ title: esc(unit.label), session: ctx.session, body, query }));
@@ -4127,9 +4226,9 @@ route("POST", "/community/tehillim/:bookId/unit/:unitIndex/read", async (req, re
   const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
   const unit = book && book.units[parseInt(params.unitIndex, 10)];
   if (!book || !unit) return redirect(res, "/community/tehillim");
-  const isClaimer = ctx.session && ctx.session.role === "customer" && ctx.session.id === unit.claimedByCustomerId;
+  const isClaimer = unit.claimed && (!unit.claimedByCustomerId || (ctx.session && ctx.session.role === "customer" && ctx.session.id === unit.claimedByCustomerId));
   const isAdmin = ctx.session && ctx.session.role === "admin";
-  if (!isClaimer && !isAdmin) return redirect(res, "/login");
+  if (!isClaimer && !isAdmin) return redirect(res, "/community/tehillim");
   if (!unit.read) {
     unit.read = true;
     unit.readAt = new Date().toISOString();
