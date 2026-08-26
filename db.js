@@ -421,6 +421,31 @@ function migrate(data) {
   (data.tehillimBooks || []).forEach((b) => {
     (b.units || []).forEach((u) => { if (typeof u.claimed !== "boolean") { u.claimed = Boolean(u.claimedByCustomerId); changed = true; } });
   });
+  // מתקן תוויות ישנות של ספר "לפי פרקים" שנוצר לפני שהתווית עברה לגימטריה עברית (2026-08-26)
+  // - הספר נוצר עם label בפורמט "פרק 1", "פרק 2" שנשמר כמחרוזת קבועה בזמן היצירה (לא מחושב
+  // מחדש אוטומטית כשהקוד מתעדכן), אז צריך לעדכן בפועל את הרשומות הקיימות ל"פרק א'", "פרק ב'"
+  // וכו' - זהה בדיוק לפונקציה hebrewGematria ב-server.js. רק division==="chapters" (שם כל
+  // יחידה = פרק בודד אחד, from===to) - "daily" (ימות השבוע) לא נוגע בזה בכלל.
+  function hebrewGematriaLabel(num) {
+    const ones = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];
+    const tens = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
+    const hundreds = num >= 100 ? "ק" : "";
+    const rest = num % 100;
+    let restLetters;
+    if (rest === 15) restLetters = "טו";
+    else if (rest === 16) restLetters = "טז";
+    else restLetters = tens[Math.floor(rest / 10)] + ones[rest % 10];
+    const letters = hundreds + restLetters;
+    if (letters.length <= 1) return letters + "'";
+    return letters.slice(0, -1) + "\"" + letters.slice(-1);
+  }
+  (data.tehillimBooks || []).forEach((b) => {
+    if (b.division !== "chapters") return;
+    (b.units || []).forEach((u) => {
+      const correctLabel = `פרק ${hebrewGematriaLabel(u.from)}`;
+      if (u.label !== correctLabel) { u.label = correctLabel; changed = true; }
+    });
+  });
   if (!Array.isArray(data.communityListings)) { data.communityListings = []; changed = true; }
   (data.communityListings || []).forEach((c) => {
     if (typeof c.viewCount !== "number") { c.viewCount = 0; changed = true; }
