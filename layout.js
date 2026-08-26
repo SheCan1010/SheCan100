@@ -86,6 +86,27 @@ function arenaUnseenPollCount(session) {
   return (d.polls || []).filter((p) => p.source === "admin" && audienceMatches(p) && new Date(p.createdAt).getTime() > lastSeenAt).length;
 }
 
+// כמה פריטי "מסירות"/"מכירת יד 2" חדשים עלו (approved) בתגיות שהלקוחה נרשמה אליהן
+// (customer.communityNotifyTags), מאז שביקרה לאחרונה באחד מעמודי /community/giveaway
+// או /community/sale (ר' d.communityLastSeen, שנחתם ב-GET /community/:type בשרת - אותו
+// דפוס בדיוק כמו arenaUnseenPollCount למעלה, רק לפי תגיות מנוי במקום audience). רלוונטי
+// רק ללקוחות מחוברות (עצמאיות ואורחות לא נרשמות להתראות קהילה בכלל).
+function communityUnseenCount(session) {
+  if (!session || session.role !== "customer") return 0;
+  const d = db.load();
+  const customer = (d.customers || []).find((c) => c.id === session.id);
+  if (!customer) return 0;
+  const notifyTags = customer.communityNotifyTags || {};
+  const lastSeen = (d.communityLastSeen || {})[`customer:${session.id}`];
+  const lastSeenAt = lastSeen ? new Date(lastSeen).getTime() : 0;
+  return (d.communityListings || []).filter((c) => {
+    if (c.status !== "approved") return false;
+    if (c.type !== "giveaway" && c.type !== "sale") return false;
+    if (!c.tag || !(notifyTags[c.type] || []).includes(c.tag)) return false;
+    return new Date(c.createdAt).getTime() > lastSeenAt;
+  }).length;
+}
+
 // Green version of badge() (vs. the red "unread" one above), used only on the admin's own
 // "ניהול" nav link - a quick, always-visible signal that something is waiting on her, without
 // needing to actually open /admin to find out. Per explicit request.
@@ -151,7 +172,7 @@ function nav(session) {
           <a class="nav-link" href="/deals">הטבות SheCan</a>
           <a class="nav-link" href="/stories">SheCan Stories</a>
           <a class="nav-link" href="/magazine">מגזין SheCan</a>
-          <a class="nav-link nav-link-community" href="/community">קהילת SheCan</a>
+          <a class="nav-link nav-link-community" href="/community">קהילת SheCan${badge(communityUnseenCount(session))}</a>
           <a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${badge(arenaUnseenPollCount(session))}</a>
           <a class="nav-link" href="/patternmakers">✂️ מודליסטיות</a>
@@ -505,7 +526,20 @@ form .field{margin-bottom:6px;}
 /* Card width tuned so 3 fit per row (instead of 2) on the main content column, including on
    pages with the sidebar sponsor/ad slots eating into that width - the card itself is a touch
    smaller (shorter photo, tighter body padding below) to keep 3-per-row comfortable. */
+/* ניתוב מיקום (breadcrumb) - ר' breadcrumbHtml למעלה. אפור/ורוד עדין כדי לא להתחרות עם
+   כותרת העמוד שמתחתיו, עם ריווח נוח ללחיצה גם במובייל. */
+.breadcrumb{text-align:center;font-size:13.5px;color:#8a8b83;margin:0 0 10px;display:flex;flex-wrap:wrap;justify-content:center;gap:4px;align-items:center;}
+.breadcrumb a{color:var(--rose-dark);font-weight:600;text-decoration:none;}
+.breadcrumb a:hover{text-decoration:underline;}
+.breadcrumb-sep{margin:0 4px;color:#c7c8c0;}
+.breadcrumb-current{font-weight:700;color:#5c5d55;}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:14px;}
+/* עטיפה סביב כרטיס "העצמאיות שאהבת" ב-/account + טופס ההערה הפרטית מתחתיו (ר' favCards
+   ב-GET /account) - div חיצוני נפרד מהכרטיס עצמו (שהוא <a>) כדי שהטופס לא יהיה מקונן
+   בתוך קישור. יושב בתוך .grid כמו כל כרטיס רגיל, ה-grid לא תלוי במבנה הפנימי של הילדים. */
+.fav-card-wrap{display:flex;flex-direction:column;gap:6px;}
+.fav-note-form{display:flex;flex-direction:column;gap:6px;background:var(--cream);border-radius:10px;padding:8px;}
+.fav-note-textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:44px;font-family:inherit;font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--border, #e2d8cf);}
 /* "מאגרי קהילה" hub tiles - like .cat-card but roomier (icon + title + one-line description +
    an approved-count pill), one per resource type on the /community landing page. */
 .hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;}
@@ -516,6 +550,20 @@ form .field{margin-bottom:6px;}
 .hub-card-title{font-size:19px;font-weight:800;margin-bottom:6px;}
 .hub-card-desc{font-size:13.5px;line-height:1.5;opacity:.9;margin-bottom:12px;min-height:40px;}
 .hub-card-count{display:inline-block;font-size:12px;font-weight:700;padding:3px 12px;border-radius:12px;background:var(--rose-dark);color:#fff;}
+/* "מתחזקות ומחזקות" (תהילים קהילתי, נוסף 2026-08-26) - שורת סטטיסטיקה (ספרים שנסגרו/פרקים
+   שנקראו/שמות לתפילה) + גריד יחידות (ימי השבוע, וגריד קומפקטי יותר של 150 הפרקים). */
+.tehillim-stats-row{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin:0 0 22px;}
+.tehillim-stat{background:var(--white);border-radius:12px;padding:14px 20px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.05);min-width:110px;}
+.tehillim-stat-num{display:block;font-size:26px;font-weight:800;color:var(--rose-dark);}
+.tehillim-stat-label{display:block;font-size:12.5px;color:#8a8b83;margin-top:2px;}
+.tehillim-unit{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:var(--cream);margin-bottom:8px;}
+.tehillim-unit-claimed{background:#fbeee7;}
+.tehillim-unit-read{background:#eaf3e6;}
+.tehillim-unit-label{font-weight:700;font-size:14px;}
+.tehillim-unit-status{display:flex;align-items:center;}
+.tehillim-chapters-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;}
+.tehillim-chapters-grid .tehillim-unit{margin-bottom:0;padding:8px 10px;flex-direction:column;align-items:flex-start;gap:6px;}
+.tehillim-chapters-grid .tehillim-unit-label{font-size:13px;}
 .card{background:var(--white);border-radius:14px;overflow:hidden;box-shadow:0 3px 14px rgba(207,161,147,.35);display:flex;flex-direction:column;}
 /* Uniform solid accent color (no more diagonal gradient) behind initials/contained logos, so
    every card without a real photo reads as one consistent color instead of a partial-looking
@@ -744,6 +792,16 @@ form .field{margin-bottom:6px;}
 .side-ad-card h4{margin:6px 0 2px;font-size:15px;font-weight:700;}
 .side-ad-card .muted{font-size:13px;}
 .side-ad-card-pinned{position:sticky;top:96px;}
+/* Tiny business photo shown on the sponsor/ad sidebar cards, per explicit request - a small
+   round thumbnail sitting beside the text (first in DOM order so it lands on the RIGHT side
+   of the text in this RTL layout). Falls back to the default business logo when the business
+   has no photo/logo of its own (see cardPhotoHtml/avatarUri in server.js for the same
+   fallback used elsewhere) - the row is skipped entirely only in the rare case neither exists.
+   background-size:contain (not cover) so a squarish logo never gets awkwardly cropped. */
+.side-ad-card-row{display:flex;align-items:center;gap:10px;}
+.side-ad-photo{width:38px;height:38px;border-radius:50%;flex-shrink:0;background-color:var(--cream);background-size:contain;background-repeat:no-repeat;background-position:center;}
+.side-ad-card-text{flex:1;min-width:0;}
+.side-ad-card-text h4{margin:0 0 2px;}
 @media (max-width:960px){
   .page-with-sidebars{flex-direction:column;}
   .page-with-sidebars .main-col,.page-with-sidebars .side-col-right,.page-with-sidebars .side-col-left{order:initial;width:100%;}
@@ -784,17 +842,47 @@ function cityAutocompleteHtml({ fieldName, selectedId, selectedName, placeholder
   </div>`;
 }
 
+// ניתוב מיקום (breadcrumb) - לפי בקשה מפורשת: "דף הבית >> יופי וטיפוח >> ..." עם אפשרות
+// ללחוץ על כל שלב כדי לחזור אליו. `items` הוא מערך {label, href} - href מוגדר = לינק פעיל,
+// href חסר/null = השלב הנוכחי (העמוד שבו היא כרגע, לא לינק, מודגש). דף הבית תמיד ראשון
+// ומתווסף אוטומטית - קוראות ל-breadcrumbHtml רק עם השלבים שאחריו (קטגוריה/תת-קטגוריה/
+// עצמאית וכו'). נבנה כ-<nav> נגיש עם aria-label, לא כחלק מ-page() כי לא כל עמוד צריך אותו.
+function breadcrumbHtml(items) {
+  const all = [{ label: "דף הבית", href: "/" }, ...(items || []).filter((it) => it && it.label)];
+  const partsHtml = all.map((it, i) => {
+    const isLast = i === all.length - 1;
+    const crumb = (it.href && !isLast) ? `<a href="${esc(it.href)}">${esc(it.label)}</a>` : `<span class="breadcrumb-current">${esc(it.label)}</span>`;
+    return i === 0 ? crumb : `<span class="breadcrumb-sep" aria-hidden="true">›</span>${crumb}`;
+  }).join("");
+  return `<nav class="breadcrumb" aria-label="נתיב ניווט">${partsHtml}</nav>`;
+}
+
 function sidebarCatName(d, id) {
   const c = d.categories.find((x) => x.id === id);
   return c ? c.name : "-";
 }
 
+// The small round thumbnail shown to the right of the text on a sponsor/ad sidebar card (see
+// the .side-ad-photo CSS above) - the business's own photo/logo if it has one, otherwise the
+// sitewide default business logo, otherwise no image at all (text-only, same as before this
+// feature existed). photoUri/logoUri come from whichever record (freelancer or listing) is
+// actually being advertised - a listing only ever has its own logoDataUri, never a photo.
+function sideAdPhotoHtml(photoUri, logoUri, d) {
+  const uri = photoUri || logoUri || (d.settings && d.settings.defaultBusinessLogoDataUri) || null;
+  return uri ? `<div class="side-ad-photo" style="background-image:url('${esc(uri)}');"></div>` : "";
+}
+
 function sponsorCardHtml(f, d) {
   return `
     <a class="side-ad-card" href="/freelancer/${f.id}" style="display:block;">
-      <span class="badge badge-leading">👑 עסק מוביל</span>
-      <h4>${esc(f.businessName || f.name)}</h4>
-      <div class="muted">${esc(sidebarCatName(d, f.categoryId))}</div>
+      <div class="side-ad-card-row">
+        ${sideAdPhotoHtml(f.photoDataUri, f.logoDataUri, d)}
+        <div class="side-ad-card-text">
+          <span class="badge badge-leading">👑 עסק מוביל</span>
+          <h4>${esc(f.businessName || f.name)}</h4>
+          <div class="muted">${esc(sidebarCatName(d, f.categoryId))}</div>
+        </div>
+      </div>
     </a>`;
 }
 
@@ -807,9 +895,14 @@ function adCardHtml(f, d, listing) {
   const categoryId = listing ? listing.categoryId : f.categoryId;
   return `
     <a class="side-ad-card side-ad-card-pinned" href="${href}" style="display:block;">
-      <span class="badge badge-ad">📣 מודעה</span>
-      <h4>${esc(target.businessName || target.name)}</h4>
-      <div class="muted">${esc(sidebarCatName(d, categoryId))}</div>
+      <div class="side-ad-card-row">
+        ${sideAdPhotoHtml(listing ? null : f.photoDataUri, target.logoDataUri, d)}
+        <div class="side-ad-card-text">
+          <span class="badge badge-ad">📣 מודעה</span>
+          <h4>${esc(target.businessName || target.name)}</h4>
+          <div class="muted">${esc(sidebarCatName(d, categoryId))}</div>
+        </div>
+      </div>
     </a>`;
 }
 
@@ -2049,4 +2142,4 @@ function scArenaCopyLink(id, btn){
 </html>`;
 }
 
-module.exports = { page, esc, categoryIcon, cityAutocompleteHtml };
+module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml };

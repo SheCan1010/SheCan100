@@ -62,7 +62,7 @@ try {
 
 const auth = require("./auth");
 const webpush = require("./webpush");
-const { page, esc, categoryIcon, cityAutocompleteHtml } = require("./layout");
+const { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml } = require("./layout");
 const { buildJoinStoryImageBuffer } = require("./joinStory");
 const { buildReviewStoryImageBuffer } = require("./reviewStory");
 
@@ -309,6 +309,15 @@ function parseMultipart(req, contentType) {
 // Server-side backstop for the maxlength attributes on free-text bio fields - a browser
 // maxlength is easy to bypass with a direct POST, so the real limit is enforced here.
 function clip(str, max) { return (str || "").slice(0, max); }
+
+// שולף מספר גולמי ממחרוזת מחיר חופשית כמו "150 ₪" או "1,200 ש\"ח" - לשימוש בסינון לפי
+// מחיר מקסימלי בהשכרת שמלות (ר' GET /community/:type). מחזיר null אם אין ספרות בכלל.
+function parsePriceNum(str) {
+  const m = String(str || "").match(/[\d,.]+/);
+  if (!m) return null;
+  const n = parseFloat(m[0].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
 
 function extFromImageContentType(ct) {
   const map = {
@@ -564,9 +573,15 @@ function yearsInFieldShortLabel(value) {
 // frame without cropping (background-size:contain) against a plain white backing, since a
 // logo cropped/stretched to fill the frame like a photo tends to look cut off or distorted.
 // With neither, falls back to her initials over the card's uniform accent color.
-function cardPhotoHtml(photoUri, logoUri, name, cssClass) {
+// defaultLogoUri (optional) - d.settings.defaultBusinessLogoDataUri (the SheCan monogram Sapir
+// set as the sitewide default), shown instead of bare initials for a business that hasn't
+// uploaded its own photo OR logo yet. She can always replace this default via the admin panel,
+// and any business that HAS uploaded its own photo/logo keeps showing that as usual - this is
+// only the fallback for the ones that never uploaded anything at all.
+function cardPhotoHtml(photoUri, logoUri, name, cssClass, defaultLogoUri) {
   if (photoUri) return `<div class="${cssClass}" style="background-image:url('${esc(photoUri)}');background-size:cover;background-position:center;"></div>`;
   if (logoUri) return `<div class="${cssClass} ${cssClass}-logo" style="background-image:url('${esc(logoUri)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
+  if (defaultLogoUri) return `<div class="${cssClass} ${cssClass}-logo" style="background-image:url('${esc(defaultLogoUri)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
   return `<div class="${cssClass}">${initials(name)}</div>`;
 }
 // The area line shown on a card/profile: main category, plus the specific subcategory
@@ -1057,7 +1072,12 @@ function generateCouponCode() {
   return code;
 }
 
-function avatarUri(f) { return f.photoDataUri || f.logoDataUri || null; }
+// d (optional) - when given, falls back to d.settings.defaultBusinessLogoDataUri when the
+// freelancer has neither her own photo nor her own logo (see cardPhotoHtml above for the same
+// fallback used on the grid cards). Left optional (rather than required) so the handful of
+// call sites that intentionally want "did SHE upload anything at all" (e.g. her own dashboard
+// edit-preview) can keep calling avatarUri(f) with no default applied.
+function avatarUri(f, d) { return f.photoDataUri || f.logoDataUri || (d && d.settings.defaultBusinessLogoDataUri) || null; }
 
 function photoOrInitials(photoDataUri, name, cssClass) {
   if (photoDataUri) return `<div class="${cssClass}" style="background-image:url('${photoDataUri}');background-size:cover;background-position:center;"></div>`;
@@ -1131,7 +1151,7 @@ function freelancerCard(f, d, opts = {}) {
   const cardHtml = `
   <a class="${cardClass}" href="/freelancer/${f.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${f.offersHomeVisit ? "1" : "0"}" style="${featuredStoryBadge ? "position:relative;" : ""}">
     ${featuredStoryBadge}
-    ${cardPhotoHtml(f.photoDataUri, f.logoDataUri, f.businessName || f.name, "card-photo")}
+    ${cardPhotoHtml(f.photoDataUri, f.logoDataUri, f.businessName || f.name, "card-photo", d.settings.defaultBusinessLogoDataUri)}
     <div class="card-body">
       <div class="card-top">
         <h3 class="card-name">${esc(f.businessName || f.name)}</h3>
@@ -1173,7 +1193,7 @@ function additionalListingCard(f, listing, d) {
   const listingLocationIcon = locationIcon(d, f.cityId, listing.offersOnline, listing.offersHomeVisit);
   return `
   <a class="${cardClass}" href="/freelancer/${f.id}/listing/${listing.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${listing.offersHomeVisit ? "1" : "0"}">
-    ${cardPhotoHtml(null, listing.logoDataUri, listing.businessName, "card-photo")}
+    ${cardPhotoHtml(null, listing.logoDataUri, listing.businessName, "card-photo", d.settings.defaultBusinessLogoDataUri)}
     <div class="card-body">
       <div class="card-top">
         <h3 class="card-name">${esc(listing.businessName)}</h3>
@@ -1498,6 +1518,23 @@ function requireRole(session, role) {
   return session && session.role === role;
 }
 
+// Shown wherever an action (writing a review, sending a message, leaving a comment) requires a
+// CUSTOMER account specifically. A freelancer who's already logged in - just under the wrong
+// role - gets an explicit note that she needs to switch to a customer account, instead of a
+// bare "log in" link that's confusing when she's already logged in. Anonymous visitors keep
+// the original plain "log in" prompt, unchanged. actionText is the Hebrew infinitive phrase
+// that completes "כדי ..." (e.g. "לכתוב המלצה", "לשלוח הודעה") - shared between both branches
+// so they read as one consistent sentence. Per explicit request.
+function customerOnlyPrompt(ctx, loginUrl, actionText) {
+  if (ctx.session && ctx.session.role === "freelancer") {
+    const switchUrl = loginUrl.includes("role=")
+      ? loginUrl.replace(/role=[^&]*/, "role=customer")
+      : (loginUrl.includes("?") ? `${loginUrl}&role=customer` : `${loginUrl}?role=customer`);
+    return `<p class="muted">שימי לב: את מחוברת כרגע כעצמאית - כדי ${actionText} צריך להתחבר עם חשבון לקוחה. <a href="${switchUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">מעבר להתחברות כלקוחה</a></p>`;
+  }
+  return `<p class="muted"><a href="${loginUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי ${actionText}.</p>`;
+}
+
 function paymentStatusLabel(status) {
   return { free: "חינמי (תקופת השקה)", active: "פעיל", paused: "מושהה", pending_payment: "ממתין לתשלום" }[status] || status;
 }
@@ -1523,7 +1560,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update78 - 2026-08-26 - תג 'חדש' ליד כפתור הזירה בתפריט כשיש סקר מהמערכת שעדיין לא נצפה, מותאם אישית לפי קהל היעד (עצמאיות/לקוחות)";
+const DEPLOY_MARKER = "update83 - 2026-08-26 - קהילת \"מתחזקות ומחזקות\": רשימת שמות לתפילה, שני ספרי תהילים מקבילים (יומי ולפי פרקים) עם לקיחה/קריאה/סגירה ופתיחה אוטומטית, סטטיסטיקות, קבלות, וסיפורי ישועות";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -1766,7 +1803,15 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   // layout.js) takes over from there for live changes without a page reload.
   const subcatOptions = category ? subcategoriesOf(d, category).map((s) => `<option value="${s.id}" ${s.id === subcategory ? "selected" : ""}>${esc(s.name)}</option>`).join("") : "";
 
+  // ניתוב מיקום (breadcrumb) לפי בקשה מפורשת - מוצג רק כשבאמת יש קטגוריה/תת-קטגוריה נבחרת
+  // (חיפוש חופשי בלי סינון תחום לא מציג breadcrumb, אין מה "לנתב" שם).
+  const breadcrumbItems = [];
+  if (category) {
+    breadcrumbItems.push({ label: catName(d, category), href: `/search?category=${category}` });
+    if (subcategory) breadcrumbItems.push({ label: subcatName(d, category, subcategory), href: `/search?category=${category}&subcategory=${subcategory}` });
+  }
   const body = `
+  ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
       <form class="search-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות" style="margin-right:0;margin-left:0;">
         <div class="search-row">
@@ -1798,6 +1843,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       ${combinedCards.length ? `<div class="grid" id="scCardsGrid" data-view="medium">${combinedCards.map((c) => c.html).join("")}</div>` : `<p class="muted" style="text-align:center;">הפעם לא מצאנו התאמה... נסי לפתוח קצת את החיפוש, בטוח יש מישהי בשבילך.</p>`}
       </div>
       <p id="scNoLiveMatch" class="muted" style="text-align:center;display:none;">אין כרגע עצמאית שמתאימה לזה... נסי לשנות קצת את החיפוש.</p>
+      ${category ? `<p class="muted" style="text-align:center;margin-top:18px;">לא מצאת בדיוק את מי שאת מחפשת? <a href="/service-requests?category=${category}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום הזה יוכלו לפנות אלייך.</p>` : ""}
   `;
   sendHtml(res, 200, page({ title: "חיפוש", session: ctx.session, body, query }));
 });
@@ -1886,10 +1932,15 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
   const body = `
+  ${breadcrumbHtml([
+    { label: catName(d, f.categoryId), href: `/search?category=${f.categoryId}` },
+    ...(f.subcategoryId ? [{ label: subcatName(d, f.categoryId, f.subcategoryId), href: `/search?category=${f.categoryId}&subcategory=${f.subcategoryId}` }] : []),
+    { label: f.businessName || f.name },
+  ])}
   <div class="panel profile-detail profile-merged">
     <div class="profile-header-row">
       <div class="profile-header-namelogo">
-        ${zoomableImage(avatarUri(f), f.businessName || f.name, "profile-header-logo")}
+        ${zoomableImage(avatarUri(f, d), f.businessName || f.name, "profile-header-logo")}
         <div class="profile-header-info">
           <h1 class="profile-header-name">${esc(f.businessName || f.name)}</h1>
           ${f.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(f.yearsInField))}</div>` : ""}
@@ -1925,7 +1976,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   <div class="panel profile-detail" id="scReview">
     <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
     ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
-    ${isCustomer ? reviewFormHtml(f.businessName || f.name, `/freelancer/${f.id}/review`, "", myExistingReview) : `<p class="muted"><a href="${loginUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לכתוב המלצה.</p>`}
+    ${isCustomer ? reviewFormHtml(f.businessName || f.name, `/freelancer/${f.id}/review`, "", myExistingReview) : customerOnlyPrompt(ctx, loginUrl, "לכתוב המלצה")}
   </div>
 
   <div class="panel profile-detail" id="scMessageBox">
@@ -1936,7 +1987,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
         <textarea name="text" placeholder="כתבי הודעה ל ${esc(f.businessName || f.name)}..." style="min-height:80px;" required></textarea>
         <button class="btn" style="margin-top:10px;" type="submit">שליחת הודעה</button>
       </form>
-    ` : `<p class="muted"><a href="${loginUrlToMessage}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לשלוח הודעה ישירה לעצמאית.</p>`}
+    ` : customerOnlyPrompt(ctx, loginUrlToMessage, "לשלוח הודעה ישירה לעצמאית")}
   </div>
 
   ${otherApprovedListings.length ? `
@@ -2000,7 +2051,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   <div class="panel profile-detail profile-merged">
     <div class="profile-header-row">
       <div class="profile-header-namelogo">
-        ${zoomableImage(l.logoDataUri, l.businessName, "profile-header-logo")}
+        ${zoomableImage(l.logoDataUri || d.settings.defaultBusinessLogoDataUri, l.businessName, "profile-header-logo")}
         <div class="profile-header-info">
           <h1 class="profile-header-name">${esc(l.businessName)}</h1>
           ${l.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(l.yearsInField))}</div>` : ""}
@@ -2036,7 +2087,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   <div class="panel profile-detail">
     <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
     ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
-    ${isCustomer ? reviewFormHtml(l.businessName, `/freelancer/${f.id}/review`, l.id, myExistingReview) : `<p class="muted"><a href="${loginUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לכתוב המלצה.</p>`}
+    ${isCustomer ? reviewFormHtml(l.businessName, `/freelancer/${f.id}/review`, l.id, myExistingReview) : customerOnlyPrompt(ctx, loginUrl, "לכתוב המלצה")}
   </div>
 
   <div class="panel profile-detail" id="scMessageBox">
@@ -2048,7 +2099,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
         <textarea name="text" placeholder="כתבי הודעה ל ${esc(l.businessName)}..." style="min-height:80px;" required></textarea>
         <button class="btn" style="margin-top:10px;" type="submit">שליחת הודעה</button>
       </form>
-    ` : `<p class="muted"><a href="${loginUrlToMessage}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי לשלוח הודעה ישירה לעצמאית.</p>`}
+    ` : customerOnlyPrompt(ctx, loginUrlToMessage, "לשלוח הודעה ישירה לעצמאית")}
   </div>
   `;
   sendHtml(res, 200, page({ title: l.businessName, session: ctx.session, body, query }));
@@ -2207,7 +2258,9 @@ route("GET", "/reviews", async (req, res, params, query, ctx) => {
       <label>תמונה (לא חובה)
       <input type="file" name="photo" accept="image/*" /></label>
       <button class="btn" style="margin-top:12px;" type="submit">שליחה לאישור</button>
-    </form>` : `<p class="muted"><a href="/login">מתחברות</a> או <a href="/signup">נרשמות בחינם</a> כדי לכתוב לנו כמה מילים.</p>`}
+    </form>` : (ctx.session && ctx.session.role === "freelancer"
+      ? customerOnlyPrompt(ctx, `/login?next=${encodeURIComponent("/reviews")}`, "לכתוב לנו כמה מילים")
+      : `<p class="muted"><a href="/login">מתחברות</a> או <a href="/signup">נרשמות בחינם</a> כדי לכתוב לנו כמה מילים.</p>`)}
   </div>
   `;
   sendHtml(res, 200, page({ title: "המלצות", session: ctx.session, body, query }));
@@ -2417,7 +2470,7 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
           <textarea name="text" placeholder="מה חשבת על הסיפור?" required></textarea>
           <button class="btn btn-small" style="margin-top:8px;" type="submit">שליחת תגובה</button>
         </form>
-      ` : `<p class="muted"><a href="/login" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי להגיב.</p>`}
+      ` : customerOnlyPrompt(ctx, `/login?next=${encodeURIComponent("/stories")}`, "להגיב")}
     </div>`;
   }
 
@@ -2476,7 +2529,7 @@ route("GET", "/stories/:id", async (req, res, params, query, ctx) => {
         <textarea name="text" placeholder="מה חשבת על הסיפור?" required></textarea>
         <button class="btn btn-small" style="margin-top:8px;" type="submit">שליחת תגובה</button>
       </form>
-    ` : `<p class="muted"><a href="/login" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי להגיב.</p>`}
+    ` : customerOnlyPrompt(ctx, `/login?next=${encodeURIComponent(`/stories/${s.id}`)}`, "להגיב")}
   </div>
   `;
   sendHtml(res, 200, page({ title, session: ctx.session, body, query }));
@@ -3018,19 +3071,20 @@ function patternmakerCard(r, d) {
   const f = d.freelancers.find((x) => x.id === r.freelancerId);
   const name = esc(r.freelancerName || (f && (f.businessName || f.name)) || "עצמאית");
   const field = esc(r.field || "");
-  const metaParts = [
-    field ? `🎯 ${field}` : "",
+  // "מיקום, תשלום, תאריך" - כל אחד בשורה נפרדת ומודגשת משלו (לא עוד שורה אחת מחוברת עם ·),
+  // לפי בקשה מפורשת. השדה "תחום" (🎯) לא נכלל כאן - הוא כבר מופיע בכותרת הכרטיסייה למעלה.
+  const detailLines = [
     `📍 ${esc(r.location)}`,
     `💰 ${esc(r.price || "ללא תשלום")}`,
     `🗓 ${esc(r.when)}`,
-  ].filter(Boolean);
+  ];
   return `
   <div class="card">
-    <div class="card-body" style="padding:14px;">
-      <h3 style="margin:0 0 6px;font-size:16px;line-height:1.3;">✂️ דרושה מודליסטית${field ? ` ל: ${field}` : ""}</h3>
-      <p class="muted" style="margin:0 0 8px;font-size:13px;">${metaParts.join(" · ")}</p>
-      <p style="margin:0 0 10px;font-size:14px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${esc(r.details)}</p>
-      <p class="muted" style="margin:0 0 8px;font-size:12px;">מאת: ${name}</p>
+    <div class="card-body" style="padding:18px;">
+      <h3 style="margin:0 0 8px;font-size:17px;line-height:1.3;">✂️ דרושה מודליסטית${field ? ` ל: ${field}` : ""}</h3>
+      ${detailLines.map((line) => `<p style="margin:0 0 4px;font-size:14px;font-weight:700;">${line}</p>`).join("")}
+      <p style="margin:8px 0 12px;font-size:14px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${esc(r.details)}</p>
+      <p style="margin:0 0 10px;font-size:16px;font-weight:800;">מאת: ${name}</p>
       ${f && f.status === "approved" && f.active !== false
         ? `<a class="btn btn-small" style="text-align:center;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
         : `<p class="muted" style="font-size:12px;">הפרופיל שפרסם/ה את הבקשה כרגע לא זמין.</p>`}
@@ -3118,15 +3172,202 @@ route("POST", "/patternmakers/:id/delete", async (req, res, params, query, ctx) 
   redirect(res, `/patternmakers?ok=${encodeURIComponent("הבקשה הוסרה.")}`);
 });
 
+// ===================== "בקשות שירות" (נוסף 2026-08-26) =====================
+// ההפך מ-patternmakerRequests למעלה: כאן לקוחה מפרסמת בקשה לשירות ספציפי (למשל "מעצבת שיער
+// ל-2 אחיות בראשון לציון") שממוינת לפי קטגוריה - לא לוח פתוח לכולן, אלא "ליד" ממוקד שמוצג
+// רק לעצמאיות מאותה קטגוריה (ר' serviceRequestsSectionHtml, נקרא מ-GET /freelancer-dashboard),
+// ורק למי שמסומנת tier==="premium" אם d.settings.serviceRequestsPremiumOnly דלוק - כל עוד
+// הדגל הזה כבוי (ברירת המחדל) זה פתוח לכל עצמאית מאושרת בקטגוריה, לפי בקשה מפורשת.
+function serviceRequestCard(r, d) {
+  const detailLines = [
+    r.eventDate ? `🗓 ${esc(r.eventDate)}` : "",
+    r.budget ? `💰 ${esc(r.budget)}` : "",
+    r.peopleCount ? `👥 ${esc(r.peopleCount)}` : "",
+    r.cityId ? `📍 ${esc(cityName(d, r.cityId))}` : "",
+  ].filter(Boolean);
+  const contactRows = [
+    r.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(r.phone)}">${esc(r.phone)}</a></div>` : "",
+    (r.hasWhatsapp && r.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(r.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
+    r.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></div>` : "",
+  ].filter(Boolean).join("");
+  return `
+  <div class="panel" style="background:var(--cream);">
+    <h4 style="margin:0 0 6px;">${esc(r.title)}</h4>
+    <p class="muted" style="margin:0 0 6px;font-size:13px;">${esc(subcatName(d, r.categoryId, r.subcategoryId) || catName(d, r.categoryId))}</p>
+    ${detailLines.length ? `<p style="margin:0 0 8px;font-weight:700;font-size:14px;">${detailLines.join(" · ")}</p>` : ""}
+    ${r.description ? `<p style="margin:0 0 10px;font-size:14px;line-height:1.4;">${esc(r.description)}</p>` : ""}
+    ${contactRows}
+  </div>`;
+}
+
+// עמוד הלקוחה - יצירה/עריכה/מחיקה של הבקשות שלה. בכוונה בלי רשימת "כל הבקשות הפתוחות" פה
+// (בשונה מ-/patternmakers שפתוח לכולן) - זו לא לוח מודעות ציבורי, רק ניהול הבקשות שהיא עצמה
+// פרסמה. אפשר להגיע לכאן עם ?category=X (למשל מכפתור ב-/search) כדי למלא מראש את הקטגוריה.
+route("GET", "/service-requests", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const isCustomer = requireRole(ctx.session, "customer");
+  const customer = isCustomer ? d.customers.find((c) => c.id === ctx.session.id) : null;
+  const preselectCategory = query.get("category") || "";
+  const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === preselectCategory ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const subcatOptions = preselectCategory ? subcategoriesOf(d, preselectCategory).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("") : "";
+  const myRequests = customer ? (d.serviceRequests || []).filter((r) => r.customerId === customer.id).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : [];
+  const body = `
+  <h1 class="section-title">📣 בקשת שירות מעצמאיות</h1>
+  <p class="muted" style="text-align:center;">לא מוצאת בדיוק את מי שאת צריכה? פרסמי בקשה עם הפרטים שלך - היא תישלח ישירות לעצמאיות בתחום הזה, והן יוכלו לפנות אלייך.</p>
+  ${customer ? `
+    <div class="panel" style="max-width:560px;margin:0 auto 24px;">
+      <h3>פרסום בקשה חדשה</h3>
+      <form method="post" action="/service-requests/add">
+        <label>באיזה תחום את צריכה עזרה?<select name="category" id="scSRCategory" required onchange="scUpdateSubcats(this, document.getElementById('scSRSubcat'), '', 'לא חובה')"><option value="">בחרי תחום</option>${catOptions}</select></label>
+        <label>תת-תחום (לא חובה)<select name="subcategory" id="scSRSubcat"><option value="">${preselectCategory ? "לא חובה" : "בחרי קודם תחום"}</option>${subcatOptions}</select></label>
+        <label>כותרת קצרה<input type="text" name="title" required maxlength="100" placeholder="לדוגמה: מעצבת שיער ל-2 אחיות" /></label>
+        <label>פרטים נוספים<textarea name="description" maxlength="500" placeholder="ספרי בקצרה מה בדיוק את צריכה"></textarea></label>
+        <label>תאריך (לא חובה)<input type="text" name="eventDate" maxlength="100" placeholder="לדוגמה: 14.9.2026 או גמיש" /></label>
+        <label>תקציב (לא חובה)<input type="text" name="budget" maxlength="100" placeholder="לדוגמה: עד 500 ₪" /></label>
+        <label>כמות אנשים (לא חובה)<input type="text" name="peopleCount" maxlength="60" placeholder="לדוגמה: 2 אחיות" /></label>
+        <label>עיר (לא חובה)${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}</label>
+        <label>טלפון ליצירת קשר<input type="text" name="phone" value="${esc(customer.phone || "")}" placeholder="050-1234567" /></label>
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" style="width:auto;" /><span>אותו מספר זמין גם ב-WhatsApp</span></label>
+        <label>אימייל ליצירת קשר<input type="email" name="email" value="${esc(customer.email)}" /></label>
+        <button class="btn" style="width:100%;margin-top:16px;" type="submit">פרסום הבקשה</button>
+      </form>
+    </div>
+    ${myRequests.length ? `
+    <div class="panel" style="max-width:560px;margin:0 auto;">
+      <h3>הבקשות שלך</h3>
+      ${myRequests.map((r) => `
+        <div style="border-top:1px solid var(--rose);padding:10px 0;">
+          <p style="margin:0 0 4px;font-weight:700;">${esc(r.title)}</p>
+          <p class="muted" style="margin:0 0 8px;font-size:13px;">${esc(subcatName(d, r.categoryId, r.subcategoryId) || catName(d, r.categoryId))}</p>
+          <div style="display:flex;gap:10px;">
+            <a class="btn btn-small btn-outline" href="/service-requests/${r.id}/edit">עריכה</a>
+            <form method="post" action="/service-requests/${r.id}/delete" onsubmit="return confirm('הבקשה כבר לא רלוונטית? היא תוסר לצמיתות.');"><button class="btn btn-small btn-outline" type="submit">הסרה</button></form>
+          </div>
+        </div>
+      `).join("")}
+    </div>` : ""}
+  ` : `<p class="muted" style="text-align:center;"><a href="/login?role=customer&next=${encodeURIComponent("/service-requests")}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כלקוחה</a> כדי לפרסם בקשה משלך.</p>`}
+  `;
+  sendHtml(res, 200, page({ title: "בקשת שירות", session: ctx.session, body, query }));
+});
+
+route("POST", "/service-requests/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/service-requests")}`);
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (!customer) return redirect(res, "/service-requests");
+  const body = await readBody(req);
+  const categoryId = d.categories.find((c) => c.id === body.get("category")) ? body.get("category") : "";
+  const title = clip((body.get("title") || "").trim(), 100);
+  if (!categoryId || !title) return redirect(res, `/service-requests?err=${encodeURIComponent("נא לבחור תחום ולמלא כותרת.")}`);
+  const subcategoryId = (subcategoriesOf(d, categoryId).some((s) => s.id === body.get("subcategory"))) ? body.get("subcategory") : "";
+  const now = new Date().toISOString();
+  d.serviceRequests = d.serviceRequests || [];
+  d.serviceRequests.push({
+    id: db.nextId("serviceRequest"),
+    customerId: customer.id,
+    categoryId, subcategoryId, title,
+    description: clip((body.get("description") || "").trim(), 500),
+    eventDate: clip((body.get("eventDate") || "").trim(), 100),
+    budget: clip((body.get("budget") || "").trim(), 100),
+    peopleCount: clip((body.get("peopleCount") || "").trim(), 60),
+    cityId: body.get("city") || "",
+    phone: clip((body.get("phone") || "").trim(), 30),
+    hasWhatsapp: body.get("hasWhatsapp") === "1",
+    email: clip((body.get("email") || "").trim(), 150) || customer.email,
+    createdAt: now,
+    updatedAt: now,
+  });
+  db.save();
+  redirect(res, `/service-requests?ok=${encodeURIComponent("הבקשה שלך פורסמה!")}`);
+});
+
+route("GET", "/service-requests/:id/edit", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const r = (d.serviceRequests || []).find((x) => x.id === params.id && x.customerId === ctx.session.id);
+  if (!r) return redirect(res, `/service-requests?err=${encodeURIComponent("הבקשה לא נמצאה.")}`);
+  const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === r.categoryId ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const subcatOptions = subcategoriesOf(d, r.categoryId).map((s) => `<option value="${s.id}" ${s.id === r.subcategoryId ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const body = `
+  <h1 class="section-title">עריכת בקשה</h1>
+  <div class="panel" style="max-width:560px;margin:0 auto;">
+    <form method="post" action="/service-requests/${r.id}/edit">
+      <label>באיזה תחום את צריכה עזרה?<select name="category" id="scSREditCategory" required onchange="scUpdateSubcats(this, document.getElementById('scSREditSubcat'), '', 'לא חובה')"><option value="">בחרי תחום</option>${catOptions}</select></label>
+      <label>תת-תחום (לא חובה)<select name="subcategory" id="scSREditSubcat"><option value="">לא חובה</option>${subcatOptions}</select></label>
+      <label>כותרת קצרה<input type="text" name="title" required maxlength="100" value="${esc(r.title)}" /></label>
+      <label>פרטים נוספים<textarea name="description" maxlength="500">${esc(r.description || "")}</textarea></label>
+      <label>תאריך (לא חובה)<input type="text" name="eventDate" maxlength="100" value="${esc(r.eventDate || "")}" /></label>
+      <label>תקציב (לא חובה)<input type="text" name="budget" maxlength="100" value="${esc(r.budget || "")}" /></label>
+      <label>כמות אנשים (לא חובה)<input type="text" name="peopleCount" maxlength="60" value="${esc(r.peopleCount || "")}" /></label>
+      <label>עיר (לא חובה)${cityAutocompleteHtml({ fieldName: "city", selectedId: r.cityId || "", selectedName: r.cityId ? cityName(d, r.cityId) : "", placeholder: "מאיזו עיר?" })}</label>
+      <label>טלפון ליצירת קשר<input type="text" name="phone" value="${esc(r.phone || "")}" /></label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" ${r.hasWhatsapp ? "checked" : ""} style="width:auto;" /><span>אותו מספר זמין גם ב-WhatsApp</span></label>
+      <label>אימייל ליצירת קשר<input type="email" name="email" value="${esc(r.email || "")}" /></label>
+      <button class="btn" style="width:100%;margin-top:16px;" type="submit">שמירת השינויים</button>
+    </form>
+    <p class="muted" style="margin-top:14px;"><a href="/service-requests">← חזרה לבקשות שלי</a></p>
+  </div>
+  `;
+  sendHtml(res, 200, page({ title: "עריכת בקשה", session: ctx.session, body, query }));
+});
+
+route("POST", "/service-requests/:id/edit", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const r = (d.serviceRequests || []).find((x) => x.id === params.id && x.customerId === ctx.session.id);
+  if (!r) return redirect(res, `/service-requests?err=${encodeURIComponent("הבקשה לא נמצאה.")}`);
+  const body = await readBody(req);
+  const categoryId = d.categories.find((c) => c.id === body.get("category")) ? body.get("category") : r.categoryId;
+  const title = clip((body.get("title") || "").trim(), 100);
+  if (!title) return redirect(res, `/service-requests/${r.id}/edit?err=${encodeURIComponent("נא למלא כותרת.")}`);
+  // "יתעדכן אוטומטית" לפי בקשה מפורשת - עורכים ישירות את אותה רשומה (לא יוצרים העתק), כך
+  // שכל מקום שמציג אותה (ר' serviceRequestCard בלוח הבקשות של עצמאית) מציג תמיד את הגרסה
+  // העדכנית בלי שום קוד סנכרון נוסף.
+  r.categoryId = categoryId;
+  r.subcategoryId = (subcategoriesOf(d, categoryId).some((s) => s.id === body.get("subcategory"))) ? body.get("subcategory") : "";
+  r.title = title;
+  r.description = clip((body.get("description") || "").trim(), 500);
+  r.eventDate = clip((body.get("eventDate") || "").trim(), 100);
+  r.budget = clip((body.get("budget") || "").trim(), 100);
+  r.peopleCount = clip((body.get("peopleCount") || "").trim(), 60);
+  r.cityId = body.get("city") || "";
+  r.phone = clip((body.get("phone") || "").trim(), 30);
+  r.hasWhatsapp = body.get("hasWhatsapp") === "1";
+  r.email = clip((body.get("email") || "").trim(), 150);
+  r.updatedAt = new Date().toISOString();
+  db.save();
+  redirect(res, `/service-requests?ok=${encodeURIComponent("הבקשה עודכנה!")}`);
+});
+
+route("POST", "/service-requests/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const r = (d.serviceRequests || []).find((x) => x.id === params.id && x.customerId === ctx.session.id);
+  if (r) {
+    d.serviceRequests = d.serviceRequests.filter((x) => x.id !== params.id);
+    db.save();
+  }
+  redirect(res, `/service-requests?ok=${encodeURIComponent("הבקשה הוסרה.")}`);
+});
+
 // ===================== "מאגרי קהילה" (נוסף 2026-08-26) =====================
 // שמונה סוגי משאבים קהילתיים שכולם חיים באותה רשימה אחת (d.communityListings), מובחנים
 // לפי type - ר' ההערה על communityListings ב-db.js. tags הם רשימת תת-קטגוריות חופשית לכל
 // סוג, לבחירה בטופס ההוספה ולסינון בדף הדפדוף.
-const COMMUNITY_TYPE_ORDER = ["gemach", "rental", "workshop", "class", "giveaway", "sale", "tutor", "product"];
-// אפשרות תגובה (כוכבים + טקסט, ר' d.reviews עם type:"community") קיימת רק ב-3 מתוך 8
+const COMMUNITY_TYPE_ORDER = ["gemach", "rental", "workshop", "class", "giveaway", "sale", "dressWanted", "tutor", "product"];
+// אפשרות תגובה (כוכבים + טקסט, ר' d.reviews עם type:"community") קיימת רק ב-3 מתוך 9
 // הסוגים - חוגים, מורות פרטיות והמלצות מוצרים - לא בשאר. נבדק גם בטופס (מוצג רק לסוגים
 // האלה) וגם ב-route עצמו (הגנה כפולה - ר' POST /community/:type/:id/review).
 const COMMUNITY_REVIEWABLE_TYPES = ["class", "tutor", "product"];
+// תגית "שמלות ערב" המשותפת ל-rental.tags ו-sale.tags למטה - קבוע יחיד במקום מחרוזת
+// מוקלדת פעמיים, כדי שאי אפשר יהיה לטעות בין השתיים (ר' גם השימוש בה בסינון השכרות למטה).
+const DRESS_TAG = "שמלות ערב (צנועות בלבד)";
+// רשימות סגורות לסינון/טפסים של פרטי שמלה (צבע/אורך/קהל יעד) - רלוונטי רק להשכרת שמלות
+// (ר' ההערה המורחבת ליד GET /community/:type על סינון השכרת שמלות, לפי בקשה מפורשת).
+const DRESS_COLORS = ["שחור", "לבן", "אדום/בורדו", "כחול/נייבי", "ורוד", "ירוק", "זהב", "כסף", "סגול", "אפור", "בז'/חום", "רב-גוני", "אחר"];
+const DRESS_LENGTHS = ["קצרה", "מידי (עד/מתחת לברך)", "ארוכה"];
+const DRESS_AUDIENCES = ["נשים", "ילדות"];
 const COMMUNITY_TYPES = {
   gemach: {
     label: "גמ\"חים", singular: "גמ\"ח", icon: "🤲",
@@ -3136,7 +3377,10 @@ const COMMUNITY_TYPES = {
   rental: {
     label: "השכרות", singular: "השכרה", icon: "📦",
     desc: "השכרת ציוד לאירועים, קמפינג ועוד",
-    tags: ["ציוד לאירועים", "קמפינג וטיולים", "ציוד לתינוקות", "ריהוט", "אחר"],
+    // DRESS_TAG נוסף לפי בקשה מפורשת - קטגוריה ייעודית להשכרת שמלות ערב צנועות, באותה
+    // תגית בדיוק גם ב-sale.tags למטה כדי שאותה שמלה תוכל להיות מושכרת או נמכרת (שתי
+    // רשומות נפרדות, אחת בכל סוג, לפי מה שהמוכרת/המשכירה בחרה).
+    tags: ["ציוד לאירועים", "קמפינג וטיולים", "ציוד לתינוקות", "ריהוט", DRESS_TAG, "אחר"],
   },
   workshop: {
     label: "סדנאות", singular: "סדנה", icon: "🎨",
@@ -3163,7 +3407,19 @@ const COMMUNITY_TYPES = {
   sale: {
     label: "מכירת יד 2", singular: "פריט למכירה", icon: "💰",
     desc: "חפצים שכבר לא צריכות ורוצות למכור - במחיר שהגדירה המוכרת",
-    tags: ["ריהוט", "ציוד תינוקות", "ביגוד", "מכשירי חשמל", "ספרים וצעצועים", "אחר"],
+    // DRESS_TAG - אותה תגית בדיוק כמו ב-rental.tags למעלה, ר' ההערה שם.
+    tags: ["ריהוט", "ציוד תינוקות", "ביגוד", "מכשירי חשמל", "ספרים וצעצועים", DRESS_TAG, "אחר"],
+  },
+  // "דרושות שמלות" - כפתור/קטגוריה ייעודית לפי בקשה מפורשת: לקוחה שמחפשת שמלה (ערב, כלה,
+  // לילדה, ואפילו סט שמלות למשפחה שלמה) מפרסמת בקשה עם פרטי קשר, ועצמאיות/לקוחות עם שמלה
+  // מתאימה יכולות לפנות אליה. פתוח לכולן בלי חשבון (כמו gemach/rental/workshop/class/tutor/
+  // product) - לא דורש חשבון לקוחה מחובר כמו giveaway/sale, כי אין כאן צורך "להוריד" את
+  // הבקשה בעצמה מאוחר יותר. עובר דרך כל התשתית הכללית הקיימת (טופס פתוח, אישור אדמין,
+  // עמוד פריט, כרטיס) בלי צורך בקוד ייעודי - בדיוק כמו שאר הסוגים הפתוחים.
+  dressWanted: {
+    label: "דרושות שמלות", singular: "בקשה לשמלה", icon: "🙋‍♀️",
+    desc: "מחפשת שמלת ערב, שמלת כלה, שמלה לילדה או אפילו סט שמלות למשפחה? פרסמי בקשה - עצמאיות ולקוחות עם שמלה מתאימה יוכלו לפנות אלייך",
+    tags: ["שמלת ערב", "שמלת כלה", "שמלה לילדה", "סט משפחתי", "אחר"],
   },
   tutor: {
     label: "מורות פרטיות", singular: "מורה פרטית", icon: "📚",
@@ -3213,7 +3469,9 @@ function communityReviewsSectionHtml(c, d, ctx) {
         ${starInputHtml(myExistingReview ? myExistingReview.rating : 5)}
         <textarea name="text" placeholder="ספרי לנו מה דעתך..." required style="margin-top:10px;">${esc(myExistingReview ? myExistingReview.text : "")}</textarea>
         <button class="btn" style="margin-top:12px;" type="submit">${myExistingReview ? "עדכון התגובה" : "שליחה"}</button>
-      </form>` : `<p class="muted" style="text-align:center;"><a href="/login?role=customer&next=${encodeURIComponent(`/community/${c.type}/${c.id}`)}">מתחברות</a> או <a href="/signup">נרשמות בחינם</a> כדי להגיב.</p>`}
+      </form>` : (ctx.session && ctx.session.role === "freelancer"
+        ? customerOnlyPrompt(ctx, `/login?next=${encodeURIComponent(`/community/${c.type}/${c.id}`)}`, "להגיב")
+        : `<p class="muted" style="text-align:center;"><a href="/login?role=customer&next=${encodeURIComponent(`/community/${c.type}/${c.id}`)}">מתחברות</a> או <a href="/signup">נרשמות בחינם</a> כדי להגיב.</p>`)}
     </div>
   </div>`;
 }
@@ -3226,10 +3484,14 @@ function communityCard(c, d) {
   const meta = COMMUNITY_TYPES[c.type] || {};
   const photoStyle = c.photoDataUri ? `background-image:url('${esc(c.photoDataUri)}');background-size:cover;background-position:center;` : "";
   const locationRow = c.cityId ? `<div class="card-meta-row">📍 ${esc(cityName(d, c.cityId))}${c.address ? ` - ${esc(c.address)}` : ""}</div>` : (c.address ? `<div class="card-meta-row">📍 ${esc(c.address)}</div>` : "");
+  // "rental" מציג גם צבע/אורך (רלוונטי רק לפריטי שמלות ערב - ר' DRESS_TAG/COMMUNITY_TYPES.
+  // rental - בשאר פריטי ההשכרה c.color/c.length פשוט ריקים ולא מוצגים) בנוסף למחיר ולמיקום.
   const metaBlock = c.type === "product"
     ? [c.price ? `<div class="card-meta-row">💰 ${esc(c.price)}</div>` : "", c.whereBought ? `<div class="card-meta-row">🛒 ${esc(c.whereBought)}</div>` : ""].join("")
     : c.type === "sale"
     ? [c.price ? `<div class="card-meta-row">💰 ${esc(c.price)}</div>` : "", locationRow].join("")
+    : c.type === "rental"
+    ? [c.price ? `<div class="card-meta-row">💰 ${esc(c.price)}</div>` : "", [c.color, c.length].filter(Boolean).join(" · ") ? `<div class="card-meta-row">🎨 ${esc([c.color, c.length].filter(Boolean).join(" · "))}</div>` : "", locationRow].join("")
     : locationRow;
   return `
   <a class="card" href="/community/${c.type}/${c.id}">
@@ -3249,6 +3511,33 @@ function communityCard(c, d) {
   </a>`;
 }
 
+// התראת מייל ללקוחות שסימנו שהן רוצות לדעת על פריטים חדשים בקטגוריה הזו - רק "מסירות"
+// ו"מכירת יד 2" (הסוגים היחידים עם הרשמת התראה, ר' communityNotifyTags על רשומת הלקוחה) וגם
+// רק כשלפריט יש תגית (בלי תגית אין קטגוריה להתאים אליה). נשלח בפועל (לא רק push) לפי בקשה
+// מפורשת - "שתוכל לקבל מיילים על כל מוצר שעולה" - ולכן קורא ל-sendEmail ישירות במקום דרך
+// notify() (שהיה שולח push במקום מייל אם יש למישהי מנוי push פעיל). נקרא רק ברגע שהפריט
+// הופך ל-approved (גם באישור אדמין וגם בהוספה ישירה שלה) - לא בשליחה הראשונית, כדי שאף אחת
+// לא תקבל מייל על פריט שעדיין לא באמת עלה לאוויר.
+async function notifyCommunitySubscribers(c, d, req) {
+  if (c.type !== "giveaway" && c.type !== "sale") return;
+  if (!c.tag) return;
+  const meta = COMMUNITY_TYPES[c.type];
+  const subscribers = (d.customers || []).filter((cu) => ((cu.communityNotifyTags || {})[c.type] || []).includes(c.tag));
+  const itemUrl = `${getOrigin(req)}/community/${c.type}/${c.id}`;
+  for (const cu of subscribers) {
+    if (!hasRealEmail(cu)) continue;
+    await sendEmail(cu.email, `${meta.icon} פריט חדש ב-SheCan בקטגוריה "${c.tag}"`,
+      `<div dir="rtl" style="font-family:Arial,sans-serif;">
+        <p>היי ${esc(cu.name || "")},</p>
+        <p>עלה עכשיו ${meta.singular} חדש/ה בקטגוריה "${esc(c.tag)}" שסימנת שמעניינת אותך:</p>
+        <p style="background:#f3ede8;padding:14px;border-radius:8px;font-size:17px;font-weight:800;">${esc(c.title)}</p>
+        <p><a href="${itemUrl}" style="color:#a6265b;font-weight:800;">לצפייה בפריט</a></p>
+        <p style="color:#888;font-size:13px;margin-top:20px;">קיבלת את המייל הזה כי נרשמת להתראות על "${esc(c.tag)}" ב-${esc(meta.label)}. אפשר לבטל בכל שלב בעמוד ${esc(meta.label)}.</p>
+      </div>`
+    ).catch(() => {});
+  }
+}
+
 // עמוד ריכוז - 8 האריחים, אחד לכל סוג מאגר, עם מספר הפריטים המאושרים בכל אחד.
 route("GET", "/community", async (req, res, params, query, ctx) => {
   const d = db.load();
@@ -3263,12 +3552,22 @@ route("GET", "/community", async (req, res, params, query, ctx) => {
       <span class="hub-card-count">${count ? `${count} ${count === 1 ? meta.singular : meta.label} ${count === 1 ? "" : "פעילים"}`.trim() : "בקרוב"}</span>
     </a>`;
   }).join("");
+  // "מתחזקות ומחזקות" (תהילים קהילתי) לא חלק מ-COMMUNITY_TYPE_ORDER הרגיל - אין לו תור אישור
+  // אדמין ולא מבנה gemach/rental/וכו' רגיל, אלא מנגנון ייעודי משלו (ר' route GET /community/tehillim
+  // למטה) - לכן הריבוע שלו נבנה כאן ידנית ומצורף לפני שאר הריבועים האוטומטיים.
+  const tehillimTileHtml = `
+    <a class="hub-card" href="/community/tehillim">
+      <span class="hub-card-icon">🕯️</span>
+      <div class="hub-card-title">מתחזקות ומחזקות</div>
+      <div class="hub-card-desc">רשימת שמות לתפילה, ותהילים קהילתי - קחי על עצמך פרק או יום</div>
+      <span class="hub-card-count">קהילה חיה</span>
+    </a>`;
   const body = `
   <div class="hero" style="padding-top:0;">
     <h1 style="font-size:40px;">מאגרי הקהילה</h1>
     <p>כל המשאבים הקהילתיים של עצמאיות ומשפחות - במקום אחד, לפי תחום.</p>
   </div>
-  <div class="hub-grid" style="margin-bottom:30px;">${tilesHtml}</div>
+  <div class="hub-grid" style="margin-bottom:30px;">${tehillimTileHtml}${tilesHtml}</div>
   <p style="text-align:center;"><a class="btn btn-outline btn-small" href="/community/add">רוצה להוסיף פריט למאגר? לחצי כאן</a></p>
   `;
   sendHtml(res, 200, page({ title: "מאגרי קהילה", session: ctx.session, body, query }));
@@ -3294,7 +3593,7 @@ route("GET", "/community/add", async (req, res, params, query, ctx) => {
     <form method="post" action="/community/add" enctype="multipart/form-data">
       <label>איזה סוג פריט את מוסיפה?<select name="type" id="scCommunityType" onchange="scCommunityOnTypeChange(this.value)">${typeOptions}</select></label>
       <label id="scCommunityTitleLabel">שם הפריט / העסק<input type="text" name="title" required /></label>
-      <label>סוג מדויק<select name="tag" id="scCommunityTag"></select></label>
+      <label>סוג מדויק<select name="tag" id="scCommunityTag" onchange="scCommunityCheckDressFields()"></select></label>
       <div id="scContactFieldsGroup">
         <label>עיר${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}</label>
         <label>כתובת (רחוב ומספר, לא חובה)<input type="text" name="address" placeholder="למשל: הרצל 12" /></label>
@@ -3310,6 +3609,18 @@ route("GET", "/community/add", async (req, res, params, query, ctx) => {
         <label>מחיר (לא חובה)<input type="text" name="price" placeholder="למשל: 149 ₪" /></label>
         <label>איפה קנית (לא חובה)<input type="text" name="whereBought" placeholder="למשל: שם חנות או אתר" /></label>
       </div>
+      <!-- שדות נוספים רק כשבוחרות "השכרות" + תגית שמלות ערב - ר' scCommunityCheckDressFields
+           למטה. price כאן בשם שדה נפרד (dressPrice, לא price) כדי לא להתנגש עם שדה המחיר של
+           scProductFieldsGroup - שני השדות לעולם לא מוצגים יחד (isProduct מול type==='rental'
+           הם בלעדיים זה את זה), אבל שניהם עדיין קיימים ב-DOM ונשלחים בטופס, אז שם שונה מונע
+           מצב שבו readBody מחזיר את הערך הריק של השדה הלא-רלוונטי. ר' טיפול השרת ב-POST
+           /community/add שמאחד את שני השמות בחזרה לשדה price אחד ברשומה. -->
+      <div id="scDressFieldsGroup" style="display:none;">
+        <label>מחיר להשכרה (לא חובה)<input type="text" name="dressPrice" placeholder="למשל: 150 ₪" /></label>
+        <label>צבע (לא חובה)<select name="color"><option value="">בחרי צבע</option>${DRESS_COLORS.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+        <label>אורך (לא חובה)<select name="length"><option value="">בחרי אורך</option>${DRESS_LENGTHS.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select></label>
+        <label>מיועדת ל (לא חובה)<select name="audience"><option value="">בחרי</option>${DRESS_AUDIENCES.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select></label>
+      </div>
       <label>תמונה<input type="file" name="photo" accept="image/*" /></label>
       <label>שמך (לצוות SheCan בלבד, לא יפורסם)<input type="text" name="contactName" /></label>
       <button class="btn" style="width:100%;margin-top:16px;" type="submit">שליחה לאישור</button>
@@ -3318,9 +3629,19 @@ route("GET", "/community/add", async (req, res, params, query, ctx) => {
   <p class="muted" style="text-align:center;">רוצה למסור או למכור חפץ שכבר לא צריכה? <a href="/community/giveaway/add" style="color:var(--rose-dark);font-weight:700;">מסירות</a> ו<a href="/community/sale/add" style="color:var(--rose-dark);font-weight:700;">מכירות יד 2</a> מתפרסמות דרך האזור האישי שלך כלקוחה - כדי שתוכלי אחר כך לסמן שהפריט כבר נמסר/נמכר.</p>
   <script>
     var scCommunityTagsByType = ${JSON.stringify(Object.fromEntries(OPEN_COMMUNITY_TYPE_ORDER.map((t) => [t, COMMUNITY_TYPES[t].tags])))};
+    var scDressTag = ${JSON.stringify(DRESS_TAG)};
     function scCommunityUpdateTags(type) {
       var sel = document.getElementById('scCommunityTag');
       sel.innerHTML = (scCommunityTagsByType[type] || []).map(function(t){ return '<option value="' + t + '">' + t + '</option>'; }).join('');
+    }
+    // שדות "פרטי שמלה" (מחיר/צבע/אורך/קהל יעד) מוצגים רק כשהסוג הוא "השכרות" והתגית
+    // שנבחרה היא בדיוק תגית שמלות הערב - נבדק גם בשינוי סוג וגם בשינוי תגית (ר' onchange
+    // על שני ה-select-ים למעלה), כי שינוי סוג מאפס את רשימת התגיות.
+    function scCommunityCheckDressFields() {
+      var type = document.getElementById('scCommunityType').value;
+      var tag = document.getElementById('scCommunityTag').value;
+      var show = (type === 'rental' && tag === scDressTag);
+      document.getElementById('scDressFieldsGroup').style.display = show ? '' : 'none';
     }
     function scCommunityOnTypeChange(type) {
       scCommunityUpdateTags(type);
@@ -3332,6 +3653,7 @@ route("GET", "/community/add", async (req, res, params, query, ctx) => {
       var titleInput = titleLabel.querySelector('input');
       titleLabel.firstChild.textContent = isProduct ? 'שם המוצר' : 'שם הפריט / העסק';
       titleInput.placeholder = isProduct ? 'למשל: שואב אבק רובוטי' : '';
+      scCommunityCheckDressFields();
     }
     scCommunityOnTypeChange(document.getElementById('scCommunityType').value);
   </script>
@@ -3470,23 +3792,429 @@ route("POST", "/community/sale/add", async (req, res, params, query, ctx) => {
 
 // דפדוף בתוך סוג מאגר אחד (למשל /community/gemach) - סינון לפי תג ועיר, בדיוק כמו חיפוש
 // עצמאיות: סרגל סינון + רשת כרטיסים.
+// ===================== "מתחזקות ומחזקות" - תהילים קהילתי (נוסף 2026-08-26) =====================
+// ריבוע נוסף בקהילת SheCan, לפי בקשה מפורשת - שונה מהותית מ-9 סוגי COMMUNITY_TYPES (לא רשימת
+// פריטים עם אישור אדמין, אלא מנגנון חי: רשימת שמות לתפילה, שני "ספרי תהילים" מקבילים
+// שמתחלקים ליחידות (יומי - 7 ימות השבוע; לפי פרקים - כל 150 הפרקים בנפרד) שכל לקוחה יכולה
+// "לקחת על עצמה" יחידה, לקרוא אותה (קישור לטקסט המדויק והמדוייק ב-Sefaria.org - מקור מהימן
+// ומדויק לטקסט תהילים, ולא משוחזר כאן מהזיכרון כדי לא להסתכן בטעות בטקסט קדוש) ולסמן שקראה -
+// כשכל יחידות הספר נקראו הוא "נסגר" ונפתח ספר חדש מאותו סוג אוטומטית. בנוסף: סיפורי ישועות,
+// ואפשרות לפרסם שם עם סיפור קצר שלקוחות אחרות יכולות לכתוב לידו קבלה קטנה שקיבלו על עצמן.
+// ניהול: כל התוכן מתפרסם מיד (בלי תור אישור, בדיוק כמו ביקורות באתר) עם כפתורי מחיקה
+// שמוצגים רק לאדמין ישירות על אותו עמוד ציבורי - לפי בקשה מפורשת "לנהל תמיד את מה שקורה
+// מאחורה... למחוק כל תגובה שלא מתאימה", בלי לבנות פאנל ניהול נפרד ולשכפל את כל הרינדור.
+
+// חלוקה שבועית מסורתית ומאומתת (7 ימים) - ולא חלוקה חודשית (30 יום), כדי להישען על מקור
+// מאומת בלבד (הבחירה ל"יומי" = "יום בשבוע" ולא "יום בחודש" נעשתה כדי להימנע משחזור לא
+// מאומת של גבולות הפרקים המדויקים בחלוקה החודשית המסורתית).
+const TEHILLIM_WEEKLY_DIVISION = [
+  { label: "יום ראשון", from: 1, to: 29 },
+  { label: "יום שני", from: 30, to: 50 },
+  { label: "יום שלישי", from: 51, to: 72 },
+  { label: "יום רביעי", from: 73, to: 89 },
+  { label: "יום חמישי", from: 90, to: 106 },
+  { label: "יום שישי", from: 107, to: 119 },
+  { label: "שבת", from: 120, to: 150 },
+];
+const TEHILLIM_CHAPTERS_DIVISION = Array.from({ length: 150 }, (_, i) => ({ label: `פרק ${i + 1}`, from: i + 1, to: i + 1 }));
+// 4 אופציות קבלה קטנה, בדיוק לפי בקשה מפורשת - 3 קבועות + "אחר" עם טקסט חופשי.
+const TEHILLIM_KABBALAH_OPTIONS = {
+  "asher-yatzar": "קריאת \"אשר יצר\" מתוך הכתוב במשך שבוע",
+  "lashon-hara": "לא מדברת לשון הרע שעה אחת ביום, למשך שבוע",
+  "tzniut": "קבלה קטנה בצניעות",
+  "other": "משהו אחר",
+};
+
+function sefariaChapterLink(from, to) {
+  return `https://www.sefaria.org/Psalms.${from === to ? from : `${from}-${to}`}?lang=he`;
+}
+
+function createTehillimBook(division) {
+  const template = division === "daily" ? TEHILLIM_WEEKLY_DIVISION : TEHILLIM_CHAPTERS_DIVISION;
+  return {
+    id: db.nextId("tehillimBook"),
+    division,
+    units: template.map((t, i) => ({ index: i, label: t.label, from: t.from, to: t.to, claimedByCustomerId: null, claimedAt: null, read: false, readAt: null })),
+    status: "open",
+    createdAt: new Date().toISOString(),
+    closedAt: null,
+  };
+}
+// מבטיח שתמיד קיים בדיוק ספר "פתוח" אחד מכל סוג - נקרא בתחילת כל route רלוונטי, לא רק
+// בעליית השרת, כדי שגם ההרצה הראשונה אי-פעם (בלי אף ספר קיים) תיצור אחד לבד.
+function ensureOpenTehillimBook(d, division) {
+  d.tehillimBooks = d.tehillimBooks || [];
+  let book = d.tehillimBooks.find((b) => b.division === division && b.status === "open");
+  if (!book) {
+    book = createTehillimBook(division);
+    d.tehillimBooks.push(book);
+  }
+  return book;
+}
+
+function tehillimUnitHtml(book, unit, session, d) {
+  const claimedByMe = session && session.role === "customer" && unit.claimedByCustomerId === session.id;
+  const claimer = unit.claimedByCustomerId ? d.customers.find((c) => c.id === unit.claimedByCustomerId) : null;
+  let statusHtml;
+  if (unit.read) {
+    statusHtml = `<span class="muted" style="font-size:12px;">✅ נקרא${claimer ? ` ע"י ${esc(claimer.name.split(" ")[0])}` : ""}</span>`;
+  } else if (unit.claimedByCustomerId) {
+    statusHtml = claimedByMe
+      ? `<a class="btn btn-small" href="/community/tehillim/${book.id}/unit/${unit.index}">לקריאה ולסימון שקראתי</a>`
+      : `<span class="muted" style="font-size:12px;">נלקח ע"י ${claimer ? esc(claimer.name.split(" ")[0]) : "מישהי"}</span>`;
+  } else {
+    statusHtml = session && session.role === "customer"
+      ? `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/claim" style="margin:0;"><button class="btn btn-small btn-outline" type="submit">אני לוקחת על עצמי</button></form>`
+      : `<span class="muted" style="font-size:12px;">פנוי</span>`;
+  }
+  const adminRelease = (session && session.role === "admin" && unit.claimedByCustomerId && !unit.read)
+    ? `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/release" style="margin:4px 0 0;" onsubmit="return confirm('לשחרר את היחידה הזו בחזרה לפנויה?');"><button class="btn btn-small btn-outline" type="submit" style="font-size:11px;">שחרור (אדמין)</button></form>`
+    : "";
+  return `<div class="tehillim-unit ${unit.read ? "tehillim-unit-read" : unit.claimedByCustomerId ? "tehillim-unit-claimed" : ""}">
+    <span class="tehillim-unit-label">${esc(unit.label)}</span>
+    <span class="tehillim-unit-status">${statusHtml}</span>
+    ${adminRelease}
+  </div>`;
+}
+
+function tehillimNameEntryHtml(n, d, ctx) {
+  const isCustomer = requireRole(ctx.session, "customer");
+  const kabbalotHtml = (n.kabbalot || []).map((k) => {
+    const author = d.customers.find((c) => c.id === k.customerId);
+    const label = k.type === "other" ? esc(k.customText || "") : TEHILLIM_KABBALAH_OPTIONS[k.type] || "";
+    const adminOrOwnDelete = (ctx.session && (ctx.session.role === "admin" || (ctx.session.role === "customer" && ctx.session.id === k.customerId)))
+      ? `<form method="post" action="/community/tehillim/kabbalah/${k.id}/delete" style="display:inline;margin-right:6px;" onsubmit="return confirm('למחוק את הקבלה הזו?');"><button class="btn btn-small btn-outline" type="submit" style="font-size:11px;padding:2px 8px;">מחיקה</button></form>`
+      : "";
+    return `<li style="margin:4px 0;">🕊️ ${label}${author ? ` <span class="muted">- ${esc(author.name.split(" ")[0])}</span>` : ""}${adminOrOwnDelete}</li>`;
+  }).join("");
+  const kabbalahFormHtml = isCustomer ? `
+    <details style="margin-top:8px;">
+      <summary class="muted" style="cursor:pointer;font-size:13px;">+ לכתוב קבלה קטנה לזכות השם הזה</summary>
+      <form method="post" action="/community/tehillim/names/${n.id}/kabbalah" style="margin-top:8px;">
+        ${Object.entries(TEHILLIM_KABBALAH_OPTIONS).map(([val, label]) => `<label style="display:flex;align-items:center;gap:6px;font-weight:600;margin-top:4px;font-size:13.5px;"><input type="radio" name="type" value="${val}" ${val === "asher-yatzar" ? "checked" : ""} style="width:auto;" /> ${esc(label)}</label>`).join("")}
+        <input type="text" name="customText" maxlength="200" placeholder="אם בחרת 'משהו אחר' - כתבי כאן" style="margin-top:6px;" />
+        <button class="btn btn-small" style="margin-top:8px;" type="submit">שמירת הקבלה</button>
+      </form>
+    </details>` : "";
+  const ownerDelete = (ctx.session && (ctx.session.role === "admin" || (ctx.session.role === "customer" && ctx.session.id === n.customerId)))
+    ? `<form method="post" action="/community/tehillim/names/${n.id}/delete" style="display:inline;" onsubmit="return confirm('להסיר את השם/השמות האלה מרשימת התפילה?');"><button class="btn btn-small btn-outline" type="submit" style="font-size:11px;">הסרה</button></form>`
+    : "";
+  return `
+  <div class="panel" style="background:var(--cream);margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+      <h4 style="margin:0;">🕯️ ${n.names.map(esc).join(" · ")}</h4>
+      ${ownerDelete}
+    </div>
+    ${n.story ? `<p style="margin:6px 0 0;font-size:14px;line-height:1.4;">${esc(n.story)}</p>` : ""}
+    ${(n.kabbalot && n.kabbalot.length) ? `<ul style="margin:8px 0 0;padding-inline-start:18px;list-style:none;">${kabbalotHtml}</ul>` : ""}
+    ${kabbalahFormHtml}
+  </div>`;
+}
+
+route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const dailyBook = ensureOpenTehillimBook(d, "daily");
+  const chaptersBook = ensureOpenTehillimBook(d, "chapters");
+  db.save();
+  const isCustomer = requireRole(ctx.session, "customer");
+  const isAdmin = ctx.session && ctx.session.role === "admin";
+
+  const allBooks = d.tehillimBooks || [];
+  const closedBooksCount = allBooks.filter((b) => b.status === "closed").length;
+  const chaptersReadCount = allBooks.reduce((sum, b) => sum + b.units.filter((u) => u.read).reduce((s, u) => s + (u.to - u.from + 1), 0), 0);
+  const names = (d.tehillimNames || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const namesCount = names.reduce((sum, n) => sum + n.names.length, 0);
+  const stories = (d.tehillimSalvationStories || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const addNameFormHtml = isCustomer ? `
+  <div class="panel" style="max-width:560px;margin:0 auto 20px;">
+    <h3>הוספת שם/שמות לתפילה</h3>
+    <p class="muted" style="font-size:13px;">אפשר להוסיף עד 2 שמות (למשל: פלונית בת פלונית), ואפשר גם לצרף סיפור קצר - לקוחות אחרות יוכלו לכתוב לידו קבלה קטנה שקיבלו על עצמן לזכות השם.</p>
+    <form method="post" action="/community/tehillim/names/add">
+      <label>שם ראשון<input type="text" name="name1" required maxlength="60" placeholder="לדוגמה: שרה בת רבקה" /></label>
+      <label>שם שני (לא חובה)<input type="text" name="name2" maxlength="60" /></label>
+      <label>סיפור קצר (לא חובה)<textarea name="story" maxlength="500" placeholder="ספרי בקצרה מה קורה, אם את רוצה"></textarea></label>
+      <button class="btn" style="width:100%;margin-top:10px;" type="submit">הוספה לרשימה</button>
+    </form>
+  </div>` : `<p class="muted" style="text-align:center;"><a href="/login?role=customer&next=${encodeURIComponent("/community/tehillim")}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כלקוחה</a> כדי להוסיף שם לתפילה או לקחת על עצמך פרק.</p>`;
+
+  const addStoryFormHtml = isCustomer ? `
+  <div class="panel" style="max-width:560px;margin:0 auto 14px;">
+    <h3>הוספת סיפור ישועה</h3>
+    <form method="post" action="/community/tehillim/salvation-stories/add">
+      <textarea name="text" required maxlength="1000" placeholder="ספרי לנו בקצרה על ישועה שהיתה בזכות התהילים"></textarea>
+      <button class="btn btn-small" style="margin-top:8px;" type="submit">פרסום הסיפור</button>
+    </form>
+  </div>` : "";
+
+  const body = `
+  <p class="muted" style="text-align:center;"><a href="/community" style="color:var(--rose-dark);font-weight:700;">מאגרי קהילה</a> › מתחזקות ומחזקות</p>
+  <h1 class="section-title" style="margin-top:2px;">🕯️ מתחזקות ומחזקות</h1>
+  <p class="muted" style="text-align:center;margin-top:-10px;">רשימת שמות לתפילה, ותהילים קהילתי - כל אחת יכולה לקחת על עצמה פרק או יום ולסמן שקראה.</p>
+
+  <div class="tehillim-stats-row">
+    <div class="tehillim-stat"><span class="tehillim-stat-num">${closedBooksCount}</span><span class="tehillim-stat-label">ספרים נסגרו</span></div>
+    <div class="tehillim-stat"><span class="tehillim-stat-num">${chaptersReadCount}</span><span class="tehillim-stat-label">פרקים נקראו</span></div>
+    <div class="tehillim-stat"><span class="tehillim-stat-num">${namesCount}</span><span class="tehillim-stat-label">שמות לתפילה</span></div>
+  </div>
+
+  <div class="panel">
+    <h3>📖 תהילים יומי (לפי ימות השבוע)</h3>
+    <p class="muted" style="font-size:13px;">ספר מס' ${esc(String(dailyBook.id))} - כל השבעה ימים נקראים, נפתח ספר חדש אוטומטית.</p>
+    ${dailyBook.units.map((u) => tehillimUnitHtml(dailyBook, u, ctx.session, d)).join("")}
+  </div>
+
+  <div class="panel">
+    <h3>📖 תהילים לפי פרקים (150 פרקים)</h3>
+    <p class="muted" style="font-size:13px;">ספר מס' ${esc(String(chaptersBook.id))} - כל 150 הפרקים נקראים, נפתח ספר חדש אוטומטית.</p>
+    <div class="tehillim-chapters-grid">
+      ${chaptersBook.units.map((u) => tehillimUnitHtml(chaptersBook, u, ctx.session, d)).join("")}
+    </div>
+  </div>
+
+  <h2 class="section-title" style="margin-top:30px;">שמות לתפילה</h2>
+  ${addNameFormHtml}
+  ${names.length ? names.map((n) => tehillimNameEntryHtml(n, d, ctx)).join("") : `<p class="muted" style="text-align:center;">עדיין אין שמות ברשימה.</p>`}
+
+  <h2 class="section-title" style="margin-top:30px;">סיפורי ישועות</h2>
+  ${addStoryFormHtml}
+  ${stories.length ? stories.map((s) => {
+    const author = d.customers.find((c) => c.id === s.customerId);
+    const del = (isAdmin || (ctx.session && ctx.session.role === "customer" && ctx.session.id === s.customerId))
+      ? `<form method="post" action="/community/tehillim/salvation-stories/${s.id}/delete" style="margin-top:6px;" onsubmit="return confirm('למחוק את הסיפור הזה?');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form>` : "";
+    return `<div class="panel" style="background:var(--cream);margin-bottom:10px;"><p style="margin:0;font-size:14px;line-height:1.4;">${esc(s.text)}</p><p class="muted" style="margin:6px 0 0;font-size:12px;">${author ? esc(author.name.split(" ")[0]) : "אנונימית"} · ${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</p>${del}</div>`;
+  }).join("") : `<p class="muted" style="text-align:center;">עדיין אין סיפורים - היי הראשונה לשתף.</p>`}
+  `;
+  sendHtml(res, 200, page({ title: "מתחזקות ומחזקות", session: ctx.session, body, query }));
+});
+
+route("POST", "/community/tehillim/names/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/tehillim")}`);
+  const d = db.load();
+  const body = await readBody(req);
+  const name1 = clip((body.get("name1") || "").trim(), 60);
+  const name2 = clip((body.get("name2") || "").trim(), 60);
+  if (!name1) return redirect(res, `/community/tehillim?err=${encodeURIComponent("נא למלא לפחות שם אחד.")}`);
+  d.tehillimNames = d.tehillimNames || [];
+  d.tehillimNames.push({
+    id: db.nextId("tehillimName"),
+    customerId: ctx.session.id,
+    names: [name1, name2].filter(Boolean),
+    story: clip((body.get("story") || "").trim(), 500),
+    kabbalot: [],
+    createdAt: new Date().toISOString(),
+  });
+  db.save();
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("השם נוסף לרשימת התפילה.")}`);
+});
+
+route("POST", "/community/tehillim/names/:id/delete", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const n = (d.tehillimNames || []).find((x) => x.id === params.id);
+  if (!n) return redirect(res, "/community/tehillim");
+  const isOwner = ctx.session && ctx.session.role === "customer" && ctx.session.id === n.customerId;
+  const isAdmin = ctx.session && ctx.session.role === "admin";
+  if (!isOwner && !isAdmin) return redirect(res, "/login");
+  d.tehillimNames = d.tehillimNames.filter((x) => x.id !== params.id);
+  db.save();
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("השם הוסר.")}`);
+});
+
+route("POST", "/community/tehillim/names/:id/kabbalah", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/tehillim")}`);
+  const d = db.load();
+  const n = (d.tehillimNames || []).find((x) => x.id === params.id);
+  if (!n) return redirect(res, "/community/tehillim");
+  const body = await readBody(req);
+  const type = TEHILLIM_KABBALAH_OPTIONS[body.get("type")] ? body.get("type") : "other";
+  n.kabbalot = n.kabbalot || [];
+  n.kabbalot.push({
+    id: db.nextId("tehillimKabbalah"),
+    customerId: ctx.session.id,
+    type,
+    customText: type === "other" ? clip((body.get("customText") || "").trim(), 200) : "",
+    createdAt: new Date().toISOString(),
+  });
+  db.save();
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("הקבלה נשמרה - שיהיה לזכות!")}`);
+});
+
+route("POST", "/community/tehillim/kabbalah/:id/delete", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const n = (d.tehillimNames || []).find((x) => (x.kabbalot || []).some((k) => k.id === params.id));
+  if (!n) return redirect(res, "/community/tehillim");
+  const k = n.kabbalot.find((x) => x.id === params.id);
+  const isOwner = ctx.session && ctx.session.role === "customer" && ctx.session.id === k.customerId;
+  const isAdmin = ctx.session && ctx.session.role === "admin";
+  if (!isOwner && !isAdmin) return redirect(res, "/login");
+  n.kabbalot = n.kabbalot.filter((x) => x.id !== params.id);
+  db.save();
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("הקבלה הוסרה.")}`);
+});
+
+route("POST", "/community/tehillim/salvation-stories/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/tehillim")}`);
+  const d = db.load();
+  const body = await readBody(req);
+  const text = clip((body.get("text") || "").trim(), 1000);
+  if (!text) return redirect(res, "/community/tehillim");
+  d.tehillimSalvationStories = d.tehillimSalvationStories || [];
+  d.tehillimSalvationStories.push({ id: db.nextId("tehillimStory"), customerId: ctx.session.id, text, createdAt: new Date().toISOString() });
+  db.save();
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("הסיפור פורסם - תודה ששיתפת!")}`);
+});
+
+route("POST", "/community/tehillim/salvation-stories/:id/delete", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const s = (d.tehillimSalvationStories || []).find((x) => x.id === params.id);
+  if (!s) return redirect(res, "/community/tehillim");
+  const isOwner = ctx.session && ctx.session.role === "customer" && ctx.session.id === s.customerId;
+  const isAdmin = ctx.session && ctx.session.role === "admin";
+  if (!isOwner && !isAdmin) return redirect(res, "/login");
+  d.tehillimSalvationStories = d.tehillimSalvationStories.filter((x) => x.id !== params.id);
+  db.save();
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("הסיפור הוסר.")}`);
+});
+
+route("POST", "/community/tehillim/:bookId/unit/:unitIndex/claim", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent("/community/tehillim")}`);
+  const d = db.load();
+  const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
+  const unit = book && book.units[parseInt(params.unitIndex, 10)];
+  if (book && unit && !unit.claimedByCustomerId && !unit.read) {
+    unit.claimedByCustomerId = ctx.session.id;
+    unit.claimedAt = new Date().toISOString();
+    db.save();
+  }
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("לקחת על עצמך - אפשר לקרוא ולסמן שקראת.")}`);
+});
+
+route("POST", "/community/tehillim/:bookId/unit/:unitIndex/release", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
+  const unit = book && book.units[parseInt(params.unitIndex, 10)];
+  if (unit && !unit.read) { unit.claimedByCustomerId = null; unit.claimedAt = null; }
+  db.save();
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("היחידה שוחררה.")}`);
+});
+
+route("GET", "/community/tehillim/:bookId/unit/:unitIndex", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
+  const unit = book && book.units[parseInt(params.unitIndex, 10)];
+  if (!book || !unit) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את זה.</p>` }));
+  const isClaimer = ctx.session && ctx.session.role === "customer" && ctx.session.id === unit.claimedByCustomerId;
+  const isAdmin = ctx.session && ctx.session.role === "admin";
+  const body = `
+  <h1 class="section-title">${esc(unit.label)}</h1>
+  <div class="panel" style="max-width:520px;margin:0 auto;text-align:center;">
+    <p class="muted">${unit.from === unit.to ? `פרק ${unit.from}` : `פרקים ${unit.from}-${unit.to}`}</p>
+    <a class="btn" href="${sefariaChapterLink(unit.from, unit.to)}" target="_blank" rel="noopener">📖 לקריאת הפרק/ים ב-Sefaria ↗</a>
+    ${unit.read
+      ? `<p style="margin-top:16px;font-weight:700;">✅ כבר סומן כנקרא</p>`
+      : (isClaimer || isAdmin)
+        ? `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/read" style="margin-top:16px;"><button class="btn" type="submit">✅ סימנתי שקראתי</button></form>`
+        : `<p class="muted" style="margin-top:16px;">${unit.claimedByCustomerId ? "היחידה הזו נלקחה על ידי מישהי אחרת." : "עדיין לא נלקחה - אפשר לקחת אותה מעמוד מתחזקות ומחזקות."}</p>`}
+    <p class="muted" style="margin-top:16px;"><a href="/community/tehillim">← חזרה לעמוד מתחזקות ומחזקות</a></p>
+  </div>
+  `;
+  sendHtml(res, 200, page({ title: esc(unit.label), session: ctx.session, body, query }));
+});
+
+route("POST", "/community/tehillim/:bookId/unit/:unitIndex/read", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const book = (d.tehillimBooks || []).find((b) => b.id === params.bookId);
+  const unit = book && book.units[parseInt(params.unitIndex, 10)];
+  if (!book || !unit) return redirect(res, "/community/tehillim");
+  const isClaimer = ctx.session && ctx.session.role === "customer" && ctx.session.id === unit.claimedByCustomerId;
+  const isAdmin = ctx.session && ctx.session.role === "admin";
+  if (!isClaimer && !isAdmin) return redirect(res, "/login");
+  if (!unit.read) {
+    unit.read = true;
+    unit.readAt = new Date().toISOString();
+    // כשכל היחידות של הספר נקראו - הוא "נסגר" אוטומטית ונפתח ספר חדש מאותו סוג מיד, לפי
+    // בקשה מפורשת: "כל אחת שמסמנת שקראה ממשיכים הלאה ככה עד שנגמר ספר נפתח ספר חדש".
+    if (book.units.every((u) => u.read)) {
+      book.status = "closed";
+      book.closedAt = new Date().toISOString();
+      ensureOpenTehillimBook(d, book.division);
+    }
+    db.save();
+  }
+  redirect(res, `/community/tehillim?ok=${encodeURIComponent("יישר כח! סומן שקראת.")}`);
+});
+
 route("GET", "/community/:type", async (req, res, params, query, ctx) => {
   const meta = COMMUNITY_TYPES[params.type];
   if (!meta) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, הסוג הזה לא קיים.</p>` }));
   const d = db.load();
+  const isCustomer = requireRole(ctx.session, "customer");
+  const notifiable = params.type === "giveaway" || params.type === "sale";
+  const customer = isCustomer ? d.customers.find((cu) => cu.id === ctx.session.id) : null;
+  // ביקור בעמוד סוג מאגר "בר-התראה" (מסירות/מכירת יד 2) מסמן שהיא ראתה את מה שיש כרגע -
+  // אותו רעיון בדיוק כמו arenaLastSeen (ר' GET /arena) - ר' communityUnseenCount ב-layout.js
+  // שמשתמש בזה כדי לדעת אילו פריטים חדשים "מאז הביקור האחרון" להראות בתג ליד "קהילת SheCan".
+  if (customer && notifiable) {
+    d.communityLastSeen = d.communityLastSeen || {};
+    d.communityLastSeen[`customer:${customer.id}`] = new Date().toISOString();
+    db.save();
+  }
   const tag = query.get("tag") || "";
   const cityId = query.get("city") || "";
   const q = (query.get("q") || "").trim().toLowerCase();
+  // סינוני "פרטי שמלה" - רלוונטיים ומוצגים רק בעמוד ההשכרות (params.type==="rental"), לפי
+  // בקשה מפורשת: "בתחום של השכרת שמלות - תהיה אפשרות לסנן לפי מחיר, צבע, אורך, ילדות או
+  // נשים, מיקום". כל אחד מהם אופציונלי לגמרי - אין תלות בין הסינונים, ואפשר לשלב את כולם.
+  const isRentalType = params.type === "rental";
+  const color = isRentalType ? (query.get("color") || "") : "";
+  const length = isRentalType ? (query.get("length") || "") : "";
+  const audience = isRentalType ? (query.get("audience") || "") : "";
+  const maxPrice = isRentalType ? (query.get("maxPrice") || "") : "";
   let items = (d.communityListings || []).filter((c) => c.type === params.type && c.status === "approved");
   if (tag) items = items.filter((c) => c.tag === tag);
   if (cityId) items = items.filter((c) => c.cityId === cityId);
   if (q) items = items.filter((c) => `${c.title} ${c.description || ""}`.toLowerCase().includes(q));
+  if (color) items = items.filter((c) => c.color === color);
+  if (length) items = items.filter((c) => c.length === length);
+  if (audience) items = items.filter((c) => c.audience === audience);
+  if (maxPrice) {
+    const maxPriceNum = parseFloat(maxPrice);
+    if (Number.isFinite(maxPriceNum)) items = items.filter((c) => c.priceNum != null && c.priceNum <= maxPriceNum);
+  }
   items = items.slice().sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
   const tagOptions = meta.tags.map((t) => `<option value="${esc(t)}" ${tag === t ? "selected" : ""}>${esc(t)}</option>`).join("");
+  const hasAnyFilter = Boolean(tag || cityId || q || color || length || audience || maxPrice);
+  // כפתור "דרושות שמלות" - קישור לקטגוריית הבקשות הייעודית (ר' COMMUNITY_TYPES.dressWanted),
+  // מוצג בעמוד ההשכרות לפי בקשה מפורשת ("וכן תשים כפתור של דרושות שמלות").
+  const dressWantedButtonHtml = isRentalType ? `<p style="text-align:center;margin:-4px 0 4px;"><a class="btn btn-outline btn-small" href="/community/dressWanted">🙋‍♀️ דרושה לך שמלה? פרסמי בקשה כאן</a></p>` : "";
+  const dressFiltersHtml = isRentalType ? `
+    <div class="search-row" style="margin-top:10px;">
+      <select name="color"><option value="">כל הצבעים</option>${DRESS_COLORS.map((c) => `<option value="${esc(c)}" ${color === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
+      <select name="length"><option value="">כל האורכים</option>${DRESS_LENGTHS.map((l) => `<option value="${esc(l)}" ${length === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+      <select name="audience"><option value="">נשים וילדות</option>${DRESS_AUDIENCES.map((a) => `<option value="${esc(a)}" ${audience === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
+      <input type="number" name="maxPrice" value="${esc(maxPrice)}" placeholder="עד מחיר ₪" style="max-width:150px;" min="0" />
+    </div>
+    <p class="muted" style="text-align:center;font-size:12.5px;margin:2px 0 0;">הסינונים האלה רלוונטיים בעיקר לשמלות ערב - כל אחד מהם אופציונלי, אין צורך למלא הכל.</p>
+  ` : "";
+  // פאנל "התראות" - רק ב-2 הסוגים הבנים-התראה, ורק ללקוחה מחוברת (בדיוק כמו פרסום פריט
+  // בסוגים האלה - דורש חשבון לקוחה). צ'קבוקס לכל תגית, מסומן מראש לפי מה שכבר רשומה אליו -
+  // שליחה מחליפה את כל הרשימה בבת אחת (set-replace, לא toggle בודד), פשוט וחסין יותר מטופס
+  // עם כפתור נפרד לכל תגית.
+  const notifyPanelHtml = notifiable ? (isCustomer ? `
+  <div class="panel" style="max-width:520px;margin:0 auto 20px;">
+    <h3 style="margin:0 0 8px;">🔔 התראה על פריטים חדשים</h3>
+    <p class="muted" style="margin:0 0 10px;">סמני קטגוריות ותקבלי מייל בכל פעם שמתפרסם פריט חדש בהן, וגם תג ליד "קהילת SheCan" בתפריט.</p>
+    <form method="post" action="/community/${params.type}/notify-prefs">
+      ${meta.tags.map((t) => `<label style="display:flex;align-items:center;gap:6px;font-weight:600;margin-top:4px;"><input type="checkbox" name="tag" value="${esc(t)}" ${((customer.communityNotifyTags || {})[params.type] || []).includes(t) ? "checked" : ""} /> ${esc(t)}</label>`).join("")}
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שמירת ההתראות שלי</button>
+    </form>
+  </div>` : `<p class="muted" style="text-align:center;margin-bottom:20px;"><a href="/login?role=customer&next=${encodeURIComponent(`/community/${params.type}`)}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כלקוחה</a> כדי להירשם להתראות על פריטים חדשים בקטגוריה שמעניינת אותך.</p>`) : "";
   const body = `
   <p class="muted" style="text-align:center;"><a href="/community" style="color:var(--rose-dark);font-weight:700;">מאגרי קהילה</a> › ${esc(meta.label)}</p>
   <h1 class="section-title" style="margin-top:2px;">${esc(meta.label)}</h1>
   <p class="muted" style="text-align:center;margin-top:-10px;">${esc(meta.desc)}</p>
+  ${dressWantedButtonHtml}
   <form class="search-box" method="get" action="/community/${params.type}">
     <div class="search-row"><input type="text" name="q" value="${esc(query.get("q") || "")}" placeholder="חפשי לפי שם או תיאור" /></div>
     <div class="search-row" style="margin-top:10px;">
@@ -3494,10 +4222,30 @@ route("GET", "/community/:type", async (req, res, params, query, ctx) => {
       ${cityAutocompleteHtml({ fieldName: "city", selectedId: cityId, selectedName: cityId ? cityName(d, cityId) : "", placeholder: "מאיזו עיר?" })}
       <button class="btn" type="submit">חפשי</button>
     </div>
+    ${dressFiltersHtml}
+    ${hasAnyFilter ? `<p style="text-align:center;margin-top:6px;"><a href="/community/${params.type}" style="color:var(--rose-dark);font-weight:700;">נקה סינון</a></p>` : ""}
   </form>
+  ${notifyPanelHtml}
   ${items.length ? `<div class="grid">${items.map((c) => communityCard(c, d)).join("")}</div>` : `<p class="muted" style="text-align:center;">עדיין אין פריטים תואמים - ${meta.label === "מורות פרטיות" ? "" : "אולי "}את יכולה <a href="${communityAddUrl(params.type)}" style="color:var(--rose-dark);font-weight:700;">להיות הראשונה להוסיף</a>.</p>`}
   `;
   sendHtml(res, 200, page({ title: meta.label, session: ctx.session, body, query }));
+});
+
+route("POST", "/community/:type/notify-prefs", async (req, res, params, query, ctx) => {
+  const meta = COMMUNITY_TYPES[params.type];
+  if (!meta || (params.type !== "giveaway" && params.type !== "sale")) return redirect(res, "/community");
+  if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?role=customer&next=${encodeURIComponent(`/community/${params.type}`)}`);
+  const d = db.load();
+  const customer = d.customers.find((cu) => cu.id === ctx.session.id);
+  if (!customer) return redirect(res, "/community");
+  const body = await readBody(req);
+  // getAll (לא get) כדי לקבל את כל התגיות המסומנות, לא רק הראשונה - סט חדש מחליף את הקודם
+  // לגמרי, מסונן מול רשימת התגיות התקפות של הסוג הזה כדי שערך מזויף לא ייכנס לרשומה.
+  const selected = (body.getAll ? body.getAll("tag") : [body.get("tag")].filter(Boolean)).filter((t) => meta.tags.includes(t));
+  customer.communityNotifyTags = customer.communityNotifyTags || {};
+  customer.communityNotifyTags[params.type] = selected;
+  db.save();
+  redirect(res, `/community/${params.type}?ok=${encodeURIComponent("ההתראות שלך עודכנו.")}`);
 });
 
 // עמוד פריט בודד - בנוי כמו עמוד פרופיל עצמאית (כותרת/תג/עיר, ואז פרטי יצירת קשר). "מסירות"
@@ -3520,7 +4268,12 @@ route("GET", "/community/:type/:id", async (req, res, params, query, ctx) => {
         c.whereBought ? `<div class="profile-detail-row"><span class="profile-detail-icon">🛒</span><span>נקנה ב: ${esc(c.whereBought)}</span></div>` : "",
       ].filter(Boolean).join("")
     : [
-        c.type === "sale" && c.price ? `<div class="profile-detail-row"><span class="profile-detail-icon">💰</span><span>${esc(c.price)}</span></div>` : "",
+        (c.type === "sale" || c.type === "rental") && c.price ? `<div class="profile-detail-row"><span class="profile-detail-icon">💰</span><span>${esc(c.price)}</span></div>` : "",
+        // צבע/אורך/קהל יעד - רלוונטי רק לפריטי שמלות ערב בהשכרה (ר' DRESS_TAG), ריק ולא מוצג
+        // בכל שאר פריטי המאגר.
+        c.color ? `<div class="profile-detail-row"><span class="profile-detail-icon">🎨</span><span>צבע: ${esc(c.color)}</span></div>` : "",
+        c.length ? `<div class="profile-detail-row"><span class="profile-detail-icon">📏</span><span>אורך: ${esc(c.length)}</span></div>` : "",
+        c.audience ? `<div class="profile-detail-row"><span class="profile-detail-icon">👤</span><span>מיועדת ל${esc(c.audience)}</span></div>` : "",
         c.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(c.phone)}">${esc(c.phone)}</a></div>` : "",
         (c.hasWhatsapp && c.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(c.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
         c.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="mailto:${esc(c.email)}">${esc(c.email)}</a></div>` : "",
@@ -3610,10 +4363,17 @@ route("POST", "/community/add", async (req, res, params, query, ctx) => {
     photoDataUri: fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES),
     contactName: (body.get("contactName") || "").trim(),
     // שלושת השדות האלה רלוונטיים רק ל-type:"product" (ר' ההערה על COMMUNITY_TYPES.product) -
-    // נשמרים ריקים בכל שאר הסוגים כי הטופס לא מציג אותם שם.
+    // נשמרים ריקים בכל שאר הסוגים כי הטופס לא מציג אותם שם. price כולל גם fallback לשדה
+    // dressPrice (ר' scDressFieldsGroup בטופס) - שני השמות מתאחדים כאן לעמודת price אחת.
     model: clip((body.get("model") || "").trim(), 100),
-    price: clip((body.get("price") || "").trim(), 50),
+    price: clip((body.get("price") || body.get("dressPrice") || "").trim(), 50),
     whereBought: clip((body.get("whereBought") || "").trim(), 150),
+    // צבע/אורך/קהל יעד - רלוונטי רק להשכרת שמלות ערב (ר' DRESS_TAG/scDressFieldsGroup),
+    // נבדק מול רשימות סגורות כדי שערך מזויף לא ייכנס לרשומה (אותו דפוס כמו סינון tag).
+    color: DRESS_COLORS.includes(body.get("color")) ? body.get("color") : "",
+    length: DRESS_LENGTHS.includes(body.get("length")) ? body.get("length") : "",
+    audience: DRESS_AUDIENCES.includes(body.get("audience")) ? body.get("audience") : "",
+    priceNum: parsePriceNum(body.get("price") || body.get("dressPrice") || ""),
     ownerCustomerId: null,
     source: "self",
     status: "pending",
@@ -3660,7 +4420,8 @@ function communityAdminPanelHtml(type, d) {
             ${c.price ? `<p class="muted" style="margin:2px 0;">💰 ${esc(c.price)}</p>` : ""}
             ${c.whereBought ? `<p class="muted" style="margin:2px 0;">🛒 נקנה ב: ${esc(c.whereBought)}</p>` : ""}
             ` : `
-            ${isSale && c.price ? `<p class="muted" style="margin:2px 0;">💰 ${esc(c.price)}</p>` : ""}
+            ${(isSale || type === "rental") && c.price ? `<p class="muted" style="margin:2px 0;">💰 ${esc(c.price)}</p>` : ""}
+            ${c.color ? `<p class="muted" style="margin:2px 0;">🎨 ${esc(c.color)}${c.length ? ` · ${esc(c.length)}` : ""}${c.audience ? ` · ${esc(c.audience)}` : ""}</p>` : ""}
             ${c.cityId ? `<p class="muted" style="margin:2px 0;">📍 ${esc(cityName(d, c.cityId))}${c.address ? ` - ${esc(c.address)}` : ""}</p>` : (c.address ? `<p class="muted" style="margin:2px 0;">📍 ${esc(c.address)}</p>` : "")}
             ${c.phone ? `<p class="muted" style="margin:2px 0;">📞 ${esc(c.phone)}${c.hasWhatsapp ? " (גם WhatsApp)" : ""}</p>` : ""}
             ${c.email ? `<p class="muted" style="margin:2px 0;">📧 ${esc(c.email)}</p>` : ""}
@@ -3710,6 +4471,12 @@ function communityAdminPanelHtml(type, d) {
       <label>כתובת (רחוב ומספר, לא חובה)<input type="text" name="address" placeholder="למשל: הרצל 12" /></label>
       `}
       ${isSale ? `<label>מחיר<input type="text" name="price" placeholder="למשל: 150 ₪" /></label>` : ""}
+      ${type === "rental" ? `
+      <label>מחיר להשכרה (לא חובה)<input type="text" name="price" placeholder="למשל: 150 ₪" /></label>
+      <label>צבע (רלוונטי לשמלות ערב בלבד, לא חובה)<select name="color"><option value="">--</option>${DRESS_COLORS.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+      <label>אורך (לא חובה)<select name="length"><option value="">--</option>${DRESS_LENGTHS.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select></label>
+      <label>מיועדת ל (לא חובה)<select name="audience"><option value="">--</option>${DRESS_AUDIENCES.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select></label>
+      ` : ""}
       <label>תיאור<textarea name="description" maxlength="500"></textarea></label>
       ${isProduct ? "" : `
       <label>טלפון ליצירת קשר<input type="text" name="phone" placeholder="050-1234567" /></label>
@@ -3737,6 +4504,7 @@ route("POST", "/admin/community/:id/approve", async (req, res, params, query, ct
   const c = (d.communityListings || []).find((x) => x.id === params.id);
   if (c) { c.status = "approved"; c.approvedAt = new Date().toISOString(); }
   db.save();
+  if (c) notifyCommunitySubscribers(c, d, req).catch(() => {});
   redirect(res, `/admin?ok=${encodeURIComponent("הפריט אושר! הוא כבר באוויר.")}`);
 });
 
@@ -3783,6 +4551,10 @@ route("POST", "/admin/community-add", async (req, res, params, query, ctx) => {
     model: clip((body.get("model") || "").trim(), 100),
     price: clip((body.get("price") || "").trim(), 50),
     whereBought: clip((body.get("whereBought") || "").trim(), 150),
+    color: DRESS_COLORS.includes(body.get("color")) ? body.get("color") : "",
+    length: DRESS_LENGTHS.includes(body.get("length")) ? body.get("length") : "",
+    audience: DRESS_AUDIENCES.includes(body.get("audience")) ? body.get("audience") : "",
+    priceNum: parsePriceNum(body.get("price") || ""),
     ownerCustomerId: null,
     source: "admin",
     status: "approved",
@@ -3792,6 +4564,7 @@ route("POST", "/admin/community-add", async (req, res, params, query, ctx) => {
   };
   d.communityListings.push(c);
   db.save();
+  notifyCommunitySubscribers(c, d, req).catch(() => {});
   redirect(res, `/admin?ok=${encodeURIComponent("הפריט נוסף ופורסם.")}`);
 });
 
@@ -3822,6 +4595,25 @@ route("POST", "/account/community/:id/take-down", async (req, res, params, query
   d.communityListings = d.communityListings.filter((c) => c.id !== params.id);
   db.save();
   redirect(res, `/account?ok=${encodeURIComponent(wasSale ? "הפריט הוסר - כל הכבוד על המכירה! ❤️" : "הפריט הוסר - תודה שמסרת אותו הלאה! ❤️")}`);
+});
+
+// שמירת/עדכון הערה פרטית של לקוחה על עצמאית שאהבה (favorites) - לא נבדק שה-key באמת קיים
+// ברשימת ה-favorites שלה, כדי לא לאבד את ההערה במקרה שבו הלקוחה הסירה ואז החזירה לב בו-זמנית
+// משני טאבים; ה-UI תמיד שולח key שמופיע כרגע ב-favCards, כך שבפועל זה תמיד favorite קיים.
+// הערה ריקה מוחקת את המפתח לגמרי (ולא משאירה מחרוזת ריקה) כדי לא לנפח את d.json לשווא.
+route("POST", "/account/favorite-note", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (!customer) return redirect(res, "/login");
+  const body = await readBody(req);
+  const key = (body.get("key") || "").trim();
+  const note = clip((body.get("note") || "").trim(), 500);
+  if (!key) return redirect(res, "/account");
+  customer.favoriteNotes = customer.favoriteNotes || {};
+  if (note) customer.favoriteNotes[key] = note; else delete customer.favoriteNotes[key];
+  db.save();
+  redirect(res, `/account?ok=${encodeURIComponent("ההערה נשמרה")}#fav-${encodeURIComponent(key)}`);
 });
 
 // ----- Central deals page - all active coupon offers in one place -----
@@ -4399,7 +5191,8 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
   db.load().customers.push({
     id, name, email,
     passwordHash: auth.hashPassword(body.get("password")), cityId: "",
-    favorites: [], viewedDeals: [], revealedCoupons: [], pushSubscriptions: [], createdAt: new Date().toISOString(),
+    favorites: [], favoriteNotes: {}, viewedDeals: [], revealedCoupons: [], pushSubscriptions: [], createdAt: new Date().toISOString(),
+    communityNotifyTags: {},
     emailVerified: false, emailVerifyToken,
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
     referredByCustomerId: referrer ? referrer.id : null,
@@ -4430,15 +5223,32 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
   // Each favorite key is either a bare freelancer id (her main profile) or
   // "freelancerId:listingId" (one specific additional listing) - resolved into its own card
   // and link so two listings belonging to the same freelancer never get merged into one.
+  // כל כרטיס עטוף ב-div חיצוני (לא בתוך ה-<a> של הכרטיס עצמו, כדי לא ליצור קישור/HTML לא
+  // תקין) עם טופס הערה פרטית מתחתיו - "הערות" שהלקוחה יכולה לכתוב לעצמה על עצמאית שאהבה
+  // (למשל מחיר שסוכם או פרטים אחרי שיחה), נשמר ב-customer.favoriteNotes (מפתח = אותו favKey
+  // בדיוק כמו ב-favorites). ר' POST /account/favorite-note למטה.
   const favCards = customer.favorites.map((key) => {
     const [fid, lid] = String(key).split(":");
     const f = d.freelancers.find((x) => x.id === fid);
     if (!f || f.status !== "approved" || f.active === false) return null;
+    let cardHtml;
     if (lid) {
       const l = (f.additionalListings || []).find((x) => String(x.id) === lid);
-      return (l && l.status === "approved") ? additionalListingCard(f, l, d) : null;
+      cardHtml = (l && l.status === "approved") ? additionalListingCard(f, l, d) : null;
+    } else {
+      cardHtml = freelancerCard(f, d);
     }
-    return freelancerCard(f, d);
+    if (!cardHtml) return null;
+    const note = (customer.favoriteNotes || {})[key] || "";
+    return `
+    <div class="fav-card-wrap" id="fav-${esc(key)}">
+      ${cardHtml}
+      <form method="post" action="/account/favorite-note" class="fav-note-form">
+        <input type="hidden" name="key" value="${esc(key)}" />
+        <textarea name="note" maxlength="500" class="fav-note-textarea" placeholder="הערה פרטית לעצמך (מחיר שסוכם, פרטים מהשיחה...)">${esc(note)}</textarea>
+        <button type="submit" class="btn btn-small btn-outline">שמירת הערה</button>
+      </form>
+    </div>`;
   }).filter(Boolean);
   // "מסירות"/"מכירת יד 2" שהיא פרסמה במאגרי קהילה - היחידים מבין 8 סוגי המאגר שדורשים
   // חשבון לקוחה מחובר, בדיוק כדי שהיא תוכל לראות ולהוריד אותם בעצמה כאן ברגע שהחפץ כבר
@@ -4696,6 +5506,20 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     db.save();
   }
 
+  // "בקשות שירות" ממתינות בתחום שלה (ר' ההערה המורחבת ליד serviceRequestCard) - כל עוד
+  // d.settings.serviceRequestsPremiumOnly כבוי, כל עצמאית מאושרת בתחום רואה את הפרטים
+  // המלאים; כשהדגל דלוק, רק tier==="premium" רואה פרטים - השאר רואות רק "טיזר" עם המספר,
+  // כדי לתת סיבה טובה לשדרג (בלי לחשוף פרטי לקוחה בחינם).
+  const matchingServiceRequests = (d.serviceRequests || []).filter((r) => r.categoryId === f.categoryId && (!r.subcategoryId || !f.subcategoryId || r.subcategoryId === f.subcategoryId))
+    .slice().sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+  const canSeeServiceRequests = !d.settings.serviceRequestsPremiumOnly || f.tier === "premium";
+  const serviceRequestsSectionHtml = matchingServiceRequests.length ? `
+  <div class="panel">
+    <h3>📣 בקשות שירות בתחום שלך (${matchingServiceRequests.length})</h3>
+    ${canSeeServiceRequests
+      ? `<p class="muted">לקוחות שמחפשות בדיוק את מה שאת נותנת - אפשר לפנות אליהן ישירות.</p>${matchingServiceRequests.map((r) => serviceRequestCard(r, d)).join("")}`
+      : `<p class="muted">יש ${matchingServiceRequests.length} בקשות פתוחות בתחום שלך כרגע - זמין רק למנויות "מומלצת". אפשר לפנות להנהלת SheCan כדי לשדרג.</p>`}
+  </div>` : "";
   const body = `
   ${welcomePopupHtml}
   <h1 class="section-title">היי ${esc(f.name.split(" ")[0])}, בואי נעדכן קצת</h1>
@@ -4715,6 +5539,8 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <h3>הודעות מהנהלת SheCan 📣</h3>
     <div class="chat-thread" style="text-align:right;">${myAdminMessages.map((m) => `<div class="chat-msg from-admin">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
   </div>` : ""}
+
+  ${serviceRequestsSectionHtml}
 
   <div class="panel">
     <h3>💡 איך להופיע ראשונה?</h3>
@@ -5926,6 +6752,17 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel">
+    <h3>לוגו ברירת מחדל לעסקים</h3>
+    <p class="muted">התמונה הזו מוצגת אוטומטית (במקום ראשי תיבות) לכל עסק שעדיין לא העלה תמונת פרופיל או לוגו משלו - בכרטיסיות המודעה/עסק מוביל בצד העמוד, בכרטיסיית העסק בגריד, ובעמוד הפרופיל המלא. עסק שמעלה תמונה או לוגו משלו ממשיך להציג את שלו כרגיל, זו רק ברירת מחדל.</p>
+    ${d.settings.defaultBusinessLogoDataUri ? `<div style="margin:10px 0;"><img src="${d.settings.defaultBusinessLogoDataUri}" alt="לוגו ברירת מחדל נוכחי" style="width:80px;height:80px;object-fit:contain;border-radius:12px;background:var(--cream);" /></div>` : `<p class="muted">כרגע אין לוגו ברירת מחדל - עסק בלי תמונה/לוגו משלו מציג ראשי תיבות.</p>`}
+    <form method="post" action="/admin/default-business-logo" enctype="multipart/form-data">
+      <label>העלאת לוגו ברירת מחדל חדש${d.settings.defaultBusinessLogoDataUri ? " (להחלפה)" : ""}<input type="file" name="defaultBusinessLogo" accept="image/*" /></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">העלאה</button>
+    </form>
+    ${d.settings.defaultBusinessLogoDataUri ? `<form method="post" action="/admin/default-business-logo/remove" style="margin-top:8px;"><button class="btn btn-small btn-outline" type="submit">הסרה - חזרה לראשי תיבות</button></form>` : ""}
+  </div>
+
+  <div class="panel">
     <h3>באנר עליון קבוע</h3>
     <p class="muted">תמונה ברוחב מלא שתופיע בראש כל עמוד באתר, מעל סרגל הניווט - מקום נחמד ללוגו גדול או לתמונת מיתוג.</p>
     ${d.settings.topBannerDataUri ? `<div style="margin:10px 0;"><img src="${d.settings.topBannerDataUri}" alt="באנר נוכחי" style="max-width:100%;max-height:120px;" /></div>` : `<p class="muted">כרגע אין באנר - סרגל הניווט מופיע לבד בראש העמוד.</p>`}
@@ -6151,6 +6988,23 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
+  <div class="panel" data-badge="${(d.serviceRequests || []).length}">
+    <h3>📣 בקשות שירות מלקוחות (${(d.serviceRequests || []).length})</h3>
+    <p class="muted">${d.settings.serviceRequestsPremiumOnly ? "כרגע מוצגות לעצמאיות רק אם היא מסומנת 'מומלצת' (ר' עמודת 'רמה' בטבלת העצמאיות למטה)." : "כרגע פתוח לכל עצמאית מאושרת בתחום המתאים - אף אחת לא נדרשת להיות 'מומלצת' כדי לראות."}</p>
+    <form method="post" action="/admin/toggle-service-requests-premium">
+      <button class="btn btn-small" type="submit">${d.settings.serviceRequestsPremiumOnly ? "פתיחה לכולן" : "הגבלה ל'מומלצת' בלבד"}</button>
+    </form>
+    ${(d.serviceRequests || []).length ? `<div class="table-scroll" style="margin-top:14px;"><table class="table-simple"><tr><th>כותרת</th><th>תחום</th><th>לקוחה</th><th>פורסם</th><th>מחיקה</th></tr>
+      ${(d.serviceRequests || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map((r) => {
+        const cu = d.customers.find((c) => c.id === r.customerId);
+        return `<tr>
+        <td>${esc(r.title)}</td><td>${esc(subcatName(d, r.categoryId, r.subcategoryId) || catName(d, r.categoryId))}</td><td>${cu ? esc(cu.name) : "-"}</td><td>${esc(new Date(r.createdAt).toLocaleDateString("he-IL"))}</td>
+        <td><form method="post" action="/admin/service-request/${r.id}/delete" onsubmit="return confirm('למחוק את הבקשה ' + ${JSON.stringify(r.title || "")} + '?');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
+      </tr>`;
+      }).join("")}
+    </table></div>` : ""}
+  </div>
+
   <div class="panel">
     <h3>העצמאיות שכבר איתנו (${activeFreelancers.length})</h3>
     <p class="muted">"נותנת חסות" - הבלטה מיוחדת וקבועה (למשל לעצמאיות שתרמו הטבה להגרלה). "מודעה" - הבלטה בתשלום שאת מוכרת וסוגרת איתן ישירות. "צפיות" - כמה פעמים נכנסו לעמוד שלה. "צפיות בקופון" - כמה פעמים לחצו "לצפייה בקוד קופון". "עסקאות שנסגרו" - כמה פעמים היא סימנה עסקה כנסגרה והלקוחה גם אישרה זאת בעצמה.</p>
@@ -6163,7 +7017,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <input type="email" name="email" value="${hasRealEmail(f) ? esc(f.email) : ""}" placeholder="${hasRealEmail(f) ? "" : "אין מייל אמיתי"}" style="width:150px;font-size:12px;padding:4px 6px;" />
           <button class="btn btn-small btn-outline" type="submit" style="padding:4px 8px;font-size:12px;white-space:nowrap;">שמירה</button>
         </form></td>
-        <td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td><td>${f.tier === "premium" ? "מומלצת" : "בסיסית"}</td>
+        <td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td>
+        <td><form method="post" action="/admin/freelancer/${f.id}/toggle-tier"><button class="btn btn-small ${f.tier === "premium" ? "" : "btn-outline"}" type="submit">${f.tier === "premium" ? "⭐ מומלצת" : "הפכי למומלצת"}</button></form></td>
         <td>${esc(f.dealCode || "-")}</td><td>${f.viewCount || 0}</td><td>${f.couponRevealCount || 0}</td><td>${dealsByFreelancer[f.id] || 0}</td>
         <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/resend-credentials" onsubmit="return confirm('זה ייצור סיסמה זמנית חדשה ל' + ${JSON.stringify(f.businessName || f.name)} + ' וישלח אותה במייל (הסיסמה הישנה שלה תפסיק לעבוד). להמשיך?');"><button class="btn btn-small btn-outline" type="submit">📧 שליחת פרטי התחברות</button></form></td>
@@ -6405,6 +7260,29 @@ route("POST", "/admin/logo/remove", async (req, res, params, query, ctx) => {
   d.settings.showLogoOnDealBadge = false;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("חזרנו לוורדמארק הטקסט.")}`);
+});
+
+// "לוגו ברירת מחדל לעסקים" - התמונה שמוצגת אוטומטית בכל מקום שמראה תמונת/לוגו עסק (כרטיסיית
+// מודעה/עסק מוביל, כרטיסיית עסק בגריד, עמוד הפרופיל המלא) עבור עסק שלא העלה תמונת פרופיל או
+// לוגו משלו. ר' d.settings.defaultBusinessLogoDataUri ב-db.js ו-avatarUri/cardPhotoHtml
+// ב-server.js. אותו דפוס בדיוק כמו לוגו האתר למעלה - ספיר יכולה להחליף בכל שלב.
+route("POST", "/admin/default-business-logo", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}`);
+  const d = db.load();
+  const dataUri = fileToDataUri(body.files.defaultBusinessLogo, MAX_UPLOAD_BYTES);
+  if (dataUri) d.settings.defaultBusinessLogoDataUri = dataUri;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(dataUri ? "לוגו ברירת המחדל לעסקים עודכן!" : "לא התקבלה תמונה תקינה - נסי שוב.")}`);
+});
+
+route("POST", "/admin/default-business-logo/remove", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.defaultBusinessLogoDataUri = null;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הוסר - עסק בלי תמונה/לוגו משלו יחזור להציג ראשי תיבות.")}`);
 });
 
 route("POST", "/admin/top-banner", async (req, res, params, query, ctx) => {
@@ -6943,6 +7821,22 @@ route("POST", "/admin/toggle-public-stats", async (req, res, params, query, ctx)
   redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showPublicStats ? "המספרים מוצגים עכשיו לכולן בעמוד הבית." : "המספרים הוסתרו מעמוד הבית.")}`);
 });
 
+route("POST", "/admin/toggle-service-requests-premium", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.serviceRequestsPremiumOnly = !d.settings.serviceRequestsPremiumOnly;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.serviceRequestsPremiumOnly ? "בקשות שירות מוצגות עכשיו רק לעצמאיות 'מומלצת'." : "בקשות שירות פתוחות עכשיו לכל עצמאית מאושרת.")}`);
+});
+
+route("POST", "/admin/service-request/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.serviceRequests = (d.serviceRequests || []).filter((x) => x.id !== params.id);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הבקשה נמחקה.")}`);
+});
+
 route("POST", "/admin/category", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
@@ -7146,6 +8040,20 @@ route("POST", "/admin/freelancer/:id/toggle-active", async (req, res, params, qu
   redirect(res, `/admin?ok=${encodeURIComponent(f && f.active !== false ? "היא פעילה עכשיו - חוזרת להופיע באתר." : "היא סומנה כלא פעילה - זמנית לא תופיע באתר.")}`);
 });
 
+// עד עכשיו tier ("רמה") נבחר רק ע"י העצמאית עצמה ב-/join ולא ניתן היה לשנות אותו אחר כך -
+// נוסף כאן טוגל אדמין (בדיוק כמו toggle-active/toggle-ad למעלה) כדי שספיר תוכל לשדרג/להוריד
+// עצמאית ל"מומלצת" בעצמה (למשל אחרי תשלום ידני מחוץ למערכת) - משמש גם לדירוג בחיפוש/
+// "מומלצת" ובעמוד הבית כרגיל, וגם (נוסף לפי בקשה מפורשת) כשער ל"בקשות שירות" - ר'
+// d.settings.serviceRequestsPremiumOnly ו-GET /freelancer-dashboard.
+route("POST", "/admin/freelancer/:id/toggle-tier", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (f) f.tier = f.tier === "premium" ? "basic" : "premium";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(f && f.tier === "premium" ? "היא מסומנת עכשיו כ'מומלצת'." : "היא סומנה בחזרה כ'בסיסית'.")}`);
+});
+
 route("POST", "/admin/freelancer/:id/toggle-ad", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -7204,10 +8112,15 @@ route("POST", "/admin/freelancer/:id/reject", async (req, res, params, query, ct
   redirect(res, `/admin?ok=${encodeURIComponent("נדחה.")}`);
 });
 
-// Lets Sapir upload a logo + up to 4 gallery photos on behalf of a freelancer (e.g. one who
-// was bulk-imported from a spreadsheet and never went through the /join upload form herself).
-// Mirrors the same fields/behavior as her own dashboard: a new logo replaces the old one, and
-// uploading any new gallery photo replaces the whole gallery set (not merged one-by-one).
+// Lets Sapir upload/delete a profile photo + לוגו + up to 4 gallery photos on behalf of a
+// freelancer (e.g. one who was bulk-imported from a spreadsheet and never went through the
+// /join upload form herself). Mirrors the same fields/behavior as her own dashboard for
+// uploading: a new logo/profile photo replaces the old one, and uploading any new gallery
+// photo replaces the whole gallery set (not merged one-by-one). Deletion (added לפי בקשה
+// מפורשת: "אני רוצה שתאפשר לי למחוק לעצמאית תמונות") is separate and per-image - profile
+// photo/logo each get their own "הסרה" form, and every gallery photo gets its own removal
+// form (POST /admin/freelancer/:id/gallery/:idx/remove) so a single bad photo can be taken
+// down without having to re-upload the whole gallery.
 route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -7216,11 +8129,27 @@ route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx
   const body = `
   <h1 class="section-title">תמונות עבור ${esc(f.businessName || f.name)}</h1>
   <div class="panel" style="max-width:560px;margin:0 auto;">
-    <h3>לוגו נוכחי</h3>
-    ${f.logoDataUri ? `<img src="${f.logoDataUri}" alt="לוגו" style="width:120px;height:120px;object-fit:cover;border-radius:12px;" />` : `<p class="muted">עדיין אין לוגו.</p>`}
+    <h3>תמונת פרופיל נוכחית</h3>
+    ${f.photoDataUri ? `
+    <img src="${f.photoDataUri}" alt="תמונת פרופיל" style="width:120px;height:120px;object-fit:cover;border-radius:12px;" />
+    <form method="post" action="/admin/freelancer/${f.id}/photo/remove" style="margin-top:8px;" onsubmit="return confirm('להסיר את תמונת הפרופיל?');"><button class="btn btn-small btn-outline" type="submit">הסרת תמונת הפרופיל</button></form>
+    ` : `<p class="muted">עדיין אין תמונת פרופיל.</p>`}
+    <h3 style="margin-top:18px;">לוגו נוכחי</h3>
+    ${f.logoDataUri ? `
+    <img src="${f.logoDataUri}" alt="לוגו" style="width:120px;height:120px;object-fit:cover;border-radius:12px;" />
+    <form method="post" action="/admin/freelancer/${f.id}/logo/remove" style="margin-top:8px;" onsubmit="return confirm('להסיר את הלוגו?');"><button class="btn btn-small btn-outline" type="submit">הסרת הלוגו</button></form>
+    ` : `<p class="muted">עדיין אין לוגו.</p>`}
     <h3 style="margin-top:18px;">גלריה נוכחית</h3>
-    ${(f.galleryPhotos && f.galleryPhotos.length) ? `<div class="gallery-scroll">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />`).join("")}</div>` : `<p class="muted">עדיין אין תמונות גלריה.</p>`}
+    ${(f.galleryPhotos && f.galleryPhotos.length) ? `
+    <div class="gallery-scroll" style="display:flex;gap:10px;flex-wrap:wrap;">
+      ${f.galleryPhotos.map((src, idx) => `
+      <div style="text-align:center;">
+        <img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />
+        <form method="post" action="/admin/freelancer/${f.id}/gallery/${idx}/remove" style="margin-top:4px;" onsubmit="return confirm('להסיר את התמונה הזו מהגלריה?');"><button class="btn btn-small btn-outline" type="submit">הסרה</button></form>
+      </div>`).join("")}
+    </div>` : `<p class="muted">עדיין אין תמונות גלריה.</p>`}
     <form method="post" action="/admin/freelancer/${f.id}/photos" enctype="multipart/form-data" style="margin-top:18px;">
+      <label>תמונת פרופיל חדשה ${f.photoDataUri ? "(להחלפה)" : ""}<input type="file" name="photo" accept="image/*" /></label>
       <label>לוגו חדש ${f.logoDataUri ? "(להחלפה)" : ""}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
       <label style="margin-top:10px;">תמונות גלריה (עד 4 - העלאת תמונה כאן מחליפה את כל הגלריה הקיימת)
       <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
@@ -7233,6 +8162,34 @@ route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx
   </div>
   `;
   sendHtml(res, 200, page({ title: `תמונות - ${f.businessName || f.name}`, session: ctx.session, body, query, noSidebars: true }));
+});
+
+route("POST", "/admin/freelancer/:id/photo/remove", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (f) { f.photoDataUri = null; db.save(); }
+  redirect(res, `/admin/freelancer/${params.id}/photos?ok=${encodeURIComponent("תמונת הפרופיל הוסרה.")}`);
+});
+
+route("POST", "/admin/freelancer/:id/logo/remove", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (f) { f.logoDataUri = null; db.save(); }
+  redirect(res, `/admin/freelancer/${params.id}/photos?ok=${encodeURIComponent("הלוגו הוסר.")}`);
+});
+
+route("POST", "/admin/freelancer/:id/gallery/:idx/remove", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  const idx = parseInt(params.idx, 10);
+  if (f && Array.isArray(f.galleryPhotos) && Number.isInteger(idx) && idx >= 0 && idx < f.galleryPhotos.length) {
+    f.galleryPhotos.splice(idx, 1);
+    db.save();
+  }
+  redirect(res, `/admin/freelancer/${params.id}/photos?ok=${encodeURIComponent("התמונה הוסרה מהגלריה.")}`);
 });
 
 // Both routes back the customSubcategoryNoteHtml highlight box - rename actually edits the
@@ -7270,6 +8227,8 @@ route("POST", "/admin/freelancer/:id/photos", async (req, res, params, query, ct
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
   if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  const newPhoto = fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES);
+  if (newPhoto) f.photoDataUri = newPhoto;
   const newLogo = fileToDataUri(body.files.logo, MAX_UPLOAD_BYTES);
   if (newLogo) f.logoDataUri = newLogo;
   const newGallery = ["gallery1", "gallery2", "gallery3", "gallery4"]
