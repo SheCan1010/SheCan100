@@ -1346,6 +1346,102 @@ function scOpenCropModal(img, input, boxSize, outSize) {
 }
 document.addEventListener("DOMContentLoaded", scSetupLogoCropper);
 
+// ---- "אין לך לוגו? ליצור אחד עכשיו" - יצירת מונוגרם ממותג חינמית וללא שירות חיצוני, לכל
+// <button data-sc-generate-logo="FILE_INPUT_ID:BUSINESS_NAME_INPUT_ID"> באתר (כרגע: הרשמה +
+// עדכון פרופיל באזור האישי). בלחיצה בונה על canvas לוגו מרובע מ-1-2 האותיות הראשונות של שם
+// העסק על רקע גרדיאנט ממותג (נבחר לפי גיוון של שם העסק, כך שאותו שם עסק תמיד יקבל את אותו
+// צבע כברירת מחדל, עם אפשרות "גרסה אחרת" שמגוונת), ומזריקה אותו כקובץ תמונה אמיתי לתוך
+// ה-<input type="file"> הקיים באמצעות DataTransfer - בדיוק כמו שאישור החיתוך ב-
+// scOpenCropModal למעלה כבר עושה - כך שקוד השרת (fileToDataUri על body.files.logo) לא צריך
+// שום שינוי וזה מתנהג בדיוק כמו העלאת קובץ רגילה על ידה.
+var SC_LOGO_PALETTE = [
+  ["#c1b2a1", "#9a8e81"], ["#E8B4C0", "#C98A9A"], ["#D4A574", "#B8895A"],
+  ["#C97B63", "#A85D47"], ["#A3B18A", "#7D8C5C"], ["#B08BA0", "#8C6A80"],
+  ["#8FA3AD", "#6B838F"], ["#A67B5B", "#8A6244"],
+];
+function scLogoInitials(name) {
+  // הערה: הקובץ הזה כולו נבנה בתוך template literal ענק אחד (ר' page() ב-layout.js) - בתוכו
+  // \\s הופך בזמן ה-parse ל-\s בפועל (ורק \\s עם קו נטוי כפול שורד ומגיע ככה לדפדפן) - בלי
+  // ההכפלה, \s הופך ל-s בטעות (הקו הנטוי הבודד נבלע כי הוא לא תו escape מוכר ב-template
+  // literal), מה שגורם לפיצול לפי האות s במקום לפי רווח.
+  var words = (name || "").trim().split(/\\s+/).filter(Boolean);
+  var chars = words.slice(0, 2).map(function (w) { return w.charAt(0); }).join("");
+  return (chars || "?").toUpperCase();
+}
+function scLogoColorIndex(seedText) {
+  var h = 0;
+  for (var i = 0; i < seedText.length; i++) h = (h * 31 + seedText.charCodeAt(i)) >>> 0;
+  return h % SC_LOGO_PALETTE.length;
+}
+function scDrawGeneratedLogo(canvas, name, variant) {
+  var size = canvas.width;
+  var ctx = canvas.getContext("2d");
+  var colors = SC_LOGO_PALETTE[scLogoColorIndex((name || "עסק") + "|" + variant)];
+  var grad = ctx.createLinearGradient(0, 0, size, size);
+  grad.addColorStop(0, colors[0]);
+  grad.addColorStop(1, colors[1]);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold " + Math.round(size * 0.42) + "px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  // חובה במפורש - קנבס חדש שלא הוזרק ל-DOM לא יורש את כיווניות RTL של הדף, ובלעדי זה שני
+  // אותיות עבריות (כמו רוב שמות העסקים) עלולות להיצייר בסדר הפוך (LTR כברירת מחדל של קנבס).
+  ctx.direction = "rtl";
+  ctx.fillText(scLogoInitials(name), size / 2, size / 2 + size * 0.02);
+}
+function scSetupLogoGenerator() {
+  document.querySelectorAll("[data-sc-generate-logo]").forEach(function (btn) {
+    if (btn.dataset.scWired) return;
+    btn.dataset.scWired = "1";
+    var ids = btn.getAttribute("data-sc-generate-logo").split(":");
+    var fileInput = document.getElementById(ids[0]);
+    var nameInput = document.getElementById(ids[1]);
+    var previewWrap = document.getElementById(ids[0] + "GenPreview");
+    if (!fileInput || !previewWrap) return;
+    var variant = 0;
+    function generate() {
+      var name = (nameInput && nameInput.value) || "";
+      if (!name.trim()) {
+        alert("קודם תכתבי את שם העסק למעלה, ואז אפשר ליצור לוגו ממנו :)");
+        return;
+      }
+      var canvas = document.createElement("canvas");
+      canvas.width = 640; canvas.height = 640;
+      scDrawGeneratedLogo(canvas, name, variant);
+      canvas.toBlob(function (blob) {
+        if (!blob || !window.DataTransfer) return;
+        try {
+          var dt = new DataTransfer();
+          dt.items.add(new File([blob], "logo-generated.png", { type: "image/png" }));
+          fileInput.files = dt.files;
+        } catch (err) { return; }
+        previewWrap.innerHTML = "";
+        var img = document.createElement("img");
+        img.src = canvas.toDataURL("image/png");
+        img.alt = "תצוגה מקדימה של הלוגו שנוצר";
+        img.style.cssText = "width:90px;height:90px;object-fit:cover;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);vertical-align:middle;";
+        var retryBtn = document.createElement("button");
+        retryBtn.type = "button";
+        retryBtn.className = "btn btn-small btn-outline";
+        retryBtn.textContent = "🔄 גרסה אחרת";
+        retryBtn.style.cssText = "margin-inline-start:10px;vertical-align:middle;";
+        retryBtn.addEventListener("click", function () { variant++; generate(); });
+        var okNote = document.createElement("span");
+        okNote.className = "muted";
+        okNote.style.cssText = "display:block;font-size:12px;margin-top:6px;";
+        okNote.textContent = "✓ נוצר! זה יישמר כלוגו שלך כשתלחצי על שמירה.";
+        previewWrap.appendChild(img);
+        previewWrap.appendChild(retryBtn);
+        previewWrap.appendChild(okNote);
+      }, "image/png");
+    }
+    btn.addEventListener("click", generate);
+  });
+}
+document.addEventListener("DOMContentLoaded", scSetupLogoGenerator);
+
 // ---- "Show password" toggle, applied automatically to every password field on the site ----
 // A single generic function instead of editing each of the 7 password forms individually
 // (join/login/reset-password/signup/admin change-email/freelancer-dashboard change-password) -

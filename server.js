@@ -1573,7 +1573,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update91 - 2026-08-27 - אזור אישי לעצמאית: תזכורת מוקפצת (בכל כניסה) לסמן עסקה שנסגרה עם לקוחה שהגיעה דרך SheCan";
+const DEPLOY_MARKER = "update93 - 2026-08-27 - אזור ניהול: כפתור \"💬 שליחת הודעה\" ליד כל פריט בכל תור אישור ששייך לעצמאית (הצטרפות/סיפור/תת-תחום/משפט השראה/תחום נוסף) - עם כותרת בהתראה ובמייל שמסבירה מיד על מה מדובר";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -4977,7 +4977,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
 
   <form class="panel" id="scJoinForm" method="post" action="/join" enctype="multipart/form-data" style="max-width:560px;margin:24px auto;">
     <label>🌸 שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
-    <label>🌸 שם העסק<input type="text" name="businessName" value="${esc(p.businessName || "")}" required /></label>
+    <label>🌸 שם העסק<input type="text" name="businessName" id="joinBusinessName" value="${esc(p.businessName || "")}" required /></label>
     <label>🌸 מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
     <label>🌸 בחרי סיסמה<input type="password" name="password" required /></label>
     ${isRetry ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
@@ -5001,7 +5001,12 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="offersHomeVisit" value="1" ${p.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
     <label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
-    <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
+    <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" id="joinLogoInput" accept="image/*" data-sc-crop="1" /></label>
+    <p style="margin:-6px 0 6px;">
+      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="joinLogoInput:joinBusinessName">✨ אין לך לוגו? ליצור אחד עכשיו</button>
+      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו נקי מהאותיות הראשונות של שם העסק שלך, תוך שניות ובחינם - אפשר להחליף בתמונה משלך בכל שלב.</span>
+      <span id="joinLogoInputGenPreview" style="display:block;margin-top:8px;"></span>
+    </p>
     <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך${filesNote}
     <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
     <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
@@ -5860,7 +5865,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   ${myAdminMessages.length ? `
   <div class="panel">
     <h3>הודעות מהנהלת SheCan 📣</h3>
-    <div class="chat-thread" style="text-align:right;">${myAdminMessages.map((m) => `<div class="chat-msg from-admin">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
+    <div class="chat-thread" style="text-align:right;">${myAdminMessages.map((m) => `<div class="chat-msg from-admin">${m.context ? `<div style="font-size:12px;font-weight:700;opacity:.85;margin-bottom:4px;">לגבי: ${esc(m.context)}</div>` : ""}${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
   </div>` : ""}
 
   ${serviceRequestsSectionHtml}
@@ -5940,8 +5945,13 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <h3>הפרופיל שלך</h3>
     ${avatarUri(f) ? `<div style="margin-bottom:10px;">${photoOrInitials(avatarUri(f), f.businessName, "profile-photo")}</div>` : ""}
     <label>תמונת פרופיל ${f.photoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="photo" accept="image/*" /></label>
-    <label>לוגו העסק ${f.logoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
-    <label>שם העסק<input type="text" name="businessName" value="${esc(f.businessName)}" required /></label>
+    <label>לוגו העסק ${f.logoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="logo" id="dashLogoInput" accept="image/*" data-sc-crop="1" /></label>
+    <p style="margin:-6px 0 6px;">
+      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="dashLogoInput:dashBusinessName">✨ אין לך לוגו? ליצור אחד עכשיו</button>
+      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו נקי מהאותיות הראשונות של שם העסק שלך, תוך שניות ובחינם - אפשר להחליף בתמונה משלך בכל שלב.</span>
+      <span id="dashLogoInputGenPreview" style="display:block;margin-top:8px;"></span>
+    </p>
+    <label>שם העסק<input type="text" name="businessName" id="dashBusinessName" value="${esc(f.businessName)}" required /></label>
     <label>תחום
     <select name="categoryId" onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
     <label>תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat"><option value="">ללא תת-תחום</option>${subcatOptions}</select></label>
@@ -6535,6 +6545,24 @@ function isSnoozed(d, key) {
 function snoozeButtonHtml(key, itemType, itemLabel) {
   return `<form method="post" action="/admin/snooze" style="display:inline;"><input type="hidden" name="key" value="${esc(key)}" /><input type="hidden" name="itemType" value="${esc(itemType)}" /><input type="hidden" name="itemLabel" value="${esc(itemLabel)}" /><button class="btn btn-small btn-outline" type="submit" title="להעביר להמשך טיפול - ייעלם מהתור עד שתחזירי אותו">🕒 להמשך טיפול</button></form>`;
 }
+// כפתור "שליחת הודעה" שמתלווה לכל פריט בכל תור אישור ששייך לעצמאית ספציפית (ר' POST
+// /admin/message-freelancer למטה) - לחיצה פותחת טופס קטן עם תיבת טקסט, בלי לצאת מעמוד הניהול
+// ובלי לחפש את העצמאית בפאנל "שליחת הודעה" הכללי. contextLabel (למשל 'משפט ההשראה ששלחה
+// לאישור') נשלח כשדה חבוי ומוזרק לכותרת ההתראה/המייל שהיא תקבל, כדי שברור לה מיד על מה
+// מדובר. uniqueKey חייב להיות ייחודי בתוך העמוד (כי אותה עצמאית יכולה להופיע במספר תורים
+// שונים בו-זמנית) - נבנה תמיד משם התור + מזהה הפריט הספציפי.
+function messageFreelancerButtonHtml(freelancerId, contextLabel, uniqueKey) {
+  const boxId = `scMsgBox-${esc(uniqueKey)}`;
+  return `<span class="sc-msg-inline">
+    <button type="button" class="btn btn-small btn-outline" onclick="var b=document.getElementById('${boxId}');b.style.display=(b.style.display==='none'?'block':'none');">💬 שליחת הודעה</button>
+    <form method="post" action="/admin/message-freelancer" id="${boxId}" style="display:none;margin-top:8px;max-width:360px;">
+      <input type="hidden" name="freelancerId" value="${esc(freelancerId)}" />
+      <input type="hidden" name="context" value="${esc(contextLabel)}" />
+      <textarea name="text" maxlength="1000" required placeholder="כתבי כאן את ההודעה שלך..." style="min-height:60px;"></textarea>
+      <button class="btn btn-small" style="margin-top:6px;" type="submit">שליחה</button>
+    </form>
+  </span>`;
+}
 route("POST", "/admin/snooze", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -6919,10 +6947,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <textarea name="text" maxlength="1000" required></textarea></label>
       <button class="btn btn-small" style="margin-top:10px;" type="submit">שליחת הודעה</button>
     </form>
-    ${(d.adminMessages || []).length ? `<div class="table-scroll" style="margin-top:16px;"><table class="table-simple"><tr><th>לעצמאית</th><th>הודעה</th><th>תאריך</th></tr>
+    ${(d.adminMessages || []).length ? `<div class="table-scroll" style="margin-top:16px;"><table class="table-simple"><tr><th>לעצמאית</th><th>לגבי</th><th>הודעה</th><th>תאריך</th></tr>
       ${d.adminMessages.slice().reverse().slice(0, 20).map((m) => {
         const mf = d.freelancers.find((x) => x.id === m.freelancerId);
-        return `<tr><td>${esc(mf ? (mf.businessName || mf.name) : "-")}</td><td>${esc(m.text)}</td><td>${esc(new Date(m.date).toLocaleDateString("he-IL"))}</td></tr>`;
+        return `<tr><td>${esc(mf ? (mf.businessName || mf.name) : "-")}</td><td>${esc(m.context || "-")}</td><td>${esc(m.text)}</td><td>${esc(new Date(m.date).toLocaleDateString("he-IL"))}</td></tr>`;
       }).join("")}
     </table></div>` : ""}
   </div>
@@ -6973,6 +7001,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <form method="post" action="/admin/subcategory-suggestion/${s.id}/approve"><button class="btn btn-small" type="submit">✓ אישור והוספה</button></form>
           <form method="post" action="/admin/subcategory-suggestion/${s.id}/reject"><button class="btn btn-small btn-outline" type="submit">✕ דחייה</button></form>
           ${snoozeButtonHtml(`subcategorySuggestion:${s.id}`, "subcategorySuggestion", `המלצה לתת-תחום: "${s.name}"`)}
+          ${messageFreelancerButtonHtml(s.freelancerId, `ההמלצה שלך לתת-תחום חדש "${s.name}"`, `subcatSugg-${s.id}`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע המלצות ממתינות.</p>`}
   </div>
@@ -6990,6 +7019,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <form method="post" action="/admin/inspiration-quote/${f.id}/approve"><button class="btn btn-small" type="submit">✓ אישור</button></form>
           <form method="post" action="/admin/inspiration-quote/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">✕ דחייה</button></form>
           ${snoozeButtonHtml(`inspirationQuote:${f.id}`, "inspirationQuote", `משפט השראה של ${f.businessName || f.name || ""}`)}
+          ${messageFreelancerButtonHtml(f.id, "משפט ההשראה ששלחת לאישור", `inspQuote-${f.id}`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע משפטים ממתינים.</p>`}
   </div>
@@ -7017,6 +7047,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <form method="post" action="/admin/freelancer/${f.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
           <form method="post" action="/admin/freelancer/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
           ${snoozeButtonHtml(`freelancer:${f.id}`, "freelancer", `עצמאית: ${f.businessName || f.name}`)}
+          ${messageFreelancerButtonHtml(f.id, "ההצטרפות שלך ל-SheCan שממתינה לאישור", `newFreelancer-${f.id}`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע אף אחת שמחכה - הכל מעודכן.</p>`}
   </div>
@@ -7090,6 +7121,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <form method="post" action="/admin/story/${s.id}/approve"><button class="btn btn-small" type="submit">אישור ופרסום</button></form>
           <form method="post" action="/admin/story/${s.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
           ${snoozeButtonHtml(`story:${s.id}`, "story", `סיפור: ${sf ? (sf.businessName || sf.name) : "לא ידוע"}`)}
+          ${sf ? messageFreelancerButtonHtml(sf.id, "סיפור ההשראה ששלחת לאישור", `story-${s.id}`) : ""}
         </div>
       </div>`;
     }).join("") : `<p class="muted">אין כרגע סיפורים שממתינים לאישור.</p>`}
@@ -7219,6 +7251,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <form method="post" action="/admin/listing/${f.id}/${l.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
           <form method="post" action="/admin/listing/${f.id}/${l.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
           ${snoozeButtonHtml(`listing:${f.id}:${l.id}`, "listing", `תחום נוסף: ${l.businessName} (${f.businessName || f.name})`)}
+          ${messageFreelancerButtonHtml(f.id, `התחום הנוסף "${l.businessName}" ששלחת לאישור`, `listing-${f.id}-${l.id}`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע תחומים נוספים שממתינים לאישור.</p>`}
   </div>
@@ -7673,13 +7706,20 @@ route("POST", "/admin/message-freelancer", async (req, res, params, query, ctx) 
   if (!f || !text) {
     return redirect(res, `/admin?err=${encodeURIComponent("יש לבחור עצמאית ולכתוב הודעה.")}`);
   }
+  // context (לא חובה) מגיע רק מכפתורי "שליחת הודעה" שמופיעים ליד פריט ספציפי בתור אישור (ר.
+  // messageFreelancerButtonHtml למעלה) - למשל "משפט ההשראה ששלחה לאישור". כשהוא קיים, הוא
+  // נכנס לכותרת ההתראה/המייל, כדי שהיא תדע מיד על מה ההודעה מדברת בלי לפתוח אותה קודם. בפאנל
+  // הכללי "שליחת הודעה לעצמאית" (בחירה ידנית מרשימה) אין context, אז חוזרים לכותרת הגנרית.
+  const context = (body.get("context") || "").trim();
+  const pushTitle = context ? `קיבלת הודעה לגבי ${context}` : "הודעה מהנהלת SheCan";
+  const emailSubject = context ? `הודעה לגבי ${context} - SheCan` : "הודעה חדשה מהנהלת SheCan";
   d.adminMessages = d.adminMessages || [];
-  d.adminMessages.push({ id: db.nextId("adminMessage"), freelancerId: f.id, text, date: new Date().toISOString(), read: false });
+  d.adminMessages.push({ id: db.nextId("adminMessage"), freelancerId: f.id, text, context, date: new Date().toISOString(), read: false });
   db.save();
-  sendPushToUser(f, { title: "הודעה מהנהלת SheCan", body: text.slice(0, 140), url: "/freelancer-dashboard" }).catch(() => {});
+  sendPushToUser(f, { title: pushTitle, body: text.slice(0, 140), url: "/freelancer-dashboard" }).catch(() => {});
   if (hasRealEmail(f)) {
-    sendEmail(f.email, "הודעה חדשה מהנהלת SheCan",
-      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>קיבלת הודעה מהנהלת SheCan:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לראות אותה גם באזור האישי שלך באתר.</p></div>`
+    sendEmail(f.email, emailSubject,
+      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>קיבלת הודעה מהנהלת SheCan${context ? ` לגבי <strong>${esc(context)}</strong>` : ""}:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לראות אותה גם באזור האישי שלך באתר.</p></div>`
     ).catch(() => {});
   }
   redirect(res, `/admin?ok=${encodeURIComponent("ההודעה נשלחה ל" + (f.businessName || f.name) + "!")}`);
