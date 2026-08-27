@@ -1560,7 +1560,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update84 - 2026-08-26 - שינוי שם \"בלב אחד\" (היה מתחזקות ומחזקות) + לקיחת פרק בלי התחברות + ציטוט בראש העמוד + פרקים בגימטריה עברית + גריד פרקים מתקפל + ריבוע מאוחד \"שמלות להשכרה\"";
+const DEPLOY_MARKER = "update87 - 2026-08-27 - \"המשך טיפול\" בכל תורי האישור בניהול + חיפוש חכם (גרסה חינמית, ללא AI חיצוני) + שיתוף פרקי תהילים ב\"בלב אחד\"";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -1733,6 +1733,107 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   sendHtml(res, 200, page({ title: "בית", session: ctx.session, body, query }));
 });
 
+// ----- חיפוש חכם (נוסף 2026-08-26, הוחלף לגרסה חינמית ללא AI חיצוני ב-2026-08-27) -----
+// לקוחה מקלידה משפט חופשי (למשל "מאפרת באזור ירושלים ברמה גבוהה ומחיר טוב") והפונקציה
+// למטה סורקת אותו בעצמה (בלי לקרוא לשום שירות AI חיצוני בתשלום) מול הרשימות האמיתיות של
+// האתר - קטגוריות/תת-קטגוריות/ערים - ומול כמה ביטויי מפתח נפוצים ("רמה גבוהה"/"מחיר טוב"
+// וכו') כדי לבנות סינון מובנה. הפלט המובנה מוזן חזרה לתוך GET /search הרגיל (כפרמטרי
+// query) - כל מנגנון הסינון/המיון הקיים מנוצל מחדש בלי כפילות קוד. אין שום קריאת רשת, אין
+// עלות לכל חיפוש, ואין תלות במפתח API של אף שירות חיצוני - זו האופציה החינמית (לעומת
+// חלופה מבוססת Claude API אמיתי, שנבדקה בעבר ונדחתה לטובת הגרסה הזו). המחיר: פחות "חכם"
+// מ-AI אמיתי - לא מבינה ניסוחים יצירתיים, שגיאות כתיב, או משפטים עקיפים - אבל עובדת תמיד
+// ומיידית, בלי שום הגדרה נדרשת מספיר.
+// מילות-חיבור נפוצות שאין להתייחס אליהן כאילו הן "מזהות תחום/עיר" בפני עצמן (למשל תת-הקטגוריה
+// "עיצוב גבות וריסים" לא אמורה "לתפוס" כל משפט שמכיל את המילה "וכן"/"של" סתם כי שתיהן קצרות).
+const HEB_STOPWORDS = new Set(["של", "עם", "אל", "זה", "זו", "גם", "רק", "כל", "הוא", "היא", "הם", "הן", "או", "אם", "כי", "על", "עד", "בין", "כמו", "וגם", "וכן"]);
+// מפרקת שם (של קטגוריה/תת-קטגוריה/עיר) למילים המשמעותיות שלו - כדי לבדוק אם הלקוחה הזכירה
+// אחת מהן בבקשה שלה, במקום לבדוק אם היא הקלידה את השם המלא והמדויק (שכמעט אף אחת לא עושה -
+// לקוחה כותבת "מאפרת" ולא "מאפרת כלות וערב" מילה במילה).
+function significantWords(name, minLen) {
+  return (name || "").split(/[^א-ת]+/).filter((w) => w.length >= (minLen || 2) && !HEB_STOPWORDS.has(w));
+}
+// רשימת מילות "מילוי" נפוצות בבקשות חיפוש (מיקום/רצון/נימוס) שכדאי להוריד משאריות מילות
+// המפתח כדי שלא יישארו שם בטעות ויצרו סינון-טקסט שגוי (למשל "באזור" לא אמורה "להיתפס" כמילת
+// חיפוש בפני עצמה - אף עצמאית לא כותבת את המילה "באזור" בביוגרפיה שלה).
+const FILLER_WORDS = ["באזור", "אזור", "בסביבות", "סביבות", "מחפשת", "מחפש", "מחפשות", "רוצה", "רוצות", "צריכה", "צריך", "בבקשה", "אנא", "קרוב", "קרובה", "ליד"];
+
+function smartSearchHeuristic(freeText, d) {
+  const text = ` ${freeText.toLowerCase()} `;
+  let matchedCategoryId = "", matchedSubcategoryId = "", matchedCityId = "";
+  let matchedCategoryName = "", matchedSubcategoryName = "", matchedCityName = "";
+  // סף מינימום 3 אותיות למילה "מזהה" של תחום/עיר (ולא 2) - מילים בנות 2 אותיות בעברית הן
+  // לרוב סיומות ריבוי/שייכות נפוצות (למשל "ים" בסוף "מיוחדים") ומצטרפות בטעות למילים אחרות
+  // לגמרי לא קשורות - סף של 3 מוריד כמעט את כל ההתאמות-שווא האלה, במחיר שעיר/תחום שכל
+  // המילים המזהות שלו קצרות מ-3 אותיות (למשל "בת ים") לא יזוהו אוטומטית - עדיין אפשר לבחור
+  // אותם ידנית בטופס הסינון הרגיל למטה.
+  const nameMatchesText = (name) => significantWords(name, 3).some((w) => text.includes(w));
+
+  // תת-קטגוריה קודם (יותר ספציפית) - אם נמצאה התאמה, היא גוררת אוטומטית גם את הקטגוריה שלה.
+  outer:
+  for (const cat of d.categories) {
+    for (const sub of (cat.subcategories || [])) {
+      if (sub.name && nameMatchesText(sub.name)) {
+        matchedCategoryId = cat.id; matchedSubcategoryId = sub.id;
+        matchedCategoryName = cat.name; matchedSubcategoryName = sub.name;
+        break outer;
+      }
+    }
+  }
+  if (!matchedCategoryId) {
+    for (const cat of d.categories) {
+      if (cat.name && nameMatchesText(cat.name)) {
+        matchedCategoryId = cat.id; matchedCategoryName = cat.name;
+        break;
+      }
+    }
+  }
+  for (const c of d.cities) {
+    if (c.name && nameMatchesText(c.name)) {
+      matchedCityId = c.id; matchedCityName = c.name;
+      break;
+    }
+  }
+
+  const QUALITY_RE = /רמה גבוהה|רמה טובה|איכות|מקצועית|מקצועי|מעולה|הכי טובה|מומלצת|מנוסה|מיומנת|מומחית|מדהימה/gi;
+  const PRICE_RE = /מחיר טוב|מחירים טובים|זולה|זול|משתלמת|משתלם|הוזלה|מחיר הוגן|לא יקר|תקציב|חסכוני/gi;
+  const wantsHighQuality = QUALITY_RE.test(text);
+  const wantsGoodPrice = PRICE_RE.test(text);
+
+  // מה שנשאר אחרי הסרת המילים המשמעותיות של הקטגוריה/תת-הקטגוריה/העיר שכבר "נתפסו" למעלה,
+  // ביטויי האיכות/המחיר, ומילות-מילוי נפוצות - הולך כמילות חיפוש חופשיות רגילות (כמו בתיבת
+  // החיפוש הרגילה למטה). אם לא נשאר כלום בעל משמעות - עדיף להשאיר ריק מאשר לסנן בטעות לפי
+  // שארית חסרת משמעות שהייתה יכולה לאפס תוצאות שהן בעצם התאמה טובה.
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let leftover = freeText;
+  const wordsToStrip = [
+    ...significantWords(matchedSubcategoryName),
+    ...significantWords(matchedCategoryName),
+    ...significantWords(matchedCityName),
+    ...FILLER_WORDS,
+  ];
+  wordsToStrip.forEach((w) => {
+    leftover = leftover.replace(new RegExp(escapeRe(w), "gi"), " ");
+  });
+  leftover = leftover.replace(QUALITY_RE, " ").replace(PRICE_RE, " ").replace(/[^א-ת\s]/g, " ").replace(/\s+/g, " ").trim();
+  // מסננת החוצה שאריות של אות בודדת - אלה כמעט תמיד "יתומות" (למשל ה-ב' שנשארה תלויה כש-
+  // "רמה גבוהה" הוסר מתוך "ברמה גבוהה" ונשאר רק ה-ב' שהייתה מודבקת לפניה), ולא מילת חיפוש
+  // אמיתית - אם משאירים אותן, חיפוש-הטקסט למטה דורש את המחרוזת המלאה כולל האות התלויה,
+  // ומפספס בטעות תוצאות טובות. אם לא נשארה אף מילה אמיתית - התוצאה ריקה, וזה בסדר.
+  leftover = leftover.split(/\s+/).filter((w) => w.length >= 2).join(" ");
+
+  return {
+    ok: true,
+    filters: {
+      categoryId: matchedCategoryId,
+      subcategoryId: matchedSubcategoryId,
+      cityId: matchedCityId,
+      wantsHighQuality,
+      wantsGoodPrice,
+      keywords: leftover,
+    },
+  };
+}
+
 // ----- Search / results -----
 route("GET", "/search", async (req, res, params, query, ctx) => {
   const d = db.load();
@@ -1745,6 +1846,11 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   const city = query.get("city") || "";
   const homeVisit = query.get("homeVisit") === "1";
   const q = (query.get("q") || "").trim().toLowerCase();
+  // sortQuality מגיע רק מהחיפוש החכם (ר' POST /search/ai + smartSearchHeuristic למעלה) כשהלקוחה
+  // ציינה שהיא מחפשת "רמה גבוהה"/איכות - ממיין לפי דירוג ממוצע (avgRatingFor) בתוך כל קבוצת tier,
+  // במקום לפי כמות ביקורות כרגיל. aiUsed רק לצורך הצגת "חיפשנו בשבילך" למעלה בתוצאות.
+  const sortQuality = query.get("sortQuality") === "1";
+  const aiUsed = query.get("ai") === "1";
   const results = d.freelancers.filter((f) => {
     if (f.status !== "approved") return false;
     if (f.active === false) return false;
@@ -1793,9 +1899,9 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     });
   });
 
-  const combinedCards = results.map((f) => ({ tier: f.tier, reviewCount: reviewCountFor(d, f.id), html: freelancerCard(f, d) }))
-    .concat(listingMatches.map(({ f, l }) => ({ tier: l.tier, reviewCount: reviewCountFor(d, f.id, l.id), html: additionalListingCard(f, l, d) })))
-    .sort((a, b) => ((b.tier === "premium") - (a.tier === "premium")) || (b.reviewCount - a.reviewCount));
+  const combinedCards = results.map((f) => ({ tier: f.tier, reviewCount: reviewCountFor(d, f.id), avgRating: avgRatingFor(d, f.id), html: freelancerCard(f, d) }))
+    .concat(listingMatches.map(({ f, l }) => ({ tier: l.tier, reviewCount: reviewCountFor(d, f.id, l.id), avgRating: avgRatingFor(d, f.id, l.id), html: additionalListingCard(f, l, d) })))
+    .sort((a, b) => ((b.tier === "premium") - (a.tier === "premium")) || (sortQuality ? (b.avgRating - a.avgRating) || (b.reviewCount - a.reviewCount) : (b.reviewCount - a.reviewCount)));
 
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === category ? "selected" : ""}>${esc(c.name)}</option>`).join("");
   // Pre-rendered so the dropdown already shows the right subcategory list on a normal page
@@ -1810,9 +1916,24 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     breadcrumbItems.push({ label: catName(d, category), href: `/search?category=${category}` });
     if (subcategory) breadcrumbItems.push({ label: subcatName(d, category, subcategory), href: `/search?category=${category}&subcategory=${subcategory}` });
   }
+  // תיבת "חיפוש חכם" - שולחת לראוט נפרד (POST /search/ai) שמפרש את הטקסט בעצמו (בלי AI חיצוני,
+  // ר' smartSearchHeuristic למעלה) ומפנה בחזרה לעמוד הזה עם פרמטרים מובנים. aiUsed מציג הודעת
+  // שקיפות קטנה מעל התוצאות עם מה שהובן מהבקשה, כדי שהלקוחה תדע שהחיפוש אכן "הבין" אותה
+  // ותוכל לתקן בקלות דרך טופס הסינון הרגיל למטה אם משהו לא היה מדויק.
+  const aiSearchBoxHtml = `
+  <form method="post" action="/search/ai" class="panel" style="max-width:640px;margin:0 auto 20px;text-align:center;">
+    <h3 style="margin-top:0;">🤖 חיפוש חכם</h3>
+    <p class="muted" style="font-size:13px;margin-top:-6px;">ספרי לנו במילים שלך מה את מחפשת - לדוגמה: "מאפרת באזור ירושלים ברמה גבוהה ומחיר טוב"</p>
+    <textarea name="q" required maxlength="300" placeholder="תארי כאן מה את מחפשת..." style="min-height:60px;"></textarea>
+    <button class="btn" style="margin-top:10px;" type="submit">חיפוש חכם</button>
+  </form>`;
+  const aiUsedBannerHtml = aiUsed ? `
+  <p class="muted" style="text-align:center;margin-top:-10px;">🤖 חיפשנו בשבילך${category ? `: <b>${esc(catName(d, category))}</b>` : ""}${subcategory ? ` › <b>${esc(subcatName(d, category, subcategory))}</b>` : ""}${city ? ` ב<b>${esc(cityName(d, city))}</b>` : ""}${sortQuality ? ` · ממוינות לפי דירוג` : ""}${q ? ` · "${esc(query.get("q") || "")}"` : ""} - לא בדיוק מה שרצית? אפשר לדייק בטופס הרגיל למטה.</p>` : "";
   const body = `
   ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
+  ${aiSearchBoxHtml}
+  ${aiUsedBannerHtml}
       <form class="search-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות" style="margin-right:0;margin-left:0;">
         <div class="search-row">
           <input type="text" id="scSearchQ" name="q" value="${esc(query.get("q") || "")}" placeholder="חפשי לפי שם עסק, עצמאית או תחום - הסינון אוטומטי תוך כדי הקלדה" oninput="scLiveFilter()" autocomplete="off" />
@@ -1846,6 +1967,33 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       ${category ? `<p class="muted" style="text-align:center;margin-top:18px;">לא מצאת בדיוק את מי שאת מחפשת? <a href="/service-requests?category=${category}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום הזה יוכלו לפנות אלייך.</p>` : ""}
   `;
   sendHtml(res, 200, page({ title: "חיפוש", session: ctx.session, body, query }));
+});
+
+// מקבל את הטקסט החופשי מתיבת "חיפוש חכם", מפרש אותו בעצמנו (ר' smartSearchHeuristic למעלה -
+// בלי שום AI חיצוני, בלי עלות), ומפנה בחזרה ל-/search עם פרמטרים מובנים. result.ok נשאר
+// false רק במקרה קצה תיאורטי (למשל טקסט ריק, שכבר נבדק למעלה) - נשמר לצורך עקביות/עמידות.
+route("POST", "/search/ai", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const body = await readBody(req);
+  const freeText = clip((body.get("q") || "").trim(), 300);
+  if (!freeText) return redirect(res, "/search");
+  const result = smartSearchHeuristic(freeText, d);
+  if (!result.ok) {
+    return redirect(res, `/search?q=${encodeURIComponent(freeText)}`);
+  }
+  const f = result.filters;
+  const params2 = new URLSearchParams();
+  if (f.categoryId && d.categories.some((c) => c.id === f.categoryId)) {
+    params2.set("category", f.categoryId);
+    if (f.subcategoryId && subcategoriesOf(d, f.categoryId).some((s) => s.id === f.subcategoryId)) {
+      params2.set("subcategory", f.subcategoryId);
+    }
+  }
+  if (f.cityId && d.cities.some((c) => c.id === f.cityId)) params2.set("city", f.cityId);
+  if (f.wantsHighQuality) params2.set("sortQuality", "1");
+  if (f.keywords) params2.set("q", f.keywords);
+  params2.set("ai", "1");
+  redirect(res, `/search?${params2.toString()}`);
 });
 
 // ----- Freelancer profile -----
@@ -3928,7 +4076,17 @@ function ensureOpenTehillimBook(d, division) {
   return book;
 }
 
-function tehillimUnitHtml(book, unit, session, d) {
+// כפתור "שיתוף" ליחידת תהילים בודדת (יום או פרק) - לפי בקשה מפורשת "אופציה לשתף את פרקי
+// התהילים עם מישהי או את הימים". מוצג על כל יחידה (לא רק כאלה שנלקחו) כדי שאפשר יהיה גם
+// להזמין מישהי אחרת לקחת יחידה ספציפית, לא רק לשתף מה שכבר לקחת בעצמך. משתמש באותו
+// scShareCommunityItem (layout.js) שכבר קיים לשיתוף "מסירות"/"מכירת יד 2" - navigator.share
+// עם דפדפן שתומך (כולל ווטסאפ ישירות במובייל), נופל להעתקת קישור בלי תמיכה.
+function tehillimShareButtonHtml(book, unit, origin) {
+  const url = `${origin}/community/tehillim/${book.id}/unit/${unit.index}`;
+  const title = `בואי נצטרף לתפילה - ${unit.label} ב"בלב אחד" (SheCan)`;
+  return `<button type="button" class="btn btn-small btn-outline" style="font-size:11px;padding:2px 8px;" data-share-title="${esc(title)}" data-share-url="${esc(url)}" onclick="scShareCommunityItem(this)">📤 שיתוף</button>`;
+}
+function tehillimUnitHtml(book, unit, session, d, origin) {
   const claimedByMe = session && session.role === "customer" && unit.claimedByCustomerId === session.id;
   const claimer = unit.claimedByCustomerId ? d.customers.find((c) => c.id === unit.claimedByCustomerId) : null;
   let statusHtml;
@@ -3953,6 +4111,7 @@ function tehillimUnitHtml(book, unit, session, d) {
   return `<div class="tehillim-unit ${unit.read ? "tehillim-unit-read" : unit.claimed ? "tehillim-unit-claimed" : ""}">
     <span class="tehillim-unit-label">${esc(unit.label)}</span>
     <span class="tehillim-unit-status">${statusHtml}</span>
+    ${tehillimShareButtonHtml(book, unit, origin)}
     ${adminRelease}
   </div>`;
 }
@@ -3998,6 +4157,7 @@ route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
   db.save();
   const isCustomer = requireRole(ctx.session, "customer");
   const isAdmin = ctx.session && ctx.session.role === "admin";
+  const origin = getOrigin(req);
 
   const allBooks = d.tehillimBooks || [];
   const closedBooksCount = allBooks.filter((b) => b.status === "closed").length;
@@ -4049,7 +4209,7 @@ route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
   <div class="panel">
     <h3>📖 תהילים יומי (לפי ימות השבוע)</h3>
     <p class="muted" style="font-size:13px;">ספר מס' ${esc(String(dailyBook.id))} - כל השבעה ימים נקראים, נפתח ספר חדש אוטומטית.</p>
-    ${dailyBook.units.map((u) => tehillimUnitHtml(dailyBook, u, ctx.session, d)).join("")}
+    ${dailyBook.units.map((u) => tehillimUnitHtml(dailyBook, u, ctx.session, d, origin)).join("")}
   </div>
 
   <div class="panel">
@@ -4060,7 +4220,7 @@ route("GET", "/community/tehillim", async (req, res, params, query, ctx) => {
     <details class="tehillim-chapters-details">
       <summary>להצגת כל 150 הפרקים (לחצי לפתיחה/סגירה)</summary>
       <div class="tehillim-chapters-grid">
-        ${chaptersBook.units.map((u) => tehillimUnitHtml(chaptersBook, u, ctx.session, d)).join("")}
+        ${chaptersBook.units.map((u) => tehillimUnitHtml(chaptersBook, u, ctx.session, d, origin)).join("")}
       </div>
     </details>
   </div>
@@ -4205,6 +4365,7 @@ route("GET", "/community/tehillim/:bookId/unit/:unitIndex", async (req, res, par
   // הספציפי הזה יכולה להשלים את הסימון (אין דרך לזהות "אותה מבקרת" שוב, ר' ההערה למעלה).
   const isClaimer = unit.claimed && (!unit.claimedByCustomerId || (ctx.session && ctx.session.role === "customer" && ctx.session.id === unit.claimedByCustomerId));
   const isAdmin = ctx.session && ctx.session.role === "admin";
+  const origin = getOrigin(req);
   const body = `
   <h1 class="section-title">${esc(unit.label)}</h1>
   <div class="panel" style="max-width:520px;margin:0 auto;text-align:center;">
@@ -4215,6 +4376,7 @@ route("GET", "/community/tehillim/:bookId/unit/:unitIndex", async (req, res, par
       : (isClaimer || isAdmin)
         ? `<form method="post" action="/community/tehillim/${book.id}/unit/${unit.index}/read" style="margin-top:16px;"><button class="btn" type="submit">✅ סימנתי שקראתי</button></form>`
         : `<p class="muted" style="margin-top:16px;">${unit.claimed ? "היחידה הזו נלקחה על ידי מישהי אחרת." : "עדיין לא נלקחה - אפשר לקחת אותה מעמוד בלב אחד."}</p>`}
+    <p style="margin-top:16px;">${tehillimShareButtonHtml(book, unit, origin)}</p>
     <p class="muted" style="margin-top:16px;"><a href="/community/tehillim">← חזרה לעמוד בלב אחד</a></p>
   </div>
   `;
@@ -4497,7 +4659,7 @@ function communityAdminPanelHtml(type, d) {
   // "מכירת יד 2" הוא שירות עם פרטי קשר רגילים, פלוס שדה מחיר - ר' ההערה על COMMUNITY_TYPES.sale.
   const isProduct = type === "product";
   const isSale = type === "sale";
-  const pending = (d.communityListings || []).filter((c) => c.type === type && c.status === "pending");
+  const pending = (d.communityListings || []).filter((c) => c.type === type && c.status === "pending" && !isSnoozed(d, `communityListing:${c.id}`));
   const approved = (d.communityListings || []).filter((c) => c.type === type && c.status === "approved")
     .slice().sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
   const price = (d.settings.communityTypePricing && d.settings.communityTypePricing[type]) || 0;
@@ -4529,9 +4691,10 @@ function communityAdminPanelHtml(type, d) {
           </div>
         </div>
         ${c.description ? `<p style="margin-top:10px;">${esc(c.description)}</p>` : ""}
-        <div style="display:flex;gap:10px;margin-top:14px;">
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
           <form method="post" action="/admin/community/${c.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
           <form method="post" action="/admin/community/${c.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+          ${snoozeButtonHtml(`communityListing:${c.id}`, "communityListing", `${meta.label}: ${c.title}`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע פריטים ממתינים לאישור.</p>`}
 
@@ -6283,14 +6446,57 @@ function adminTrendChartsHtml(d) {
   </div>`;
 }
 
+// ===================== "המשך טיפול" - הזזת פריט מתור האישורים לצד (נוסף 2026-08-26) =====================
+// לפי בקשה מפורשת: "תן לי אופציה על כל מה שאני צריכה לאשר - שאוכל להעביר לאזור של המשך טיפול
+// ולהמשיך לטפל בזה כשאני בוחרת, ואז זה יורד מהאזור של האישורים כדי לנקות כל פעם את השולחן".
+// מנגנון גנרי אחד (לא שדה חדש על כל סוג רשומה בנפרד) - d.adminSnoozed הוא רשימת "מפתחות"
+// שסומנו כ"המשך טיפול", כל אחד: { key, itemType, itemLabel, snoozedAt }. key מזהה את הפריט
+// המקורי (למשל "freelancer:42" או "communityListing:17") - isSnoozed בודקת אם מפתח נמצא
+// ברשימה, ומשמשת לסנן החוצה כל אחד מתורי האישור הקיימים (עצמאיות חדשות/ביקורות/סיפורים/
+// שאלות זירה/התייעצויות/תחומים נוספים/פריטי מאגרי קהילה מכל סוג) - כך שפריט שסומן פשוט נעלם
+// מהתור עד שמחזירים אותו, בלי לגעת בכלל ב-status המקורי של הרשומה (עדיין "pending" באמת -
+// זו רק "מסננת תצוגה" נוספת, לא שינוי מצב). itemLabel נשמר בזמן הסימון כדי שפאנל "המשך טיפול"
+// יוכל להציג תיאור קצר בלי לשחזר את הרשומה המקורית לפי סוג בכל פעם.
+function isSnoozed(d, key) {
+  return (d.adminSnoozed || []).some((s) => s.key === key);
+}
+// כפתור קטן שמתלווה לכל פריט בכל תור אישור - שולח ל-POST /admin/snooze עם המפתח/סוג/תיאור.
+function snoozeButtonHtml(key, itemType, itemLabel) {
+  return `<form method="post" action="/admin/snooze" style="display:inline;"><input type="hidden" name="key" value="${esc(key)}" /><input type="hidden" name="itemType" value="${esc(itemType)}" /><input type="hidden" name="itemLabel" value="${esc(itemLabel)}" /><button class="btn btn-small btn-outline" type="submit" title="להעביר להמשך טיפול - ייעלם מהתור עד שתחזירי אותו">🕒 להמשך טיפול</button></form>`;
+}
+route("POST", "/admin/snooze", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const key = (body.get("key") || "").trim();
+  const itemType = (body.get("itemType") || "").trim();
+  const itemLabel = clip((body.get("itemLabel") || "").trim(), 200);
+  if (!key) return redirect(res, "/admin");
+  d.adminSnoozed = d.adminSnoozed || [];
+  if (!d.adminSnoozed.some((s) => s.key === key)) {
+    d.adminSnoozed.push({ key, itemType, itemLabel, snoozedAt: new Date().toISOString() });
+    db.save();
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("הועבר להמשך טיפול - התור נקי יותר עכשיו.")}#followup`);
+});
+route("POST", "/admin/unsnooze", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const key = (body.get("key") || "").trim();
+  d.adminSnoozed = (d.adminSnoozed || []).filter((s) => s.key !== key);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הוחזר לתור האישורים הרגיל.")}#pending-approvals`);
+});
+
 // ----- Admin -----
 route("GET", "/admin", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
   const admin = d.admins.find((a) => a.id === ctx.session.id) || d.admins[0];
-  const pendingFreelancers = d.freelancers.filter((f) => f.status === "pending");
+  const pendingFreelancers = d.freelancers.filter((f) => f.status === "pending" && !isSnoozed(d, `freelancer:${f.id}`));
   const activeFreelancers = d.freelancers.filter((f) => f.status === "approved");
-  const pendingReviews = d.reviews.filter((r) => r.status === "pending");
+  const pendingReviews = d.reviews.filter((r) => r.status === "pending" && !isSnoozed(d, `review:${r.id}`));
   // Reviews on a freelancer (or one of her listings) auto-publish now, so there's no
   // pre-publish queue for them - instead admin gets to see everything that's already live
   // and delete anything inappropriate after the fact.
@@ -6305,14 +6511,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   const publishedCommunityReviews = d.reviews.filter((r) => r.type === "community" && r.status === "approved")
     .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const communityAdminPanelsHtml = COMMUNITY_TYPE_ORDER.map((type) => communityAdminPanelHtml(type, d)).join("");
-  const pendingStories = (d.stories || []).filter((s) => s.status === "pending");
+  const pendingStories = (d.stories || []).filter((s) => s.status === "pending" && !isSnoozed(d, `story:${s.id}`));
   // Used both for the delete table and the "story of the week" manual-pick dropdown below.
   const approvedStoriesForAdmin = (d.stories || []).filter((s) => s.status === "approved").map((s) => {
     const sf = d.freelancers.find((x) => x.id === s.freelancerId);
     return { id: s.id, title: s.title || (sf ? `הסיפור של ${sf.businessName || sf.name}` : "סיפור השראה") };
   });
-  const pendingArenaQuestions = (d.arenaQuestions || []).filter((q) => q.status === "pending");
-  const pendingConsultations = (d.consultations || []).filter((c) => c.status === "pending");
+  const pendingArenaQuestions = (d.arenaQuestions || []).filter((q) => q.status === "pending" && !isSnoozed(d, `arenaQuestion:${q.id}`));
+  const pendingConsultations = (d.consultations || []).filter((c) => c.status === "pending" && !isSnoozed(d, `consultation:${c.id}`));
   // Live (already-approved) arena questions/consultations don't need re-approval, but admin
   // should always be able to delete anything in the arena, not just items still in the
   // moderation queue - these feed a permanent management panel below.
@@ -6322,11 +6528,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // Pending additional listings can belong to ANY freelancer, not just ones whose main
   // profile is still pending - an already-approved freelancer can add a new listing later
   // that itself needs its own review, so this scans every freelancer's additionalListings.
+  // "המשך טיפול" - כל הפריטים שהוזזו הצידה מכל תור אישור (ר' isSnoozed/snoozeButtonHtml
+  // למעלה) - ממוינים מהישן לחדש כדי שמה שמחכה הכי הרבה זמן יעלה קודם.
+  const snoozedItems = (d.adminSnoozed || []).slice().sort((a, b) => new Date(a.snoozedAt) - new Date(b.snoozedAt));
   const pendingListings = [];
   const approvedListings = [];
   d.freelancers.forEach((f) => {
     (f.additionalListings || []).forEach((l) => {
-      if (l.status === "pending") pendingListings.push({ f, l });
+      if (l.status === "pending" && !isSnoozed(d, `listing:${f.id}:${l.id}`)) pendingListings.push({ f, l });
       else if (l.status === "approved") approvedListings.push({ f, l });
     });
   });
@@ -6435,6 +6644,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <a href="#pending-approvals" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת הממתינות לאישור">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingFreelancers.length}</div>
         <div class="muted" style="margin-top:4px;">ממתינות לאישור ↓</div>
+      </a>
+      <a href="#followup" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת המשך הטיפול">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${snoozedItems.length}</div>
+        <div class="muted" style="margin-top:4px;">🕒 בהמשך טיפול ↓</div>
       </a>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.totalVisits || 0}</div>
@@ -6603,6 +6816,19 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
+  <div class="panel" id="followup" style="scroll-margin-top:90px;background:var(--cream);" data-badge="${snoozedItems.length}">
+    <h3>🕒 המשך טיפול (${snoozedItems.length})</h3>
+    <p class="muted">כל מה שהעברת הצידה מתורי האישור למטה - נשאר כאן עד שתחזירי אותו בעצמך, כדי שהתורים למטה יישארו נקיים.</p>
+    ${snoozedItems.length ? snoozedItems.map((s) => `
+      <div class="panel" style="background:var(--white);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;">${esc(s.itemLabel || s.key)}</div>
+          <div class="muted" style="font-size:12px;">הועבר להמשך טיפול ב-${esc(new Date(s.snoozedAt).toLocaleDateString("he-IL"))}</div>
+        </div>
+        <form method="post" action="/admin/unsnooze"><input type="hidden" name="key" value="${esc(s.key)}" /><button class="btn btn-small" type="submit">↩️ החזרה לתור האישורים</button></form>
+      </div>`).join("") : `<p class="muted">אין כרגע כלום בהמשך טיפול - השולחן נקי.</p>`}
+  </div>
+
   <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;" data-badge="${pendingFreelancers.length}">
     <h3>מחכות לאישור שלך (${pendingFreelancers.length})</h3>
     ${pendingFreelancers.length ? pendingFreelancers.map((f) => `
@@ -6622,9 +6848,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         ${f.dealText ? `<p style="margin-top:6px;"><strong>ההטבה:</strong> ${esc(f.dealText)}</p>` : ""}
         ${(f.galleryPhotos && f.galleryPhotos.length) ? `<div class="gallery-scroll" style="margin-top:10px;">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />`).join("")}</div>` : ""}
         ${customSubcategoryNoteHtml(f, d)}
-        <div style="display:flex;gap:10px;margin-top:14px;">
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
           <form method="post" action="/admin/freelancer/${f.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
           <form method="post" action="/admin/freelancer/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+          ${snoozeButtonHtml(`freelancer:${f.id}`, "freelancer", `עצמאית: ${f.businessName || f.name}`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע אף אחת שמחכה - הכל מעודכן.</p>`}
   </div>
@@ -6637,6 +6864,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <p class="muted" style="margin:8px 0;">${esc(r.text)}</p>
         <form style="display:inline" method="post" action="/admin/review/${r.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
         <form style="display:inline" method="post" action="/admin/review/${r.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+        ${snoozeButtonHtml(`review:${r.id}`, "review", `ביקורת מאת: ${r.authorName}`)}
       </div>
     `).join("") : `<p class="muted">שקט וניקיון - אין ביקורות ממתינות כרגע.</p>`}
   </div>
@@ -6693,9 +6921,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <h4 style="margin:0 0 6px;">${esc(sf ? (sf.businessName || sf.name) : "לא ידוע")}</h4>
         </div>
         ${(s.answers || []).map((qa) => `<p class="muted" style="margin:6px 0 0;font-weight:700;">${esc(qa.question)}</p><p style="margin:2px 0 0;">${esc(qa.answer)}</p>`).join("")}
-        <div style="display:flex;gap:10px;margin-top:12px;">
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
           <form method="post" action="/admin/story/${s.id}/approve"><button class="btn btn-small" type="submit">אישור ופרסום</button></form>
           <form method="post" action="/admin/story/${s.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+          ${snoozeButtonHtml(`story:${s.id}`, "story", `סיפור: ${sf ? (sf.businessName || sf.name) : "לא ידוע"}`)}
         </div>
       </div>`;
     }).join("") : `<p class="muted">אין כרגע סיפורים שממתינים לאישור.</p>`}
@@ -6707,9 +6936,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <div class="panel" style="background:var(--cream);">
         <p class="muted" style="margin:0 0 4px;">${esc(catName(d, q.categoryId))}${q.subcategoryId ? ` (${esc(subcatName(d, q.categoryId, q.subcategoryId))})` : ""} · מאת ${esc(q.customerName)}</p>
         <p style="margin:0;font-weight:700;">${esc(q.questionText)}</p>
-        <div style="display:flex;gap:10px;margin-top:12px;">
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
           <form method="post" action="/admin/arena-question/${q.id}/approve"><button class="btn btn-small" type="submit">אישור ושליחה למומחיות</button></form>
           <form method="post" action="/admin/arena-question/${q.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+          ${snoozeButtonHtml(`arenaQuestion:${q.id}`, "arenaQuestion", `שאלת זירה: ${clip(q.questionText, 60)}`)}
         </div>
       </div>
     `).join("") : `<p class="muted">אין כרגע שאלות שממתינות לאישור.</p>`}
@@ -6721,9 +6951,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <div class="panel" style="background:var(--cream);">
         <p class="muted" style="margin:0 0 4px;">מאת ${esc(c.customerName)}</p>
         <p style="margin:0;font-weight:700;">${esc(c.text)}</p>
-        <div style="display:flex;gap:10px;margin-top:12px;">
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
           <form method="post" action="/admin/consultation/${c.id}/approve"><button class="btn btn-small" type="submit">אישור ופרסום</button></form>
           <form method="post" action="/admin/consultation/${c.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+          ${snoozeButtonHtml(`consultation:${c.id}`, "consultation", `התייעצות: ${clip(c.text, 60)}`)}
         </div>
       </div>
     `).join("") : `<p class="muted">אין כרגע התייעצויות שממתינות לאישור.</p>`}
@@ -6819,9 +7050,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         ${l.description ? `<p style="margin-top:10px;"><strong>על התחום הזה:</strong> ${esc(l.description)}</p>` : ""}
         ${l.dealText ? `<p style="margin-top:6px;"><strong>ההטבה:</strong> ${esc(l.dealText)}</p>` : ""}
         ${(l.galleryPhotos && l.galleryPhotos.length) ? `<div class="gallery-scroll" style="margin-top:10px;">${l.galleryPhotos.map((src) => `<img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />`).join("")}</div>` : ""}
-        <div style="display:flex;gap:10px;margin-top:14px;">
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
           <form method="post" action="/admin/listing/${f.id}/${l.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
           <form method="post" action="/admin/listing/${f.id}/${l.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+          ${snoozeButtonHtml(`listing:${f.id}:${l.id}`, "listing", `תחום נוסף: ${l.businessName} (${f.businessName || f.name})`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע תחומים נוספים שממתינים לאישור.</p>`}
   </div>
