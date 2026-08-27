@@ -1573,7 +1573,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update88 - 2026-08-27 - הרשמת עצמאית: תת-תחום רק מרשימה קיימת + המלצה על תת-תחום חדש שממתינה לאישור מנהלת";
+const DEPLOY_MARKER = "update91 - 2026-08-27 - אזור אישי לעצמאית: תזכורת מוקפצת (בכל כניסה) לסמן עסקה שנסגרה עם לקוחה שהגיעה דרך SheCan";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -3754,6 +3754,15 @@ route("GET", "/community", async (req, res, params, query, ctx) => {
 // type=dressWanted מוכן מראש - COMMUNITY_TYPES.dressWanted הרגיל). חשוב: הראוט הזה חייב
 // להירשם *לפני* GET /community/:type - אחרת "dresses" היה נתפס בטעות כ-:type.
 route("GET", "/community/dresses", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  // ברירת המחדל היא שכל מאגר שמלות הערב שפורסמו (rental, מתויגות ב-DRESS_TAG) מוצג ישר כאן
+  // מתחת לשתי הקוביות - בלי צורך ללחוץ לעמוד נפרד, לפי בקשה מפורשת (2026-08-27). אותו כרטיס
+  // ואותו מיון בדיוק כמו ב-GET /community/:type הרגיל, רק בלי טופס הסינון המלא - זה נשאר
+  // בעמוד /community/rental הייעודי (עם צבע/אורך/מחיר/עיר), שנגיש עדיין דרך הקישור למטה למי
+  // שכן רוצה לסנן מתוך מאגר גדול.
+  const dressItems = (d.communityListings || [])
+    .filter((c) => c.type === "rental" && c.tag === DRESS_TAG && c.status === "approved")
+    .slice().sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
   const body = `
   <h1 class="section-title" style="margin-top:0;">👗 שמלות להשכרה</h1>
   <p class="muted" style="text-align:center;margin-top:-10px;">מפרסמת שמלה להשכרה, או מחפשת שמלה? בחרי מה מתאים לך.</p>
@@ -3761,7 +3770,7 @@ route("GET", "/community/dresses", async (req, res, params, query, ctx) => {
     <a class="hub-card" href="/community/add?type=rental&tag=${encodeURIComponent(DRESS_TAG)}">
       <span class="hub-card-icon">📤</span>
       <div class="hub-card-title">לפרסם שמלה להשכרה</div>
-      <div class="hub-card-desc">יש לך שמלה שאת משכירה? פרסמי אותה כאן</div>
+      <div class="hub-card-desc">יש לך שמלת ערב בארון מהאירועים האחרונים שלך? פרסמי אותה כאן להשכרה בטוחות שזה ישתלם לך!</div>
     </a>
     <a class="hub-card" href="/community/add?type=dressWanted">
       <span class="hub-card-icon">🙋‍♀️</span>
@@ -3770,9 +3779,14 @@ route("GET", "/community/dresses", async (req, res, params, query, ctx) => {
     </a>
   </div>
   <p style="text-align:center;">
-    <a href="/community/rental?tag=${encodeURIComponent(DRESS_TAG)}" style="color:var(--rose-dark);font-weight:700;">לצפייה בשמלות שיש כרגע להשכרה</a>
-    &nbsp;·&nbsp;
     <a href="/community/dressWanted" style="color:var(--rose-dark);font-weight:700;">לצפייה בבקשות לשמלה</a>
+  </p>
+  <h2 class="section-title" style="font-size:22px;margin-top:28px;">השמלות שיש כרגע להשכרה${dressItems.length ? ` (${dressItems.length})` : ""}</h2>
+  ${dressItems.length
+    ? `<div class="grid">${dressItems.map((c) => communityCard(c, d)).join("")}</div>`
+    : `<p class="muted" style="text-align:center;">עדיין אין שמלות שפורסמו - את יכולה <a href="/community/add?type=rental&tag=${encodeURIComponent(DRESS_TAG)}" style="color:var(--rose-dark);font-weight:700;">להיות הראשונה</a>.</p>`}
+  <p style="text-align:center;margin-top:14px;">
+    <a href="/community/rental?tag=${encodeURIComponent(DRESS_TAG)}" style="color:var(--rose-dark);font-weight:700;">🔍 לחיפוש וסינון מתקדם (לפי צבע/אורך/מחיר/עיר)</a>
   </p>
   `;
   sendHtml(res, 200, page({ title: "שמלות להשכרה", session: ctx.session, body, query }));
@@ -5015,6 +5029,13 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <button type="button" class="btn btn-outline btn-small" id="scAddExtraListingBtn" style="margin-top:14px;" onclick="scAddExtraListing()">➕ הוספת תחום</button>
     </div>
 
+    <div class="panel" style="background:var(--cream);margin-top:16px;position:relative;" id="scJoinQuotePanel">
+      <button type="button" onclick="var p=document.getElementById('scJoinQuotePanel');if(p)p.style.display='none';" aria-label="לא רלוונטי בשבילי" title="לא רלוונטי בשבילי" style="position:absolute;top:12px;left:14px;background:none;border:none;font-size:20px;color:var(--gray);cursor:pointer;">✕</button>
+      <h4 style="margin-top:0;">יש לך משפט השראה שמייצג אותך? (לא חובה)</h4>
+      <p class="muted" style="font-size:14px;">משפט ההשראה שלך יכול להופיע כ"טיפ השבועי" בדף הבית של כל האתר - במה יפה שמציגה אותך לכל מי שנכנסת. אנחנו עוברות על כל משפט לפני שהוא עולה, כדי לשמור שרק משפטי השראה אמיתיים מתפרסמים (לא פרסומות), אז זה יכול לקחת קצת זמן עד שהוא יופיע. אפשר גם לדלג ולכתוב את זה מאוחר יותר באזור האישי שלך, או פשוט לסגור את התיבה הזו עם ה-X.</p>
+      <label>🌸 משפט ההשראה שלך (עד 300 תווים)<textarea name="inspirationQuote" maxlength="300" placeholder="לדוגמה: תתחילי היום, גם אם את לא מרגישה מוכנה ב-100% - ההתחלה היא כבר חצי מהדרך.">${esc(p.inspirationQuote || "")}</textarea></label>
+    </div>
+
     <div class="panel" style="background:var(--cream);margin-top:16px;position:relative;" id="scJoinStoryPanel">
       <button type="button" onclick="var p=document.getElementById('scJoinStoryPanel');if(p)p.style.display='none';" aria-label="לא רלוונטי בשבילי" title="לא רלוונטי בשבילי" style="position:absolute;top:12px;left:14px;background:none;border:none;font-size:20px;color:var(--gray);cursor:pointer;">✕</button>
       <h4 style="margin-top:0;">רוצה כבר עכשיו לכתוב את הסיפור שלך? (לא חובה)</h4>
@@ -5093,6 +5114,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       categoryId: body.get("categoryId"), subcategoryId: body.get("subcategoryId"),
       customCategory: body.get("customCategory"), customSubcategory: body.get("customSubcategory"),
       subcategorySuggestion: body.get("subcategorySuggestion"),
+      inspirationQuote: body.get("inspirationQuote"),
       yearsInField: body.get("yearsInField"), cityId: body.get("cityId"), phone: body.get("phone"),
       hasWhatsapp: body.get("hasWhatsapp") === "1", offersOnline: body.get("offersOnline") === "1",
       offersHomeVisit: body.get("offersHomeVisit") === "1", instagram: body.get("instagram"),
@@ -5156,6 +5178,10 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     yearsInField: body.get("yearsInField") || "",
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
     inspirationQuote: "", weeklyTipPublished: false, weeklyQuoteLikeCount: 0,
+    // משפט השראה שנכתב בהרשמה (אופציונלי, ניתן לדילוג) נשמר כאן כטיוטה בלבד וממתין לאישור
+    // מנהלת (POST /admin/inspiration-quote/:id/approve) לפני שהוא הופך לחי ב-inspirationQuote
+    // ויכול להופיע בסבב "הטיפ השבועי" בדף הבית - בדיוק כמו המלצת תת-התחום למעלה.
+    inspirationQuotePending: clip((body.get("inspirationQuote") || "").trim(), 300),
     tier: body.get("tier") === "premium" ? "premium" : "basic",
     joinType: charging ? "regular" : "founding",
     paymentStatus: charging ? "pending_payment" : "free",
@@ -5779,6 +5805,29 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     db.save();
   }
 
+  // תזכורת "סימון עסקה שנסגרה" (ר' הפאנל #deal-close-section למטה + POST
+  // /freelancer-dashboard/deal/close) - חשוב לנו לדעת כמה לקוחות שהגיעו דרך SheCan באמת סוגרות
+  // עם כל עצמאית, ואנחנו סומכות עליה שהיא מסמנת רק סגירה אמיתית. מוצג פעם אחת בכל כניסה
+  // (התחברות) לאזור האישי - לא בכל טעינת עמוד בודדת בתוך אותה התחברות, כדי לא להציק - ולכן
+  // מסומן על אובייקט הסשן עצמו (זיכרון בלבד, לא נשמר ב-db) ולא כשדה קבוע על העצמאית. לא
+  // מוצג יחד עם פופאפ הברוכה-הבאה למעלה, כדי שלא יוצגו שני פופאפים בבת אחת.
+  let dealReminderPopupHtml = "";
+  if (!welcomePopupHtml && f.status === "approved" && !ctx.session.dealReminderShown) {
+    dealReminderPopupHtml = `
+    <div class="sc-modal-overlay" onclick="if(event.target===this) this.remove();">
+      <div class="sc-modal" style="max-width:420px;">
+        <button type="button" class="sc-modal-close" onclick="this.closest('.sc-modal-overlay').remove()" aria-label="סגירה">✕</button>
+        <h2 style="font-size:22px;">תזכורת חשובה 💛</h2>
+        <p style="text-align:right;font-size:14.5px;margin-top:10px;">אם לקוחה שהגיעה אלייך דרך SheCan סגרה איתך עסקה בפועל - נשמח שתסמני את זה אצלנו. חשוב לנו לדעת כמה לקוחות באמת סוגרות, ואנחנו סומכות עלייך שתעדכני אותנו רק על סגירה אמיתית.</p>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+          <a href="#deal-close-section" class="btn sc-modal-btn" onclick="this.closest('.sc-modal-overlay').remove()">לסימון עסקה שנסגרה</a>
+          <button type="button" class="btn btn-outline sc-modal-btn" onclick="this.closest('.sc-modal-overlay').remove()">אזכיר לי בפעם הבאה</button>
+        </div>
+      </div>
+    </div>`;
+    ctx.session.dealReminderShown = true;
+  }
+
   // "בקשות שירות" ממתינות בתחום שלה (ר' ההערה המורחבת ליד serviceRequestCard) - כל עוד
   // d.settings.serviceRequestsPremiumOnly כבוי, כל עצמאית מאושרת בתחום רואה את הפרטים
   // המלאים; כשהדגל דלוק, רק tier==="premium" רואה פרטים - השאר רואות רק "טיזר" עם המספר,
@@ -5795,6 +5844,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   </div>` : "";
   const body = `
   ${welcomePopupHtml}
+  ${dealReminderPopupHtml}
   <h1 class="section-title">היי ${esc(f.name.split(" ")[0])}, בואי נעדכן קצת</h1>
 
   <p class="muted" style="text-align:center;max-width:640px;margin:0 auto 20px;">כעצמאית יש לך גם אופציה להירשם גם כלקוחה - שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים.</p>
@@ -5922,10 +5972,14 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <p class="muted" style="margin:4px 0 0;">${esc(f.inspirationQuote || "")}</p>
     </label>
     <p class="muted" style="margin-top:-4px;font-size:12.5px;">המשפט הזה כבר הופיע כטיפ השבועי בדף הבית, ולכן אי אפשר לערוך אותו יותר.</p>
+    ` : (f.inspirationQuotePending || "").trim() ? `
+    <label>משפט ההשראה שלך: (עד 300 תווים)
+    <textarea name="inspirationQuote" maxlength="300">${esc(f.inspirationQuotePending || "")}</textarea></label>
+    <p class="muted" style="margin-top:-4px;font-size:12.5px;">🕓 המשפט הזה ממתין לבדיקה ואישור שלנו לפני שהוא יכול להופיע כטיפ השבועי בדף הבית - זה כדי לשמור שרק משפטי השראה אמיתיים מתפרסמים. אפשר עדיין לערוך ולשלוח מחדש כל עוד הוא לא אושר.</p>
     ` : `
     <label>משפט ההשראה שלך: (עד 300 תווים)
     <textarea name="inspirationQuote" maxlength="300" placeholder="גם אם לא הכנת משפט - תמיד תוכלי להיכנס לעדכון ולהוסיף משפט השראה משלך">${esc(f.inspirationQuote || "")}</textarea></label>
-    <p class="muted" style="margin-top:-4px;font-size:12.5px;">אפשר לערוך את המשפט הזה בחופשיות כל עוד הוא עוד לא עלה בתור כטיפ השבועי - ברגע שהוא יופיע בדף הבית, הוא ננעל.</p>
+    <p class="muted" style="margin-top:-4px;font-size:12.5px;">לא חובה. אחרי ששולחים, המשפט עובר בדיקה שלנו לפני שהוא יכול להופיע כטיפ השבועי בדף הבית - ואפשר לערוך אותו בחופשיות כל עוד הוא עוד לא עלה בתור.</p>
     `}
     ${(f.galleryPhotos && f.galleryPhotos.length) ? `<label>תמונות ההתרשמות שלך היום</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;" />`).join("")}</div>` : ""}
     <label>תמונות להתרשמות חדשות (עד 4 - יחליפו את הקיימות אם תעלי, לא חובה)
@@ -5978,7 +6032,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     `).join("") : `<p class="muted">עוד לא קיבלת הודעות - הן יופיעו כאן ברגע שלקוחה תכתוב לך מהכרטיסייה שלך.</p>`}
   </div>
 
-  <div class="panel">
+  <div class="panel" id="deal-close-section" style="scroll-margin-top:90px;">
     <h3>💰 סימון עסקה שנסגרה</h3>
     <p class="muted">כשעסקה עם לקוחה נסגרת באמת, כתבי כאן את המייל שלה - נשלח לה בקשת אישור (במייל/בהתראה), וברגע שהיא תאשר זה יופיע כאן כ"אושרה". כדי שזה יעבוד, חשוב שהיא תהיה רשומה באתר עם המייל הזה.</p>
     <form method="post" action="/freelancer-dashboard/deal/close">
@@ -6279,8 +6333,14 @@ route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   f.wantsPushNotifications = body.get("wantsPushNotifications") === "1";
   // Locked (server-side, not just hidden in the form) once it's actually been shown as the
   // published weekly tip - see getWeeklyFeature, which sets weeklyTipPublished the moment her
-  // turn in the rotation comes up.
-  if (!f.weeklyTipPublished) f.inspirationQuote = clip(body.get("inspirationQuote") || "", 300);
+  // turn in the rotation comes up. Otherwise, a new/changed quote goes into inspirationQuotePending
+  // and waits for admin approval (POST /admin/inspiration-quote/:id/approve) before it can ever
+  // become the live f.inspirationQuote - so only reviewed quotes reach the homepage rotation.
+  if (!f.weeklyTipPublished) {
+    const newQuote = clip((body.get("inspirationQuote") || "").trim(), 300);
+    if (!newQuote) f.inspirationQuotePending = "";
+    else if (newQuote !== f.inspirationQuote) f.inspirationQuotePending = newQuote;
+  }
   const newPhoto = fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES);
   if (newPhoto) f.photoDataUri = newPhoto;
   const newLogo = fileToDataUri(body.files.logo, MAX_UPLOAD_BYTES);
@@ -6526,6 +6586,25 @@ route("POST", "/admin/subcategory-suggestion/:id/reject", async (req, res, param
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("ההמלצה נדחתה.")}#subcategory-suggestions`);
 });
+route("POST", "/admin/inspiration-quote/:id/approve", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (f && (f.inspirationQuotePending || "").trim()) {
+    f.inspirationQuote = f.inspirationQuotePending.trim();
+    f.inspirationQuotePending = "";
+  }
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("משפט ההשראה אושר ויכול להופיע כטיפ השבועי!")}#inspiration-quotes`);
+});
+route("POST", "/admin/inspiration-quote/:id/reject", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (f) f.inspirationQuotePending = "";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("המשפט נדחה.")}#inspiration-quotes`);
+});
 
 // ----- Admin -----
 route("GET", "/admin", async (req, res, params, query, ctx) => {
@@ -6572,6 +6651,9 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // "המלצות לתת-תחום חדש" (ר' recordSubcategorySuggestion למעלה) - עצמאיות ממליצות, לא יוצרות
   // תת-תחום חי בעצמן יותר - כל המלצה תלויה מחכה כאן לאישור/דחייה מפורש.
   const pendingSubcategorySuggestions = (d.subcategorySuggestions || []).filter((s) => s.status === "pending" && !isSnoozed(d, `subcategorySuggestion:${s.id}`));
+  // "משפטי השראה" שנכתבו בהרשמה או באזור האישי (ר' inspirationQuotePending למעלה) - כל אחד
+  // ממתין כאן לאישור/דחייה מפורש לפני שהוא יכול להפוך לחי ולהיכנס לסבב הטיפ השבועי.
+  const pendingInspirationQuotes = d.freelancers.filter((f) => (f.inspirationQuotePending || "").trim() && !isSnoozed(d, `inspirationQuote:${f.id}`));
   const pendingListings = [];
   const approvedListings = [];
   d.freelancers.forEach((f) => {
@@ -6693,6 +6775,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <a href="#subcategory-suggestions" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר להמלצות לתת-תחום חדש">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingSubcategorySuggestions.length}</div>
         <div class="muted" style="margin-top:4px;">🆕 המלצות תת-תחום ↓</div>
+      </a>
+      <a href="#inspiration-quotes" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר למשפטי השראה הממתינים לאישור">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingInspirationQuotes.length}</div>
+        <div class="muted" style="margin-top:4px;">💬 משפטי השראה ↓</div>
       </a>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.totalVisits || 0}</div>
@@ -6889,6 +6975,23 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           ${snoozeButtonHtml(`subcategorySuggestion:${s.id}`, "subcategorySuggestion", `המלצה לתת-תחום: "${s.name}"`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע המלצות ממתינות.</p>`}
+  </div>
+
+  <div class="panel" id="inspiration-quotes" style="scroll-margin-top:90px;" data-badge="${pendingInspirationQuotes.length}">
+    <h3>💬 משפטי השראה ממתינים לאישור (${pendingInspirationQuotes.length})</h3>
+    <p class="muted">משפט השראה שכתבה עצמאית (בהרשמה או באזור האישי) מחכה כאן לאישור לפני שהוא יכול להופיע כטיפ השבועי בדף הבית - כדי לשמור שרק משפטי השראה אמיתיים מתפרסמים ולא פרסומות.</p>
+    ${pendingInspirationQuotes.length ? pendingInspirationQuotes.map((f) => `
+      <div class="panel" style="background:var(--cream);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;">${esc(f.businessName || f.name || "")}</div>
+          <div class="muted" style="font-size:14px;margin-top:4px;">"${esc(f.inspirationQuotePending)}"</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <form method="post" action="/admin/inspiration-quote/${f.id}/approve"><button class="btn btn-small" type="submit">✓ אישור</button></form>
+          <form method="post" action="/admin/inspiration-quote/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">✕ דחייה</button></form>
+          ${snoozeButtonHtml(`inspirationQuote:${f.id}`, "inspirationQuote", `משפט השראה של ${f.businessName || f.name || ""}`)}
+        </div>
+      </div>`).join("") : `<p class="muted">אין כרגע משפטים ממתינים.</p>`}
   </div>
 
   <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;" data-badge="${pendingFreelancers.length}">

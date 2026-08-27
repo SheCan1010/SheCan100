@@ -570,6 +570,13 @@ function migrate(data) {
     // Surfaces a one-time review highlight for Sapir in the admin panel; cleared once she
     // renames/confirms it there. Existing freelancers obviously never triggered this, so false.
     if (!("customSubcategoryPending" in f)) { f.customSubcategoryPending = false; changed = true; }
+    // "משפט השראה" (נוסף אפשרות בהרשמה 2026-08-27) - inspirationQuote עצמו הוא רק הטקסט
+    // *המאושר/החי* שמופיע בפועל בסבב הטיפ השבועי בדף הבית (ר' getWeeklyFeature ב-server.js -
+    // לא השתנה). כל טקסט חדש שהיא כותבת (בהרשמה או אח"כ באזור האישי) נשמר קודם כאן, ב-
+    // inspirationQuotePending, וממתין לאישור מנהלת (POST /admin/inspiration-quote/:id/approve|
+    // reject) לפני שהוא הופך לחי - כדי שרק משפטי השראה איכותיים יתפרסמו ולא פרסומות, בדיוק
+    // כמו "המלצה על תת-תחום חדש" למעלה.
+    if (!("inspirationQuotePending" in f)) { f.inspirationQuotePending = ""; changed = true; }
     // An additional listing can be advertised independently of her main profile - e.g. she
     // may only want to pay to promote her balloon business, not her main makeup business -
     // so each listing gets its own isAdvertised/adPaymentStatus, same shape as the
