@@ -1346,12 +1346,14 @@ function scOpenCropModal(img, input, boxSize, outSize) {
 }
 document.addEventListener("DOMContentLoaded", scSetupLogoCropper);
 
-// ---- "אין לך לוגו? ליצור אחד עכשיו" - יצירת מונוגרם ממותג חינמית וללא שירות חיצוני, לכל
-// <button data-sc-generate-logo="FILE_INPUT_ID:BUSINESS_NAME_INPUT_ID"> באתר (כרגע: הרשמה +
-// עדכון פרופיל באזור האישי). בלחיצה בונה על canvas לוגו מרובע מ-1-2 האותיות הראשונות של שם
-// העסק על רקע גרדיאנט ממותג (נבחר לפי גיוון של שם העסק, כך שאותו שם עסק תמיד יקבל את אותו
-// צבע כברירת מחדל, עם אפשרות "גרסה אחרת" שמגוונת), ומזריקה אותו כקובץ תמונה אמיתי לתוך
-// ה-<input type="file"> הקיים באמצעות DataTransfer - בדיוק כמו שאישור החיתוך ב-
+// ---- "אין לך לוגו? ליצור אחד ב-AI" - לכל <button
+// data-sc-generate-logo="FILE_INPUT_ID:BUSINESS_NAME_INPUT_ID:CATEGORY_SELECT_ID"> באתר (כרגע:
+// הרשמה + עדכון פרופיל באזור האישי). מנסה קודם שירות AI חיצוני חינמי (ר' GET
+// /api/generate-logo-ai ב-server.js - image.pollinations.ai, בלי מפתח/הרשמה/עלות) שמייצר לוגו
+// אמיתי מותאם לשם ולתחום שלה; ורק אם זה נכשל/איטי מדי (שירות ציבורי בלי SLA), נופל אוטומטית
+// חזרה למונוגרם המקומי מבוסס-canvas למטה (1-2 האותיות הראשונות על רקע גרדיאנט ממותג) - כך
+// שהיא אף פעם לא נשארת תקועה בלי שום לוגו. בשני המקרים מזריקה את התוצאה כקובץ תמונה אמיתי
+// לתוך ה-<input type="file"> הקיים באמצעות DataTransfer - בדיוק כמו שאישור החיתוך ב-
 // scOpenCropModal למעלה כבר עושה - כך שקוד השרת (fileToDataUri על body.files.logo) לא צריך
 // שום שינוי וזה מתנהג בדיוק כמו העלאת קובץ רגילה על ידה.
 var SC_LOGO_PALETTE = [
@@ -1398,49 +1400,126 @@ function scSetupLogoGenerator() {
     var ids = btn.getAttribute("data-sc-generate-logo").split(":");
     var fileInput = document.getElementById(ids[0]);
     var nameInput = document.getElementById(ids[1]);
+    var categorySelect = ids[2] ? document.getElementById(ids[2]) : null;
     var previewWrap = document.getElementById(ids[0] + "GenPreview");
     if (!fileInput || !previewWrap) return;
-    var variant = 0;
+    var seed = Math.floor(Math.random() * 100000);
+    var originalLabel = btn.textContent;
+
+    function applyBlobToInput(blob, filename, mimeType) {
+      if (!blob || !window.DataTransfer) return false;
+      try {
+        var dt = new DataTransfer();
+        dt.items.add(new File([blob], filename, { type: mimeType }));
+        fileInput.files = dt.files;
+        return true;
+      } catch (err) { return false; }
+    }
+    function showPreview(src, noteText) {
+      previewWrap.innerHTML = "";
+      var img = document.createElement("img");
+      img.src = src;
+      img.alt = "תצוגה מקדימה של הלוגו שנוצר";
+      img.style.cssText = "width:90px;height:90px;object-fit:cover;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);vertical-align:middle;";
+      var retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "btn btn-small btn-outline";
+      retryBtn.textContent = "🔄 גרסה אחרת";
+      retryBtn.style.cssText = "margin-inline-start:10px;vertical-align:middle;";
+      retryBtn.addEventListener("click", function () { seed = Math.floor(Math.random() * 100000); generate(); });
+      var okNote = document.createElement("span");
+      okNote.className = "muted";
+      okNote.style.cssText = "display:block;font-size:12px;margin-top:6px;";
+      okNote.textContent = noteText;
+      previewWrap.appendChild(img);
+      previewWrap.appendChild(retryBtn);
+      previewWrap.appendChild(okNote);
+    }
+    function generateLocalFallback(name, note) {
+      var canvas = document.createElement("canvas");
+      canvas.width = 640; canvas.height = 640;
+      scDrawGeneratedLogo(canvas, name, seed);
+      canvas.toBlob(function (blob) {
+        if (!applyBlobToInput(blob, "logo-generated.png", "image/png")) return;
+        showPreview(canvas.toDataURL("image/png"), note);
+      }, "image/png");
+    }
     function generate() {
       var name = (nameInput && nameInput.value) || "";
       if (!name.trim()) {
         alert("קודם תכתבי את שם העסק למעלה, ואז אפשר ליצור לוגו ממנו :)");
         return;
       }
-      var canvas = document.createElement("canvas");
-      canvas.width = 640; canvas.height = 640;
-      scDrawGeneratedLogo(canvas, name, variant);
-      canvas.toBlob(function (blob) {
-        if (!blob || !window.DataTransfer) return;
-        try {
-          var dt = new DataTransfer();
-          dt.items.add(new File([blob], "logo-generated.png", { type: "image/png" }));
-          fileInput.files = dt.files;
-        } catch (err) { return; }
-        previewWrap.innerHTML = "";
-        var img = document.createElement("img");
-        img.src = canvas.toDataURL("image/png");
-        img.alt = "תצוגה מקדימה של הלוגו שנוצר";
-        img.style.cssText = "width:90px;height:90px;object-fit:cover;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);vertical-align:middle;";
-        var retryBtn = document.createElement("button");
-        retryBtn.type = "button";
-        retryBtn.className = "btn btn-small btn-outline";
-        retryBtn.textContent = "🔄 גרסה אחרת";
-        retryBtn.style.cssText = "margin-inline-start:10px;vertical-align:middle;";
-        retryBtn.addEventListener("click", function () { variant++; generate(); });
-        var okNote = document.createElement("span");
-        okNote.className = "muted";
-        okNote.style.cssText = "display:block;font-size:12px;margin-top:6px;";
-        okNote.textContent = "✓ נוצר! זה יישמר כלוגו שלך כשתלחצי על שמירה.";
-        previewWrap.appendChild(img);
-        previewWrap.appendChild(retryBtn);
-        previewWrap.appendChild(okNote);
-      }, "image/png");
+      var categoryName = "";
+      if (categorySelect && categorySelect.selectedIndex > 0) {
+        var opt = categorySelect.options[categorySelect.selectedIndex];
+        categoryName = opt ? opt.text : "";
+      }
+      btn.disabled = true;
+      btn.textContent = "יוצרת לוגו ב-AI... (עד כמה שניות)";
+      var qs = "businessName=" + encodeURIComponent(name) + "&category=" + encodeURIComponent(categoryName) + "&seed=" + seed;
+      var controller = window.AbortController ? new AbortController() : null;
+      var timeoutId = controller ? setTimeout(function () { controller.abort(); }, 27000) : null;
+      fetch("/api/generate-logo-ai?" + qs, { signal: controller ? controller.signal : undefined })
+        .then(function (resp) {
+          if (timeoutId) clearTimeout(timeoutId);
+          if (!resp.ok) throw new Error("upstream not ok");
+          return resp.blob();
+        })
+        .then(function (blob) {
+          if (!blob || blob.size === 0 || blob.type.indexOf("image/") !== 0) throw new Error("not an image");
+          var ext = blob.type.indexOf("png") !== -1 ? "png" : "jpg";
+          if (!applyBlobToInput(blob, "logo-ai-generated." + ext, blob.type)) throw new Error("could not attach file");
+          var objectUrl = URL.createObjectURL(blob);
+          showPreview(objectUrl, "✓ נוצר לוגו ב-AI! זה יישמר כלוגו שלך כשתלחצי על שמירה.");
+        })
+        .catch(function () {
+          // שירות ה-AI החיצוני לא זמין/איטי מדי/נכשל - נופלים חזרה למונוגרם המקומי, כדי שהיא
+          // תמיד תצא מפה עם איזשהו לוגו ולא תישאר תקועה.
+          generateLocalFallback(name, "⚠️ שירות ה-AI לא זמין כרגע - יצרנו לך לוגו זמני במקום. אפשר ללחוץ למטה על גרסה אחרת כדי לנסות שוב.");
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+        });
     }
     btn.addEventListener("click", generate);
   });
 }
 document.addEventListener("DOMContentLoaded", scSetupLogoGenerator);
+
+// ---- Inspiration-story minimum-answers live counter ----
+// Both the /join and freelancer-dashboard story forms mark their question textareas with
+// data-sc-story-q="1" and give themselves one data-sc-story-count-note element - this walks every
+// form on the page that has those, and keeps a friendly running count so she knows how many more
+// she needs before the minimum (server-side enforcement is the real gate; this is just UX).
+function scSetupStoryMinCount() {
+  var STORY_MIN = 3;
+  document.querySelectorAll("form").forEach(function (form) {
+    var questions = form.querySelectorAll("[data-sc-story-q]");
+    if (!questions.length) return;
+    var note = form.querySelector("[data-sc-story-count-note]");
+    if (!note) return;
+    var min = Math.min(STORY_MIN, questions.length);
+    function update() {
+      var filled = 0;
+      questions.forEach(function (t) { if (t.value.trim()) filled++; });
+      if (filled === 0) {
+        note.textContent = "";
+        note.style.color = "";
+      } else if (filled < min) {
+        note.textContent = "ענית על " + filled + " מתוך " + questions.length + " שאלות - צריך לענות על לפחות " + min + " כדי לשלוח.";
+        note.style.color = "var(--danger)";
+      } else {
+        note.textContent = "ענית על " + filled + " מתוך " + questions.length + " שאלות - אפשר לשלוח! 🌸";
+        note.style.color = "";
+      }
+    }
+    questions.forEach(function (t) { t.addEventListener("input", update); });
+    update();
+  });
+}
+document.addEventListener("DOMContentLoaded", scSetupStoryMinCount);
 
 // ---- "Show password" toggle, applied automatically to every password field on the site ----
 // A single generic function instead of editing each of the 7 password forms individually
@@ -1743,6 +1822,55 @@ function scUpdateSubcats(catSelect, subSelect, currentValue, emptyLabel){
   // הייתה יוצרת תת-תחום חדש חי מיד, ועכשיו הדרך היחידה להציע תת-תחום חדש היא שדה טקסט נפרד
   // "המלצה על תת-תחום" שממתין לאישור מנהלת (ר' subcategorySuggestion ב-server.js).
 }
+// Multi-subcategory checkbox list (נוסף 2026-08-27, לפי בקשה מפורשת) - מקבילה ל-scUpdateSubcats
+// למעלה, אבל בונה תיבות סימון (אפשר לסמן כמה) במקום <option> יחיד בתוך <select>, לתוך מכל
+// (div) עם boxId נתון. currentValues (אופציונלי, מערך) מסמן אילו תתי-תחומים כבר מסומנים -
+// בשימוש רק בטעינת עמוד ראשונית עם נתונים קיימים; שינוי ידני של רשימת התחום תמיד מתחיל נקי.
+// לא נוגעת ב-scUpdateSubcats עצמה - היא עדיין משמשת טפסים אחרים שנשארים בחירה יחידה (שאלה
+// בזירה, בקשות שירות), וזה חייב להישאר ככה כדי לא לשבור אותם.
+function scUpdateSubcatCheckboxes(catSelect, boxId, currentValues){
+  var box = document.getElementById(boxId);
+  if (!box) return;
+  box.innerHTML = "";
+  if (!catSelect.value || catSelect.value === "__other__") {
+    var msg = document.createElement("p");
+    msg.className = "muted";
+    msg.style.margin = "0";
+    msg.style.fontSize = "13px";
+    msg.textContent = "בחרי קודם תחום למעלה";
+    box.appendChild(msg);
+    return;
+  }
+  var subs = SC_SUBCATS[catSelect.value] || [];
+  if (!subs.length) {
+    var none = document.createElement("p");
+    none.className = "muted";
+    none.style.margin = "0";
+    none.style.fontSize = "13px";
+    none.textContent = "אין תת-תחומים לתחום הזה כרגע";
+    box.appendChild(none);
+    return;
+  }
+  var currentSet = {};
+  (currentValues || []).forEach(function(v){ currentSet[v] = true; });
+  subs.forEach(function(s){
+    var label = document.createElement("label");
+    label.style.display = "flex";
+    label.style.alignItems = "center";
+    label.style.gap = "8px";
+    label.style.fontWeight = "500";
+    label.style.margin = "4px 0";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.name = "subcategoryId";
+    cb.value = s.id;
+    cb.style.width = "auto";
+    if (currentSet[s.id]) cb.checked = true;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(" " + s.name));
+    box.appendChild(label);
+  });
+}
 function scToggleOtherSubcategory(select, boxId){
   var box = document.getElementById(boxId);
   if (box) box.style.display = (select.value === "__other__") ? "" : "none";
@@ -1930,8 +2058,17 @@ function scShowJoinPreview(){
   var catSelect = form.categoryId;
   var category = (catSelect && catSelect.selectedIndex > 0) ? catSelect.options[catSelect.selectedIndex].text : "";
   if (catSelect && catSelect.value === "__other__" && form.customCategory) category = form.customCategory.value.trim() || category;
-  var subSelect = form.subcategoryId;
-  var subcat = (subSelect && subSelect.value && subSelect.selectedIndex > 0) ? subSelect.options[subSelect.selectedIndex].text : "";
+  var subcatBox = document.getElementById("scSubcatBox");
+  var subcat = "";
+  if (subcatBox) {
+    var checkedSubcats = subcatBox.querySelectorAll("input[type=checkbox]:checked");
+    var subcatNamesArr = [];
+    checkedSubcats.forEach(function(cb){
+      var lbl = cb.closest("label");
+      if (lbl) subcatNamesArr.push(lbl.textContent.trim());
+    });
+    subcat = subcatNamesArr.join(", ");
+  }
   if (catSelect && catSelect.value === "__other__" && form.customSubcategory) subcat = form.customSubcategory.value.trim() || subcat;
   var citySelect = form.cityId;
   var city = (citySelect && citySelect.selectedIndex > 0) ? citySelect.options[citySelect.selectedIndex].text : "";

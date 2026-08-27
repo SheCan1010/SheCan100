@@ -544,6 +544,12 @@ function migrate(data) {
     if (!("yearsInField" in f)) { f.yearsInField = ""; changed = true; }
     if (!("hasWhatsapp" in f)) { f.hasWhatsapp = false; changed = true; }
     if (!("subcategoryId" in f)) { f.subcategoryId = ""; changed = true; }
+    // Multi-subcategory selection (נוסף 2026-08-27, לפי בקשה מפורשת) - עצמאית יכולה לסמן כמה
+    // תתי-תחומים בתוך התחום שלה, ולא רק אחד. subcategoryId (מעל) נשאר בתור "תת-התחום הראשי"
+    // שלה לתאימות לאחור (מוצג בכרטיסים/breadcrumb/וכו') ומתעדכן תמיד להיות הראשון ברשימה
+    // הזאת; subcategoryIds הוא המקור האמיתי, וכל מקום שבו חשוב להתאים לפי "אחד מהתתי-תחומים
+    // שלה" (חיפוש, התאמת שאלות בזירה, בקשות שירות) בודק מול המערך הזה.
+    if (!Array.isArray(f.subcategoryIds)) { f.subcategoryIds = f.subcategoryId ? [f.subcategoryId] : []; changed = true; }
     if (!("portfolioUrl" in f)) { f.portfolioUrl = ""; changed = true; }
     if (!("availableNow" in f)) { f.availableNow = false; changed = true; }
     if (!("offersOnline" in f)) { f.offersOnline = false; changed = true; }

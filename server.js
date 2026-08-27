@@ -233,6 +233,11 @@ async function notify(user, { pushTitle, pushBody, url, emailSubject, emailHtml 
 // ---------- helpers ----------
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB per individual photo - generous for a full-res phone photo
 const MAX_REQUEST_BYTES = 40 * 1024 * 1024; // 40MB total per form submission - covers a logo + a few showcase photos together
+// Inspiration-story feature: a few one-line answers don't make for much of a story, so any
+// submission (at /join or the dashboard) needs at least this many non-empty answers. Capped by
+// the actual configured question count too, so this stays submittable even if an admin ever
+// trims d.settings.storyQuestions down below 3 (see the delete-guard on /admin/story-question/:index/delete).
+const STORY_MIN_ANSWERS = 3;
 
 // Reads a request body. For normal forms this returns a URLSearchParams (unchanged
 // behaviour). For multipart/form-data (file uploads) it returns a URLSearchParams-like
@@ -493,6 +498,31 @@ function subcatName(d, categoryId, subcategoryId) {
   const sub = subcategoriesOf(d, categoryId).find((s) => s.id === subcategoryId);
   return sub ? sub.name : "";
 }
+// Plural version for a freelancer who marked more than one subcategory in her category
+// (see f.subcategoryIds) - joins all her matched subcategory names into one readable string,
+// e.g. "מניקוריסטית, איפור כלות". Silently drops any stale id that no longer matches a real
+// subcategory (category changed since, etc.) rather than showing a broken empty entry.
+function subcatNames(d, categoryId, subcategoryIds) {
+  return (subcategoryIds || []).map((id) => subcatName(d, categoryId, id)).filter(Boolean).join(", ");
+}
+// Strict: true only when the target subcategory is explicitly one of hers - used by
+// GET /search, where filtering by a specific subcategory should only surface freelancers who
+// actually tagged themselves with it (picking no subcategory at all means "unfiltered/every
+// subcategory" from the dropdown's own side, not "matches every specific subcategory too").
+function freelancerSubcatMatches(f, subcategoryId) {
+  if (!subcategoryId) return true;
+  const ids = f.subcategoryIds || (f.subcategoryId ? [f.subcategoryId] : []);
+  return ids.includes(subcategoryId);
+}
+// Lenient: also counts as a match when she hasn't picked any subcategory at all (works the
+// category broadly) - used for arena-question/service-request matching & notifications,
+// where casting a slightly wider net for a generalist is intentional (see freelancersForCategory
+// below and matchingServiceRequests in the dashboard, which both used this looser rule already).
+function freelancerSubcatMatchesBroad(f, subcategoryId) {
+  if (!subcategoryId) return true;
+  const ids = f.subcategoryIds || (f.subcategoryId ? [f.subcategoryId] : []);
+  return !ids.length || ids.includes(subcategoryId);
+}
 // Highlight box shown to Sapir in the admin panel (both the pending-approval cards and the
 // already-approved freelancers table) whenever a freelancer just introduced a brand-new
 // subcategory (see resolveCategorySelection / customSubcategoryPending) - lets her fix the
@@ -636,9 +666,13 @@ function findOrCreateSubcategory(d, categoryId, name) {
 // wasCustomSubcategory is true only when path (1) (a genuinely new top-level category) created a
 // brand-new subcategory too - the caller uses this to set customSubcategoryPending on the
 // freelancer record, which surfaces a review highlight for Sapir on the admin panel.
+// Multi-subcategory-aware (נוסף 2026-08-27) - קוראת body.getAll("subcategoryId") כי הטופס
+// שולח עכשיו כמה תיבות סימון עם אותו name, לא <select> יחיד. מחזירה subcategoryIds (מערך,
+// המקור האמיתי) וגם subcategoryId (הראשון ברשימה, לתאימות לאחור לכל מקום שעדיין מציג רק
+// "תת-תחום אחד" בתצוגה).
 function resolveCategorySelection(d, body) {
   let categoryId = body.get("categoryId");
-  let subcategoryId = body.get("subcategoryId") || "";
+  let subcategoryIds = body.getAll("subcategoryId").filter(Boolean);
   let wasCustomSubcategory = false;
   if (categoryId === "__other__") {
     const category = findOrCreateCategory(d, body.get("customCategory"));
@@ -646,15 +680,18 @@ function resolveCategorySelection(d, body) {
     const subName = (body.get("customSubcategory") || "").trim();
     if (category && subName) {
       const result = findOrCreateSubcategory(d, category.id, subName);
-      subcategoryId = result ? result.sub.id : "";
+      subcategoryIds = result ? [result.sub.id] : [];
       wasCustomSubcategory = !!(result && result.isNew);
     } else {
-      subcategoryId = "";
+      subcategoryIds = [];
     }
-  } else if (!subcategoriesOf(d, categoryId).some((s) => s.id === subcategoryId)) {
-    subcategoryId = "";
+  } else {
+    // Silently drop any stale/tampered id that doesn't actually belong to the chosen
+    // category, same protection the old single-value version had.
+    const validIds = new Set(subcategoriesOf(d, categoryId).map((s) => s.id));
+    subcategoryIds = subcategoryIds.filter((id) => validIds.has(id));
   }
-  return { categoryId, subcategoryId, wasCustomSubcategory };
+  return { categoryId, subcategoryIds, subcategoryId: subcategoryIds[0] || "", wasCustomSubcategory };
 }
 // "המלצה על תת-תחום חדש" (נוסף 2026-08-27) - הדרך היחידה כיום להציע תת-תחום שלא ברשימה הקיימת.
 // בניגוד למנגנון הישן (ר' resolveCategorySelection למעלה) - זה לא יוצר שום דבר חי מיד, רק
@@ -808,6 +845,22 @@ function categoryCheckboxList(d, selectedIds) {
   return `<div style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;">
     ${d.categories.map((c) => `<label style="display:flex;align-items:center;gap:8px;font-weight:500;margin:4px 0;"><input type="checkbox" name="additionalCategoryIds" value="${c.id}" ${sel.has(c.id) ? "checked" : ""} style="width:auto;" /> ${esc(c.name)}</label>`).join("")}
   </div>`;
+}
+// Checkbox list of a CHOSEN category's own subcategories, so a freelancer can mark several at
+// once instead of picking just one (נוסף 2026-08-27, לפי בקשה מפורשת) - same visual pattern as
+// categoryCheckboxList above. Server-rendered for the initial page load (a normal /join or
+// /freelancer-dashboard GET, or a POST-validation retry that already had a category chosen);
+// scUpdateSubcatCheckboxes (see layout.js) takes over from there and rebuilds this same markup
+// client-side whenever she changes the category dropdown, without a page reload. Kept
+// completely separate from the single-value <select> that scUpdateSubcats still drives for
+// the other, still-single-choice forms (arena question, service requests) - those are
+// unaffected by this feature.
+function subcategoryCheckboxesHtml(d, categoryId, selectedIds) {
+  if (!categoryId || categoryId === "__other__") return `<p class="muted" style="margin:0;font-size:13px;">בחרי קודם תחום למעלה</p>`;
+  const subs = subcategoriesOf(d, categoryId);
+  if (!subs.length) return `<p class="muted" style="margin:0;font-size:13px;">אין תת-תחומים לתחום הזה כרגע</p>`;
+  const sel = new Set(selectedIds || []);
+  return subs.map((s) => `<label style="display:flex;align-items:center;gap:8px;font-weight:500;margin:4px 0;"><input type="checkbox" name="subcategoryId" value="${s.id}" ${sel.has(s.id) ? "checked" : ""} style="width:auto;" /> ${esc(s.name)}</label>`).join("");
 }
 
 // A "[icon] text" row that always keeps the icon visually first (rightmost) in RTL,
@@ -1133,7 +1186,7 @@ function freelancerCard(f, d, opts = {}) {
   // the exact same things as a full /search submit - per explicit request, after "שיער" found
   // nothing even though hair-focused freelancers were on the site under a category name that
   // doesn't contain that word.
-  const categoryForSearch = esc(`${catName(d, f.categoryId)} ${subcatName(d, f.categoryId, f.subcategoryId)} ${f.description || ""}`.toLowerCase());
+  const categoryForSearch = esc(`${catName(d, f.categoryId)} ${subcatNames(d, f.categoryId, f.subcategoryIds)} ${f.description || ""}`.toLowerCase());
   const extraCats = additionalCategoryNames(d, f);
   // If her inspiration story happens to be this week's featured story on SheCan Stories, she
   // gets a small badge overlaid on her card, linking to it. This used to be rendered as a
@@ -1150,7 +1203,7 @@ function freelancerCard(f, d, opts = {}) {
     : "";
   const reviewCount = reviewCountFor(d, f.id);
   const catNameStr = catName(d, f.categoryId);
-  const cardFieldLabel = subcatName(d, f.categoryId, f.subcategoryId) || catNameStr;
+  const cardFieldLabel = subcatNames(d, f.categoryId, f.subcategoryIds) || catNameStr;
   const cardLocation = locationLabel(d, f.cityId, f.offersOnline, f.offersHomeVisit) + (extraCats.length ? ` · גם ב${extraCats.join(", ")}` : "");
   const cardLocationIcon = locationIcon(d, f.cityId, f.offersOnline, f.offersHomeVisit);
   // Redesigned card body (per explicit request): business name stays as-is, category sits
@@ -1338,7 +1391,9 @@ function freelancersForCategory(d, categoryId, subcategoryId) {
   const matchIds = new Set();
   d.freelancers.forEach((f) => {
     if (f.status !== "approved") return;
-    if (f.categoryId === categoryId && subMatches(f.subcategoryId)) matchIds.add(f.id);
+    // Her own subcategories (see f.subcategoryIds) can now be several at once - a match if
+    // ANY of them fits, same "no subcategory at all = works it broadly" rule as before.
+    if (f.categoryId === categoryId && freelancerSubcatMatchesBroad(f, subcategoryId)) matchIds.add(f.id);
     (f.additionalListings || []).forEach((l) => {
       if (l.status === "approved" && l.categoryId === categoryId && subMatches(l.subcategoryId)) matchIds.add(f.id);
     });
@@ -1573,7 +1628,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update93 - 2026-08-27 - אזור ניהול: כפתור \"💬 שליחת הודעה\" ליד כל פריט בכל תור אישור ששייך לעצמאית (הצטרפות/סיפור/תת-תחום/משפט השראה/תחום נוסף) - עם כותרת בהתראה ובמייל שמסבירה מיד על מה מדובר";
+const DEPLOY_MARKER = "update100 - 2026-08-27 - עצמאית יכולה לסמן כמה תתי-תחומים באותו תחום (בהרשמה ובעריכת פרופיל)";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -1868,7 +1923,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     if (f.status !== "approved") return false;
     if (f.active === false) return false;
     if (!freelancerMatchesCategory(f, category)) return false;
-    if (subcategory && f.subcategoryId !== subcategory) return false;
+    // She can now have several subcategories (f.subcategoryIds) - matches if the searched-for
+    // one is among hers. A freelancer with NO subcategory picked at all still matches (works
+    // the whole category broadly) - same behavior as before this feature.
+    if (subcategory && !freelancerSubcatMatches(f, subcategory)) return false;
     if (city && f.cityId !== city) return false;
     if (homeVisit && !f.offersHomeVisit) return false;
     if (q) {
@@ -1881,7 +1939,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       // actually wrote rather than the exact category/subcategory label.
       const nameMatch = `${f.businessName || ""} ${f.name || ""}`.toLowerCase().includes(q);
       const categoryMatch = catName(d, f.categoryId).toLowerCase().includes(q);
-      const subcatMatch = subcatName(d, f.categoryId, f.subcategoryId).toLowerCase().includes(q);
+      const subcatMatch = subcatNames(d, f.categoryId, f.subcategoryIds).toLowerCase().includes(q);
       const descMatch = (f.description || "").toLowerCase().includes(q);
       if (!nameMatch && !categoryMatch && !subcatMatch && !descMatch) return false;
     }
@@ -2007,6 +2065,43 @@ route("POST", "/search/ai", async (req, res, params, query, ctx) => {
   if (f.keywords) params2.set("q", f.keywords);
   params2.set("ai", "1");
   redirect(res, `/search?${params2.toString()}`);
+});
+
+// ----- יצירת לוגו ב-AI (חינמי, ללא מפתח/הרשמה) -----
+// לפי בקשה מפורשת של שפיר אחרי שהמונוגרם המקומי (ר' scDrawGeneratedLogo ב-layout.js, עדיין
+// קיים כרשת ביטחון) לא נראה לה מספיק מעניין/יפה - זה שירות ציבורי חיצוני וחינמי לגמרי
+// (image.pollinations.ai) שלא דורש ממנה שום הרשמה, מפתח API או תשלום. חשוב: אין מפתח = אין
+// גם הבטחת זמינות/מהירות (SLA) מהצד השני, אז יש כאן טיים-אאוט קצר וכל כשל (טיים-אאוט, סטטוס
+// לא תקין, תגובה שהיא לא תמונה) מוחזר כשגיאה ברורה - כדי שקוד הצד-לקוח (scSetupLogoGenerator
+// ב-layout.js) יידע ליפול חזרה אוטומטית למונוגרם המקומי, שתמיד עובד גם אם השירות החיצוני
+// למטה איטי/נופל/חסום - עצמאית שממלאת טופס הרשמה אף פעם לא צריכה להישאר תקועה בלי שום לוגו.
+// "no text/letters/words" מפורש בפרומפט כי מודלים ליצירת תמונות (כולל זה) כמעט תמיד מציירים
+// טקסט מטושטש ולא קריא - במיוחד עברית - אז עדיף אייקון/סמל נקי בלי ניסיון "לצייר" את השם.
+function buildAiLogoPrompt(businessName, categoryName) {
+  const subject = categoryName ? `${categoryName} small business` : "small business";
+  return `minimalist elegant logo emblem icon for a ${subject} named "${businessName}", flat vector illustration, soft dusty rose and cream color palette, clean modern feminine style, circular badge, professional graphic design, high quality, no text, no letters, no words, no writing, no typography, white background`;
+}
+route("GET", "/api/generate-logo-ai", async (req, res, params, query, ctx) => {
+  const businessName = clip((query.get("businessName") || "עסק").trim(), 60) || "עסק";
+  const categoryName = clip((query.get("category") || "").trim(), 40);
+  const seedParam = Number(query.get("seed"));
+  const seed = Number.isFinite(seedParam) ? seedParam : Math.floor(Math.random() * 100000);
+  const prompt = buildAiLogoPrompt(businessName, categoryName);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=640&height=640&seed=${seed}&nologo=true`;
+  try {
+    const upstream = await fetch(url, { signal: AbortSignal.timeout(25000) });
+    const contentType = upstream.headers.get("content-type") || "";
+    if (!upstream.ok || !contentType.startsWith("image/")) {
+      throw new Error(`upstream responded ${upstream.status} (${contentType})`);
+    }
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-store", "Content-Length": buf.length });
+    res.end(buf);
+  } catch (e) {
+    console.warn("[generate-logo-ai] upstream failed, client will fall back to local monogram:", e.message);
+    res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("AI logo service unavailable");
+  }
 });
 
 // ----- Freelancer profile -----
@@ -3560,7 +3655,10 @@ const COMMUNITY_TYPES = {
   giveaway: {
     label: "מסירות", singular: "מסירה", icon: "🎁",
     desc: "חפצים שכבר לא צריכות - נמסרים בחינם למי שיכולה להשתמש בהם",
-    tags: ["ריהוט", "ציוד תינוקות", "ביגוד", "מכשירי חשמל", "ספרים וצעצועים", "אחר"],
+    // הורחב משמעותית לפי בקשה מפורשת ("שיהיו הרבה יותר [קטגוריות] כמו מכשירי חשמל כלים
+    // גינון וכו וכו") - פוצל כל תג רחב מדי לכמה תגים ממוקדים יותר, ונוספו קטגוריות חדשות
+    // שלא היו קיימות בכלל (כלי עבודה, גינון, אלקטרוניקה, בעלי חיים, יודאיקה וכו').
+    tags: ["ריהוט", "ציוד תינוקות ולידה", "ביגוד והנעלה", "מכשירי חשמל קטנים", "מכשירי חשמל גדולים", "כלי עבודה וכלים", "גינון וחוץ", "כלי בית ומטבח", "ספרים", "צעצועים ומשחקים", "ספורט ופנאי", "אלקטרוניקה ומחשבים", "ציוד לבעלי חיים", "יודאיקה וחגים", "אחר"],
   },
   // "מכירת יד 2" - בדיוק כמו "מסירות" (אותה דרישת חשבון לקוחה מחובר + הורדה עצמית ברגע
   // שהפריט כבר נמכר, ר' communityAddUrl/take-down למטה), רק עם שדה price - חפצים שרוצות
@@ -4498,10 +4596,18 @@ route("GET", "/community/:type", async (req, res, params, query, ctx) => {
       <button class="btn btn-small" style="margin-top:10px;" type="submit">שמירת ההתראות שלי</button>
     </form>
   </div>` : `<p class="muted" style="text-align:center;margin-bottom:20px;"><a href="/login?role=customer&next=${encodeURIComponent(`/community/${params.type}`)}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כלקוחה</a> כדי להירשם להתראות על פריטים חדשים בקטגוריה שמעניינת אותך.</p>`) : "";
+  // כפתור "הוספת פריט" קבוע וגלוי תמיד - לפי בקשה מפורשת שהוספת פריט (בעיקר במסירות) תהיה
+  // "מודגשת ונגישה". קודם לכן הקישור היחיד היה טקסט קטן בתוך הודעת "אין פריטים" - כלומר
+  // נעלם לגמרי ברגע שהיו פריטים ברשימה. עכשיו זה כפתור בולט תמיד למעלה, בלי תלות בתוכן
+  // הרשימה. הכותרת מדויקת לפי טיפוס (תואמת בדיוק לכותרת H1 של דף ההוספה עצמו) עבור מסירות/
+  // מכירת יד 2 (שני הטיפוסים היחידים עם דף הוספה ייעודי), וגנרית לפי meta.singular בשאר.
+  const addItemLabel = meta.label === "מסירות" ? "מסירת חפץ" : meta.label === "מכירת יד 2" ? "מכירת חפץ" : `הוספת ${meta.singular}`;
+  const addItemButtonHtml = `<p style="text-align:center;margin:10px 0 18px;"><a href="${communityAddUrl(params.type)}" class="btn" style="font-size:16px;padding:13px 30px;box-shadow:0 3px 10px rgba(0,0,0,.12);">➕ ${esc(addItemLabel)}</a></p>`;
   const body = `
   <p class="muted" style="text-align:center;"><a href="/community" style="color:var(--rose-dark);font-weight:700;">מאגרי קהילה</a> › ${esc(meta.label)}</p>
   <h1 class="section-title" style="margin-top:2px;">${esc(meta.label)}</h1>
   <p class="muted" style="text-align:center;margin-top:-10px;">${esc(meta.desc)}</p>
+  ${addItemButtonHtml}
   ${dressWantedButtonHtml}
   <form class="search-box" method="get" action="/community/${params.type}">
     <div class="search-row"><input type="text" name="q" value="${esc(query.get("q") || "")}" placeholder="חפשי לפי שם או תיאור" /></div>
@@ -4718,10 +4824,12 @@ function communityAdminPanelHtml(type, d) {
           </div>
         </div>
         ${c.description ? `<p style="margin-top:10px;">${esc(c.description)}</p>` : ""}
-        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center;">
           <form method="post" action="/admin/community/${c.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
           <form method="post" action="/admin/community/${c.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
           ${snoozeButtonHtml(`communityListing:${c.id}`, "communityListing", `${meta.label}: ${c.title}`)}
+          ${isSale && c.ownerCustomerId ? messageCustomerButtonHtml(c.ownerCustomerId, `הפריט "${c.title}" ששלחת לאישור`, `communityListing-${c.id}`) : ""}
+          ${isProduct ? emailListingSubmitterButtonHtml(c.id, c.email, `communityListing-${c.id}`) : ""}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע פריטים ממתינים לאישור.</p>`}
 
@@ -4939,9 +5047,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
   const p = prefill || {};
   const isRetry = !!prefill;
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${p.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const subcatOptionsForPrefill = (p.categoryId && p.categoryId !== "__other__")
-    ? subcategoriesOf(d, p.categoryId).map((s) => `<option value="${s.id}" ${p.subcategoryId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")
-    : "";
+  const subcatCheckboxesForPrefill = subcategoryCheckboxesHtml(d, p.categoryId, p.subcategoryIds);
   const filesNote = isRetry ? ` <span style="color:var(--danger);font-weight:700;">(שימי לב - יש לצרף שוב, קבצים לא נשמרים אוטומטית)</span>` : "";
   const body = `
   ${!charging ? `
@@ -4982,8 +5088,9 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label>🌸 בחרי סיסמה<input type="password" name="password" required /></label>
     ${isRetry ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
     <label>🌸 מה התחום שלך?
-    <select name="categoryId" required onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBox');"><option value="">בחרי תחום</option>${catOptions}<option value="__other__" ${p.categoryId === "__other__" ? "selected" : ""}>אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>🌸 תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat">${p.categoryId && p.categoryId !== "__other__" ? subcatOptionsForPrefill : '<option value="">בחרי קודם תחום</option>'}</select></label>
+    <select name="categoryId" id="joinCategorySelect" required onchange="scUpdateSubcatCheckboxes(this, 'scSubcatBox');scToggleOtherCategory(this, 'scOtherCategoryBox');"><option value="">בחרי תחום</option>${catOptions}<option value="__other__" ${p.categoryId === "__other__" ? "selected" : ""}>אחר - התחום שלי לא ברשימה</option></select></label>
+    <label>🌸 תת-תחום (לא חובה - אפשר לסמן כמה)</label>
+    <div id="scSubcatBox" style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;margin:-6px 0 6px;">${subcatCheckboxesForPrefill}</div>
     <label>🌸 לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" value="${esc(p.subcategorySuggestion || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
     <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
     <div id="scOtherCategoryBox" style="display:${p.categoryId === "__other__" ? "block" : "none"};">
@@ -5003,8 +5110,8 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" id="joinLogoInput" accept="image/*" data-sc-crop="1" /></label>
     <p style="margin:-6px 0 6px;">
-      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="joinLogoInput:joinBusinessName">✨ אין לך לוגו? ליצור אחד עכשיו</button>
-      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו נקי מהאותיות הראשונות של שם העסק שלך, תוך שניות ובחינם - אפשר להחליף בתמונה משלך בכל שלב.</span>
+      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="joinLogoInput:joinBusinessName:joinCategorySelect">✨ אין לך לוגו? ליצור אחד ב-AI</button>
+      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו ב-AI מותאם לשם ולתחום שלך, בחינם - אם השירות החיצוני לא זמין רגע, ניצור לך לוגו זמני במקום. אפשר גם להחליף בתמונה משלך בכל שלב.</span>
       <span id="joinLogoInputGenPreview" style="display:block;margin-top:8px;"></span>
     </p>
     <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך${filesNote}
@@ -5044,11 +5151,12 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <div class="panel" style="background:var(--cream);margin-top:16px;position:relative;" id="scJoinStoryPanel">
       <button type="button" onclick="var p=document.getElementById('scJoinStoryPanel');if(p)p.style.display='none';" aria-label="לא רלוונטי בשבילי" title="לא רלוונטי בשבילי" style="position:absolute;top:12px;left:14px;background:none;border:none;font-size:20px;color:var(--gray);cursor:pointer;">✕</button>
       <h4 style="margin-top:0;">רוצה כבר עכשיו לכתוב את הסיפור שלך? (לא חובה)</h4>
-      <p class="muted" style="font-size:14px;">הסיפור שלך הוא ריאיון אישי קצר שמוצג בעמוד "SheCan Stories" - כרטיס ביקור רגשי שמספר מי את ואיך הגעת לאן שהגעת. כל שבוע מוצגת עצמאית אחת, לפי סדר ההרשמה שלכן לקהילה - כך שגם הסיפור שלך יקבל את הבמה שלו בזמן. אפשר גם לדלג ולמלא את זה מאוחר יותר באזור האישי שלך, או פשוט לסגור את התיבה הזו עם ה-X אם זה לא בשבילך כרגע.</p>
+      <p class="muted" style="font-size:14px;">הסיפור שלך הוא ריאיון אישי קצר שמוצג בעמוד "SheCan Stories" - כרטיס ביקור רגשי שמספר מי את ואיך הגעת לאן שהגעת. כל שבוע מוצגת עצמאית אחת, לפי סדר ההרשמה שלכן לקהילה - כך שגם הסיפור שלך יקבל את הבמה שלו בזמן. אפשר גם לדלג ולמלא את זה מאוחר יותר באזור האישי שלך, או פשוט לסגור את התיבה הזו עם ה-X אם זה לא בשבילך כרגע. אם כן מתחילים לכתוב - צריך לענות על לפחות ${Math.min(STORY_MIN_ANSWERS, storyQuestionsJoin.length)} מהשאלות.</p>
       ${isRetry ? `<p class="muted" style="font-size:13px;color:var(--danger);">שימי לב - אם צירפת כאן תמונה, יש לצרף אותה מחדש - מה שכתבת בתשובות עצמן נשמר.</p>` : ""}
       <label>🌸 תמונה שלך לסיפור (לא חובה)
       <input type="file" name="storyPhoto" accept="image/*" /></label>
-      ${storyQuestionsJoin.map((q, i) => `<label>🌸 ${esc(q)}<textarea name="storyAnswer${i}" maxlength="800"></textarea></label>`).join("")}
+      ${storyQuestionsJoin.map((q, i) => `<label>🌸 ${esc(q)}<textarea name="storyAnswer${i}" maxlength="800" data-sc-story-q="1">${esc((p.storyAnswers && p.storyAnswers[i]) || "")}</textarea></label>`).join("")}
+      <div class="muted" data-sc-story-count-note style="font-size:12.5px;margin-top:4px;"></div>
     </div>
 
     <input type="hidden" name="ref" value="${esc(refId)}" />
@@ -5116,7 +5224,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     const ctxData = joinFormRenderContext(d, body, req);
     const prefill = {
       name: body.get("name"), businessName: body.get("businessName"), email: body.get("email"),
-      categoryId: body.get("categoryId"), subcategoryId: body.get("subcategoryId"),
+      categoryId: body.get("categoryId"), subcategoryIds: body.getAll("subcategoryId"),
       customCategory: body.get("customCategory"), customSubcategory: body.get("customSubcategory"),
       subcategorySuggestion: body.get("subcategorySuggestion"),
       inspirationQuote: body.get("inspirationQuote"),
@@ -5126,6 +5234,10 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       portfolioUrl: body.get("portfolioUrl"), description: body.get("description"), dealText: body.get("dealText"),
       tier: body.get("tier"), wantsPushNotifications: body.get("wantsPushNotifications") === "1",
       howHeardChoice: body.get("howHeardChoice"), howHeardBusinessName: body.get("howHeardBusinessName"),
+      // Preserve whatever she'd already typed into the inspiration-story questions too, so a
+      // validation failure elsewhere on the form (or the story-minimum check below) doesn't make
+      // her retype it - see joinFormBody's textarea rendering, which reads this back out.
+      storyAnswers: (d.settings.storyQuestions || []).map((_, i) => body.get(`storyAnswer${i}`) || ""),
     };
     const formBody = joinFormBody(d, { ...ctxData, prefill });
     const errQuery = new URLSearchParams({ err: errMsg });
@@ -5144,6 +5256,16 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   if (!body.get("cityId") && body.get("offersOnline") !== "1" && body.get("offersHomeVisit") !== "1") {
     return rerenderWithError(d, "צריך לציין עיר, או לסמן שאת נותנת שירות בדיגיטלית / מגיעה עד הלקוחה - לפחות אחד מהשלושה.");
   }
+  // The inspiration-story panel here is fully optional and skippable (0 answers is fine) - but
+  // if she starts writing at all, a couple of one-line answers don't make for much of a story,
+  // so we require a real minimum. Validated here, BEFORE the freelancer account is created below,
+  // so a failure just re-renders the form instead of leaving a half-created signup behind.
+  const joinStoryMin = Math.min(STORY_MIN_ANSWERS, (d.settings.storyQuestions || []).length);
+  const joinStoryAnswersCount = (d.settings.storyQuestions || [])
+    .filter((q, i) => (body.get(`storyAnswer${i}`) || "").trim()).length;
+  if (joinStoryAnswersCount > 0 && joinStoryAnswersCount < joinStoryMin) {
+    return rerenderWithError(d, `סיפור ההשראה - אם מתחילים לכתוב אותו צריך לענות על לפחות ${joinStoryMin} שאלות (ענית כרגע על ${joinStoryAnswersCount}). אפשר גם להשאיר את כל השאלות ריקות כרגע ולדלג - תמיד אפשר לכתוב את זה מאוחר יותר באזור האישי.`);
+  }
   const id = db.nextId("freelancer");
   const charging = d.settings.chargingEnabled;
   const dealCode = generateCouponCode();
@@ -5159,13 +5281,15 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   const galleryPhotos = ["gallery1", "gallery2", "gallery3", "gallery4"]
     .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
     .filter(Boolean);
-  const { categoryId, subcategoryId, wasCustomSubcategory } = resolveCategorySelection(d, body);
+  const { categoryId, subcategoryId, subcategoryIds, wasCustomSubcategory } = resolveCategorySelection(d, body);
   recordSubcategorySuggestion(d, body, categoryId, id, body.get("businessName") || body.get("name") || "");
   const additionalListings = [0, 1, 2].map((i) => readExtraListingFromBody(d, body, "extra", i)).filter(Boolean);
   db.load().freelancers.push({
     id, name: body.get("name"), businessName: body.get("businessName"), email: body.get("email"),
     passwordHash: auth.hashPassword(body.get("password")), categoryId,
-    subcategoryId,
+    // subcategoryId נשאר "תת-התחום הראשי" (הראשון שסימנה) לתאימות לאחור בכל מקום שמציג תת-תחום
+    // בודד; subcategoryIds הוא המערך המלא - ר' resolveCategorySelection.
+    subcategoryId, subcategoryIds,
     // Set only when she just introduced a genuinely new subcategory (see resolveCategorySelection)
     // - surfaces a one-time review highlight on the admin pending-approvals screen (/admin GET),
     // cleared once Sapir renames/confirms it there (POST /admin/freelancer/:id/subcategory-note/*).
@@ -5525,6 +5649,13 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
   const d = db.load();
   const customer = d.customers.find((c) => c.id === ctx.session.id);
+  // הודעות מהנהלת SheCan אליה - אותו דפוס בדיוק כמו myAdminMessages ב-/freelancer-dashboard,
+  // רק ממאגר נפרד (d.customerAdminMessages, ר' POST /admin/message-customer) כדי לא לערבב
+  // עם הודעות לעצמאיות. מסומנות כ"נקראו" ברגע שהיא נכנסת לכאן ורואה אותן.
+  const myAdminMessages = (d.customerAdminMessages || []).filter((m) => m.customerId === customer.id).slice().reverse();
+  let anyAdminMsgMarkedRead = false;
+  myAdminMessages.forEach((m) => { if (!m.read) { m.read = true; anyAdminMsgMarkedRead = true; } });
+  if (anyAdminMsgMarkedRead) db.save();
   // Each favorite key is either a bare freelancer id (her main profile) or
   // "freelancerId:listingId" (one specific additional listing) - resolved into its own card
   // and link so two listings belonging to the same freelancer never get merged into one.
@@ -5639,9 +5770,48 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
     db.save();
   }
 
+  // תזכורת "סימון עסקה שנסגרה" - הכיוון ההפוך מזה של העצמאית (ר' /freelancer-dashboard,
+  // "תזכורת חשובה 💛"): כאן זו הלקוחה שמדווחת ביוזמתה על עסקה שסגרה עם עצמאית שהכירה דרך
+  // SheCan (ר' הפאנל #account-deal-close-section למטה + POST /account/deal/close) - מדובר
+  // בדיווח סופי ומיידי, בלי שלב אישור נוסף, כי אנחנו סומכות עליה שהיא מדווחת רק על סגירה
+  // אמיתית. מוצג פעם אחת בכל כניסה (התחברות) לאזור האישי - לא בכל טעינת עמוד - ולכן מסומן
+  // על אובייקט הסשן עצמו (זיכרון בלבד, לא נשמר ב-db). לא מוצג יחד עם הפופאפ של ההגרלה למעלה.
+  let dealReportReminderPopupHtml = "";
+  if (!referralPopupHtml && !ctx.session.dealReminderShown) {
+    dealReportReminderPopupHtml = `
+    <div class="sc-modal-overlay" onclick="if(event.target===this) this.remove();">
+      <div class="sc-modal" style="max-width:420px;">
+        <button type="button" class="sc-modal-close" onclick="this.closest('.sc-modal-overlay').remove()" aria-label="סגירה">✕</button>
+        <h2 style="font-size:22px;">תזכורת חשובה 💛</h2>
+        <p style="text-align:right;font-size:14.5px;margin-top:10px;">אם סגרת עסקה עם בעלת עסק שהכרת דרך SheCan - נשמח שתעדכני אותנו. חשוב לנו לדעת כמה לקוחות באמת סוגרות עסקאות, ואנחנו סומכות עלייך שתעדכני אותנו רק על סגירה אמיתית.</p>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+          <a href="#account-deal-close-section" class="btn sc-modal-btn" onclick="this.closest('.sc-modal-overlay').remove()">לסימון עסקה שנסגרה</a>
+          <button type="button" class="btn btn-outline sc-modal-btn" onclick="this.closest('.sc-modal-overlay').remove()">אזכיר לי בפעם הבאה</button>
+        </div>
+      </div>
+    </div>`;
+    ctx.session.dealReminderShown = true;
+  }
+
+  // רשימת עצמאיות מאושרות להשלמה אוטומטית בפאנל "סימון עסקה שנסגרה" למטה - אותו דפוס בדיוק
+  // כמו businessNameDatalist בטופס ההרשמה (/join), ומיושב לעצמאית בפועל בצד השרת באותה שיטה
+  // (findFreelancerByBusinessNameLoose, ר' POST /account/deal/close).
+  const approvedFreelancerNameDatalist = d.freelancers.filter((x) => x.status === "approved")
+    .map((x) => `<option value="${esc(x.businessName || x.name)}"></option>`).join("");
+  const myReportedDeals = (d.deals || []).filter((x) => x.customerId === customer.id)
+    .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .map((x) => ({ ...x, freelancer: d.freelancers.find((f) => f.id === x.freelancerId) }));
+
   const body = `
   ${referralPopupHtml}
+  ${dealReportReminderPopupHtml}
   <h1 class="section-title">היי ${esc(customer.name)} <span style="color:var(--danger);">♥</span></h1>
+
+  ${myAdminMessages.length ? `
+  <div class="panel" style="max-width:680px;margin:0 auto;">
+    <h3>הודעות מהנהלת SheCan 📣</h3>
+    <div class="chat-thread" style="text-align:right;">${myAdminMessages.map((m) => `<div class="chat-msg from-admin">${m.context ? `<div style="font-size:12px;font-weight:700;opacity:.85;margin-bottom:4px;">לגבי: ${esc(m.context)}</div>` : ""}${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
+  </div>` : ""}
 
   ${referralPromoHtml}
 
@@ -5712,6 +5882,20 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
     </table></div>` : `<p class="muted">עוד לא צפית באף קוד קופון - כשתלחצי על "לצפייה בקוד קופון" בכרטיסייה של עצמאית, הוא יופיע כאן.</p>`}
   </div>
 
+  <div class="panel" id="account-deal-close-section" style="scroll-margin-top:90px;">
+    <h3>💰 סגרת עסקה עם עצמאית מ-SheCan?</h3>
+    <p class="muted">חשוב לנו לדעת כמה לקוחות באמת סוגרות עסקאות עם עצמאיות שהכירו כאן - כתבי כאן את שם העסק, ותודי לנו! אנחנו סומכות עלייך שתעדכני אותנו רק על סגירה אמיתית, בלי צורך באישור נוסף מהעצמאית.</p>
+    <form method="post" action="/account/deal/close">
+      <label>שם העסק
+      <input type="text" name="businessName" list="scAccountDealFreelancers" required placeholder="הקלידי לחיפוש..." /></label>
+      <datalist id="scAccountDealFreelancers">${approvedFreelancerNameDatalist}</datalist>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">כן, סגרתי עסקה 🎉</button>
+    </form>
+    ${myReportedDeals.length ? `<div class="table-scroll" style="margin-top:16px;"><table class="table-simple"><tr><th>עסק</th><th>תאריך</th></tr>
+      ${myReportedDeals.map((dl) => `<tr><td>${dl.freelancer ? esc(dl.freelancer.businessName || dl.freelancer.name) : "עסק שהוסר"}</td><td>${esc(new Date(dl.createdAt).toLocaleDateString("he-IL"))}</td></tr>`).join("")}
+    </table></div>` : ""}
+  </div>
+
   <div class="panel">
     <h3>מה שכתבת</h3>
     ${myReviews.length ? myReviews.map((r) => {
@@ -5749,7 +5933,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const f = d.freelancers.find((x) => x.id === ctx.session.id);
   const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved");
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === f.categoryId ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const subcatOptions = subcategoriesOf(d, f.categoryId).map((s) => `<option value="${s.id}" ${s.id === f.subcategoryId ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const subcatCheckboxes = subcategoryCheckboxesHtml(d, f.categoryId, f.subcategoryIds && f.subcategoryIds.length ? f.subcategoryIds : (f.subcategoryId ? [f.subcategoryId] : []));
   const statusLabel = paymentStatusLabel(f.paymentStatus);
   const matchingCustomer = d.customers.find((c) => c.email === f.email);
   const profileUrl = `${getOrigin(req)}/freelancer/${f.id}`;
@@ -5837,7 +6021,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   // d.settings.serviceRequestsPremiumOnly כבוי, כל עצמאית מאושרת בתחום רואה את הפרטים
   // המלאים; כשהדגל דלוק, רק tier==="premium" רואה פרטים - השאר רואות רק "טיזר" עם המספר,
   // כדי לתת סיבה טובה לשדרג (בלי לחשוף פרטי לקוחה בחינם).
-  const matchingServiceRequests = (d.serviceRequests || []).filter((r) => r.categoryId === f.categoryId && (!r.subcategoryId || !f.subcategoryId || r.subcategoryId === f.subcategoryId))
+  const matchingServiceRequests = (d.serviceRequests || []).filter((r) => r.categoryId === f.categoryId && freelancerSubcatMatchesBroad(f, r.subcategoryId))
     .slice().sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
   const canSeeServiceRequests = !d.settings.serviceRequestsPremiumOnly || f.tier === "premium";
   const serviceRequestsSectionHtml = matchingServiceRequests.length ? `
@@ -5915,9 +6099,10 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   <div class="panel" style="text-align:center;">
     <h3>הסיפור שלך</h3>
     ${!myStory ? `
-      <p class="muted">עני בכמה מילים על השאלות הבאות ונבנה מזה את סיפור ההשראה שלך - הוא יעבור אלינו לאישור, ואחרי שהוא יאושר תקבלי קישור לשתף אותו.</p>
+      <p class="muted">עני בכמה מילים על השאלות הבאות ונבנה מזה את סיפור ההשראה שלך - הוא יעבור אלינו לאישור, ואחרי שהוא יאושר תקבלי קישור לשתף אותו. לא חייבת לענות על כולן - אבל צריך לענות על לפחות ${Math.min(STORY_MIN_ANSWERS, storyQuestions.length)} מהשאלות כדי לשלוח.</p>
       <form method="post" action="/freelancer-dashboard/story" enctype="multipart/form-data" style="text-align:right;">
-        ${storyQuestions.map((q, i) => `<label>${esc(q)}<textarea name="answer${i}" maxlength="800" required></textarea></label>`).join("")}
+        ${storyQuestions.map((q, i) => `<label>${esc(q)}<textarea name="answer${i}" maxlength="800" data-sc-story-q="1"></textarea></label>`).join("")}
+        <div class="muted" data-sc-story-count-note style="font-size:12.5px;margin-top:4px;"></div>
         <label>תמונה לסיפור (לא חובה)<input type="file" name="photo" accept="image/*" /></label>
         <button class="btn" style="margin-top:14px;" type="submit">שליחת הסיפור שלי</button>
       </form>
@@ -5929,12 +6114,13 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
       </div>
       <a class="btn btn-outline btn-small" style="margin-top:10px;display:inline-block;" href="/stories/${myStory.id}">צפייה בסיפור</a>
     ` : `
-      <p class="muted">שלחת את הסיפור שלך - הוא ממתין לאישור, ותקבלי מייל ברגע שהוא יעלה לאוויר. כל עוד הוא לא פורסם, את יכולה לערוך אותו כאן.</p>
+      <p class="muted">שלחת את הסיפור שלך - הוא ממתין לאישור, ותקבלי מייל ברגע שהוא יעלה לאוויר. כל עוד הוא לא פורסם, את יכולה לערוך אותו כאן. צריך להשאיר לפחות ${Math.min(STORY_MIN_ANSWERS, storyQuestions.length)} תשובות מלאות.</p>
       <form method="post" action="/freelancer-dashboard/story/edit" enctype="multipart/form-data" style="text-align:right;margin-top:10px;">
         ${storyQuestions.map((q, i) => {
           const existing = (myStory.answers || []).find((a) => a.question === q);
-          return `<label>${esc(q)}<textarea name="answer${i}" maxlength="800">${esc(existing ? existing.answer : "")}</textarea></label>`;
+          return `<label>${esc(q)}<textarea name="answer${i}" maxlength="800" data-sc-story-q="1">${esc(existing ? existing.answer : "")}</textarea></label>`;
         }).join("")}
+        <div class="muted" data-sc-story-count-note style="font-size:12.5px;margin-top:4px;"></div>
         <label>תמונה לסיפור (להחלפה, לא חובה)<input type="file" name="photo" accept="image/*" /></label>
         <button class="btn" style="margin-top:14px;" type="submit">עדכון הסיפור שלי</button>
       </form>
@@ -5947,14 +6133,15 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <label>תמונת פרופיל ${f.photoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="photo" accept="image/*" /></label>
     <label>לוגו העסק ${f.logoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="logo" id="dashLogoInput" accept="image/*" data-sc-crop="1" /></label>
     <p style="margin:-6px 0 6px;">
-      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="dashLogoInput:dashBusinessName">✨ אין לך לוגו? ליצור אחד עכשיו</button>
-      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו נקי מהאותיות הראשונות של שם העסק שלך, תוך שניות ובחינם - אפשר להחליף בתמונה משלך בכל שלב.</span>
+      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="dashLogoInput:dashBusinessName:dashCategorySelect">✨ אין לך לוגו? ליצור אחד ב-AI</button>
+      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו ב-AI מותאם לשם ולתחום שלך, בחינם - אם השירות החיצוני לא זמין רגע, ניצור לך לוגו זמני במקום. אפשר גם להחליף בתמונה משלך בכל שלב.</span>
       <span id="dashLogoInputGenPreview" style="display:block;margin-top:8px;"></span>
     </p>
     <label>שם העסק<input type="text" name="businessName" id="dashBusinessName" value="${esc(f.businessName)}" required /></label>
     <label>תחום
-    <select name="categoryId" onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat"><option value="">ללא תת-תחום</option>${subcatOptions}</select></label>
+    <select name="categoryId" id="dashCategorySelect" onchange="scUpdateSubcatCheckboxes(this, 'scSubcatBox');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
+    <label>תת-תחום (לא חובה - אפשר לסמן כמה)</label>
+    <div id="scSubcatBox" style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;margin:-6px 0 6px;">${subcatCheckboxes}</div>
     <label>לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
     <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
     <div id="scOtherCategoryBoxDash" style="display:none;">
@@ -6113,6 +6300,39 @@ route("POST", "/account/resend-verification", async (req, res, params, query, ct
   redirect(res, `/account?ok=${encodeURIComponent("שלחנו קישור אימות חדש למייל שלך.")}`);
 });
 
+// דיווח לקוחה, ביוזמתה, שסגרה עסקה עם עצמאית שהכירה דרך SheCan (ר' הפאנל
+// #account-deal-close-section ב-GET /account למעלה) - הכיוון ההפוך מ-POST
+// /freelancer-dashboard/deal/close: שם העצמאית מדווחת וממתינה לאישור הלקוחה; כאן הלקוחה עצמה
+// מדווחת, ונרשם ישר כ-"confirmed" בלי שלב אישור נוסף - כי היא הצד שסומכים עליו כאן. נכנס לאותו
+// מאגר d.deals ונספר באותם מקומות בדיוק (סטטיסטיקות ציבוריות, ייצוא אדמין, טבלת העצמאית עצמה)
+// כמו עסקה שאושרה דרך הזרימה ההפוכה - initiatedBy רק לצורך שקיפות/מעקב, לא משפיע על שום ספירה.
+route("POST", "/account/deal/close", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const businessName = (body.get("businessName") || "").trim();
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  const freelancer = findFreelancerByBusinessNameLoose(d, businessName);
+  if (!freelancer || freelancer.status !== "approved") {
+    return redirect(res, `/account?err=${encodeURIComponent("לא מצאנו עסק אצלנו עם השם הזה - כדאי לבדוק את האיות, או לבחור מהרשימה שנפתחת בזמן ההקלדה.")}#account-deal-close-section`);
+  }
+  d.deals = d.deals || [];
+  const id = db.nextId("deal");
+  const now = new Date().toISOString();
+  d.deals.push({
+    id, freelancerId: freelancer.id, customerId: customer.id, customerName: customer.name,
+    status: "confirmed", initiatedBy: "customer", confirmToken: null,
+    createdAt: now, customerConfirmedAt: now,
+  });
+  db.save();
+  notify(freelancer, {
+    pushTitle: "עסקה נסגרה! 💰", pushBody: `${customer.name || "לקוחה"} סימנה ב-SheCan שסגרתן עסקה יחד.`, url: "/freelancer-dashboard",
+    emailSubject: `עסקה נסגרה עם ${customer.name || "לקוחה"} - SheCan`,
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(freelancer.name || "")},</p><p><strong>${esc(customer.name || "לקוחה")}</strong> סימנה ב-SheCan שסגרתן עסקה יחד. איזה כיף! 🎉</p></div>`,
+  }).catch(() => {});
+  redirect(res, `/account?ok=${encodeURIComponent("תודה שעדכנת אותנו! 💛")}#account-deal-close-section`);
+});
+
 route("POST", "/freelancer-dashboard/story", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
   const d = db.load();
@@ -6126,7 +6346,8 @@ route("POST", "/freelancer-dashboard/story", async (req, res, params, query, ctx
   const answers = storyQuestions
     .map((q, i) => ({ question: q, answer: clip((body.get(`answer${i}`) || "").trim(), 800) }))
     .filter((qa) => qa.answer);
-  if (!answers.length) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("צריך לענות לפחות על שאלה אחת כדי לשלוח את הסיפור.")}`);
+  const storyMin = Math.min(STORY_MIN_ANSWERS, storyQuestions.length);
+  if (answers.length < storyMin) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent(`צריך לענות על לפחות ${storyMin} שאלות כדי לשלוח את הסיפור (ענית כרגע על ${answers.length}).`)}`);
   const id = db.nextId("story");
   d.stories = d.stories || [];
   d.stories.push({
@@ -6164,7 +6385,8 @@ route("POST", "/freelancer-dashboard/story/edit", async (req, res, params, query
   const answers = storyQuestions
     .map((q, i) => ({ question: q, answer: clip((body.get(`answer${i}`) || "").trim(), 800) }))
     .filter((qa) => qa.answer);
-  if (!answers.length) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("צריך לענות לפחות על שאלה אחת.")}`);
+  const storyEditMin = Math.min(STORY_MIN_ANSWERS, storyQuestions.length);
+  if (answers.length < storyEditMin) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent(`צריך להשאיר לפחות ${storyEditMin} תשובות מלאות (יש כרגע ${answers.length}).`)}`);
   story.answers = answers;
   const newPhoto = fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES);
   if (newPhoto) story.photoDataUri = newPhoto;
@@ -6323,6 +6545,7 @@ route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const resolvedCat = resolveCategorySelection(d, body);
   f.categoryId = resolvedCat.categoryId;
   f.subcategoryId = resolvedCat.subcategoryId;
+  f.subcategoryIds = resolvedCat.subcategoryIds;
   recordSubcategorySuggestion(d, body, resolvedCat.categoryId, f.id, f.businessName || f.name || "");
   // Only ever sets the flag to true here - never clears it - so an edit that doesn't touch the
   // subcategory can't accidentally wipe out a still-unreviewed flag from earlier. Clearing only
@@ -6472,8 +6695,10 @@ function sparklineChartSvg(days, values, color) {
 // has real data from whenever that tracking first started; days before that show 0, not a gap.
 // Signup numbers are computed fresh from every customer/freelancer's own createdAt, so those
 // two lines are accurate all the way back, with no such starting point.
-function adminTrendChartsHtml(d) {
-  const DAYS = 30;
+// DAYS defaults to 7 (לפי בקשה מפורשת: "בשבוע האחרון... אם אני רוצה להרחיב אז בחודש האחרון") -
+// ר' טוגל "שבוע אחרון / חודש אחרון" בתוך הפאנל עצמו, שמעביר ?trendRange=7|30 ל-GET /admin.
+function adminTrendChartsHtml(d, rangeDays) {
+  const DAYS = rangeDays === 30 ? 30 : 7;
   const dailyVisits = (d.siteStats && d.siteStats.dailyRealVisits) || {};
   const days = [];
   for (let i = DAYS - 1; i >= 0; i--) {
@@ -6519,10 +6744,16 @@ function adminTrendChartsHtml(d) {
       ${sparklineChartSvg(days, s.values, s.color)}
     </div>`;
   }).join("");
+  const rangeToggleHtml = `
+    <div style="display:flex;gap:8px;justify-content:center;margin-bottom:14px;">
+      <a href="/admin?trendRange=7#trend-charts" class="btn btn-small ${DAYS === 7 ? "" : "btn-outline"}">שבוע אחרון</a>
+      <a href="/admin?trendRange=30#trend-charts" class="btn btn-small ${DAYS === 30 ? "" : "btn-outline"}">חודש אחרון</a>
+    </div>`;
   return `
-  <div class="panel">
+  <div class="panel" id="trend-charts">
     <h3>מגמות יומיות 📈</h3>
-    <p class="muted">30 הימים האחרונים. כל מדד בגרף נפרד ובסקאלה שלו (כדי שמספרים קטנים כמו הרשמות לא "ייעלמו" ליד מספר הכניסות שגדול הרבה יותר) - כך רואים בכל יום אם היתה עליה או ירידה. אפשר לרחף עם העכבר מעל כל נקודה בגרף כדי לראות את התאריך והמספר המדויק.</p>
+    <p class="muted">${DAYS} הימים האחרונים. כל מדד בגרף נפרד ובסקאלה שלו (כדי שמספרים קטנים כמו הרשמות לא "ייעלמו" ליד מספר הכניסות שגדול הרבה יותר) - כך רואים בכל יום אם היתה עליה או ירידה. אפשר לרחף עם העכבר מעל כל נקודה בגרף כדי לראות את התאריך והמספר המדויק.</p>
+    ${rangeToggleHtml}
     ${rows}
   </div>`;
 }
@@ -6560,6 +6791,38 @@ function messageFreelancerButtonHtml(freelancerId, contextLabel, uniqueKey) {
       <input type="hidden" name="context" value="${esc(contextLabel)}" />
       <textarea name="text" maxlength="1000" required placeholder="כתבי כאן את ההודעה שלך..." style="min-height:60px;"></textarea>
       <button class="btn btn-small" style="margin-top:6px;" type="submit">שליחה</button>
+    </form>
+  </span>`;
+}
+// גרסה מקבילה עבור לקוחה עם חשבון רשום (ר' POST /admin/message-customer למטה) - כרגע משמש
+// רק בתור "מכירת יד 2", כי זה הסוג היחיד מבין מאגרי הקהילה עם contactCustomerId אמיתי מלבד
+// giveaway. נכנס למאגר נפרד d.customerAdminMessages (לא d.adminMessages, ששייך לעצמאיות
+// בלבד) כדי לא לערבב בין השניים בשום מקום שכבר משתמש ב-d.adminMessages היום.
+function messageCustomerButtonHtml(customerId, contextLabel, uniqueKey) {
+  const boxId = `scMsgBoxC-${esc(uniqueKey)}`;
+  return `<span class="sc-msg-inline">
+    <button type="button" class="btn btn-small btn-outline" onclick="var b=document.getElementById('${boxId}');b.style.display=(b.style.display==='none'?'block':'none');">💬 שליחת הודעה</button>
+    <form method="post" action="/admin/message-customer" id="${boxId}" style="display:none;margin-top:8px;max-width:360px;">
+      <input type="hidden" name="customerId" value="${esc(customerId)}" />
+      <input type="hidden" name="context" value="${esc(contextLabel)}" />
+      <textarea name="text" maxlength="1000" required placeholder="כתבי כאן את ההודעה שלך..." style="min-height:60px;"></textarea>
+      <button class="btn btn-small" style="margin-top:6px;" type="submit">שליחה</button>
+    </form>
+  </span>`;
+}
+// עבור סוגי מאגר קהילה שנשלחים ללא חשבון מחובר (למשל "המלצות מוצרים" - ר' COMMUNITY_TYPES.product
+// ב-server.js) אין customerId בכלל לשלוח אליו הודעה/התראה באתר - כל מה שיש זה שדה מייל חופשי
+// ואופציונלי שהיא מילאה בטופס עצמו (c.email). אז זה לא "הודעה" עם תיבת דואר באתר כמו למעלה,
+// אלא מייל ישיר בלבד (ר' POST /admin/community/:id/email-submitter) - בלי עותק ב-DB, כי אין
+// למי להציג אותו. אם לא מילאה מייל בכלל, אין שום דרך ליצור איתה קשר מכאן ולכן הכפתור לא מוצג.
+function emailListingSubmitterButtonHtml(listingId, submitterEmail, uniqueKey) {
+  if (!submitterEmail) return `<p class="muted" style="font-size:12px;margin:6px 0 0;">אין כתובת מייל שהוזנה - אי אפשר ליצור איתה קשר מכאן.</p>`;
+  const boxId = `scMailBox-${esc(uniqueKey)}`;
+  return `<span class="sc-msg-inline">
+    <button type="button" class="btn btn-small btn-outline" onclick="var b=document.getElementById('${boxId}');b.style.display=(b.style.display==='none'?'block':'none');">✉️ שליחת מייל</button>
+    <form method="post" action="/admin/community/${esc(listingId)}/email-submitter" id="${boxId}" style="display:none;margin-top:8px;max-width:360px;">
+      <textarea name="text" maxlength="1000" required placeholder="כתבי כאן את ההודעה שלך..." style="min-height:60px;"></textarea>
+      <button class="btn btn-small" style="margin-top:6px;" type="submit">שליחת מייל ל-${esc(submitterEmail)}</button>
     </form>
   </span>`;
 }
@@ -6601,7 +6864,10 @@ route("POST", "/admin/subcategory-suggestion/:id/approve", async (req, res, para
   if (result) {
     s.status = "approved";
     const f = d.freelancers.find((x) => x.id === s.freelancerId);
-    if (f && f.categoryId === s.categoryId && !f.subcategoryId) f.subcategoryId = result.sub.id;
+    if (f && f.categoryId === s.categoryId && !(f.subcategoryIds && f.subcategoryIds.length) && !f.subcategoryId) {
+      f.subcategoryId = result.sub.id;
+      f.subcategoryIds = [result.sub.id];
+    }
   }
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("תת-התחום אושר ונוסף לרשימה!")}#subcategory-suggestions`);
@@ -6639,6 +6905,9 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
   const admin = d.admins.find((a) => a.id === ctx.session.id) || d.admins[0];
+  // טוגל "שבוע אחרון / חודש אחרון" בפאנל "מגמות יומיות" (ר' adminTrendChartsHtml) - כל ערך
+  // אחר מלבד "30" (כולל חסר) נופל חזרה לברירת המחדל 7, לפי בקשה מפורשת.
+  const trendRangeDays = query.get("trendRange") === "30" ? 30 : 7;
   const pendingFreelancers = d.freelancers.filter((f) => f.status === "pending" && !isSnoozed(d, `freelancer:${f.id}`));
   const activeFreelancers = d.freelancers.filter((f) => f.status === "approved");
   const pendingReviews = d.reviews.filter((r) => r.status === "pending" && !isSnoozed(d, `review:${r.id}`));
@@ -6917,7 +7186,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </script>
   </div>
 
-  ${adminTrendChartsHtml(d)}
+  ${adminTrendChartsHtml(d, trendRangeDays)}
 
   <div class="panel">
     <h3>גיבוי נתונים</h3>
@@ -7032,7 +7301,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           ${f.logoDataUri ? `<img src="${f.logoDataUri}" alt="" style="width:90px;height:90px;object-fit:cover;border-radius:10px;flex-shrink:0;" />` : ""}
           <div style="flex:1;min-width:220px;">
             <h4 style="margin:0 0 6px;">${esc(f.businessName)} <span class="muted" style="font-weight:600;">(${esc(f.name)})</span></h4>
-            <p class="muted" style="margin:2px 0;">${esc(catName(d, f.categoryId))}${f.subcategoryId ? ` · ${esc(subcatName(d, f.categoryId, f.subcategoryId))}` : ""} · ${esc(cityName(d, f.cityId))}</p>
+            <p class="muted" style="margin:2px 0;">${esc(catName(d, f.categoryId))}${subcatNames(d, f.categoryId, f.subcategoryIds) ? ` · ${esc(subcatNames(d, f.categoryId, f.subcategoryIds))}` : ""} · ${esc(cityName(d, f.cityId))}</p>
             <p class="muted" style="margin:2px 0;">✉️ ${esc(f.email)} ${f.phone ? `· ☎ ${esc(f.phone)}` : ""} ${f.hasWhatsapp ? "· 💬 יש וואטסאפ" : ""}</p>
             <p class="muted" style="margin:2px 0;">רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"} ${f.offersOnline ? "· 💻 אונליין" : ""} ${f.offersHomeVisit ? "· 🚗 מגיעה עד הבית" : ""}</p>
             ${f.instagram ? `<p class="muted" style="margin:2px 0;">📸 ${esc(f.instagram)}</p>` : ""}
@@ -7725,6 +7994,52 @@ route("POST", "/admin/message-freelancer", async (req, res, params, query, ctx) 
   redirect(res, `/admin?ok=${encodeURIComponent("ההודעה נשלחה ל" + (f.businessName || f.name) + "!")}`);
 });
 
+// גרסה מקבילה עבור לקוחה עם חשבון רשום (ר' messageCustomerButtonHtml למעלה) - כרגע רק מכפתור
+// "שליחת הודעה" ליד פריט ב"מכירת יד 2" (הסוג היחיד במאגרי הקהילה, מלבד מסירות, עם customerId
+// אמיתי). נשמר במאגר נפרד d.customerAdminMessages ומוצג באזור האישי של הלקוחה (ר' GET /account).
+route("POST", "/admin/message-customer", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const customer = d.customers.find((x) => x.id === body.get("customerId"));
+  const text = (body.get("text") || "").trim();
+  if (!customer || !text) {
+    return redirect(res, `/admin?err=${encodeURIComponent("יש לבחור לקוחה ולכתוב הודעה.")}`);
+  }
+  const context = (body.get("context") || "").trim();
+  const pushTitle = context ? `קיבלת הודעה לגבי ${context}` : "הודעה מהנהלת SheCan";
+  const emailSubject = context ? `הודעה לגבי ${context} - SheCan` : "הודעה חדשה מהנהלת SheCan";
+  d.customerAdminMessages = d.customerAdminMessages || [];
+  d.customerAdminMessages.push({ id: db.nextId("customerAdminMessage"), customerId: customer.id, text, context, date: new Date().toISOString(), read: false });
+  db.save();
+  sendPushToUser(customer, { title: pushTitle, body: text.slice(0, 140), url: "/account" }).catch(() => {});
+  if (hasRealEmail(customer)) {
+    sendEmail(customer.email, emailSubject,
+      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(customer.name || "")},</p><p>קיבלת הודעה מהנהלת SheCan${context ? ` לגבי <strong>${esc(context)}</strong>` : ""}:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לראות אותה גם באזור האישי שלך באתר.</p></div>`
+    ).catch(() => {});
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("ההודעה נשלחה ל" + (customer.name || "הלקוחה") + "!")}`);
+});
+
+// עבור פריטים במאגרי הקהילה שנשלחים בלי חשבון מחובר (ר' emailListingSubmitterButtonHtml למעלה)
+// - מייל ישיר לכתובת שהיא מילאה בטופס עצמו, בלי עותק ב-DB ובלי התראה באתר, כי אין לה חשבון/
+// תיבת דואר להציג בו את זה. אם היא לא מילאה מייל, אין שום נתיב יצירת קשר, אז חוסמים כאן גם
+// בצד השרת (לא רק מסתירים את הכפתור בתצוגה).
+route("POST", "/admin/community/:id/email-submitter", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const listing = (d.communityListings || []).find((x) => x.id === params.id);
+  const text = (body.get("text") || "").trim();
+  if (!listing || !listing.email || !text) {
+    return redirect(res, `/admin?err=${encodeURIComponent("אין למי לשלוח - חסרה כתובת מייל או תוכן הודעה.")}`);
+  }
+  await sendEmail(listing.email, `הודעה לגבי "${listing.title}" ב-SheCan`,
+    `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי${listing.contactName ? ` ${esc(listing.contactName)}` : ""},</p><p>קיבלת הודעה מהנהלת SheCan לגבי הפריט שפרסמת, <strong>${esc(listing.title)}</strong>:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p></div>`
+  ).catch(() => {});
+  redirect(res, `/admin?ok=${encodeURIComponent("המייל נשלח!")}`);
+});
+
 route("POST", "/admin/ad-price", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
@@ -8165,6 +8480,11 @@ route("POST", "/admin/story-question/:index/delete", async (req, res, params, qu
   const d = db.load();
   const idx = Number(params.index);
   if (d.settings.storyQuestions && Number.isInteger(idx) && idx >= 0 && idx < d.settings.storyQuestions.length) {
+    // Freelancers need at least STORY_MIN_ANSWERS answered questions to submit a story - don't
+    // let the question bank shrink below that, or submitting a story becomes impossible for everyone.
+    if (d.settings.storyQuestions.length <= STORY_MIN_ANSWERS) {
+      return redirect(res, `/admin?err=${encodeURIComponent(`אי אפשר להוריד מ-${STORY_MIN_ANSWERS} שאלות - עצמאיות צריכות לענות על לפחות ${STORY_MIN_ANSWERS} כדי לשלוח סיפור, אז חייבות להישאר לפחות ${STORY_MIN_ANSWERS} שאלות במאגר.`)}`);
+    }
     d.settings.storyQuestions.splice(idx, 1);
     db.save();
   }
@@ -8224,7 +8544,7 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
       id, name: name || businessName, businessName,
       email: email || `${id}@imported.shecan.co.il`,
       passwordHash: auth.hashPassword(tempPassword),
-      categoryId: category ? category.id : "", subcategoryId: subcategory ? subcategory.id : "", additionalCategoryIds: [], cityId: city ? city.id : "",
+      categoryId: category ? category.id : "", subcategoryId: subcategory ? subcategory.id : "", subcategoryIds: subcategory ? [subcategory.id] : [], additionalCategoryIds: [], cityId: city ? city.id : "",
       phone: phone || "", instagram: instagram || "",
       portfolioUrl: (linkRaw && !isWhatsappLink) ? linkRaw : "",
       hasWhatsapp: isWhatsappLink, availableNow: false,
