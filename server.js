@@ -621,23 +621,21 @@ function findOrCreateSubcategory(d, categoryId, name) {
   category.subcategories.push(sub);
   return { sub, isNew: true };
 }
-// Resolves the category/subcategory a freelancer picked at registration or profile-update
-// time - handles two different "אחר" (Other) escape hatches:
-// (1) categoryId === "__other__" - her field isn't in the top-level category list at all, so
-//     she typed a whole new category (and optionally a subcategory under it).
-// (2) an existing categoryId, but subcategoryId === "__other__" - her top-level field IS one
-//     of the existing categories, she just couldn't find her specific specialty in that
-//     category's subcategory list (added 2026-08-25, per explicit request - previously the
-//     only way to get a brand-new subcategory into the system was via path (1), even when the
-//     category itself already existed).
-// Both paths find-or-create real category/subcategory records from her typed text (reusing an
-// existing one by exact name match rather than creating a near-duplicate), so everything
-// downstream (search, filtering, display) just works with a normal categoryId/subcategoryId
-// and never needs to know "אחר" was involved - a brand-new subcategory shows up in every
-// category/subcategory dropdown site-wide from that point on, exactly like a built-in one.
-// wasCustomSubcategory is true whenever a genuinely NEW subcategory record was created (either
-// path) - the caller uses this to set customSubcategoryPending on the freelancer record, which
-// surfaces a review highlight for Sapir on the admin pending-approvals screen (see /admin GET).
+// Resolves the category/subcategory a freelancer picked at registration or profile-update time.
+// categoryId === "__other__" is still the one remaining "אחר" (Other) escape hatch - her field
+// isn't in the top-level category list at all, so she typed a whole new category (and
+// optionally a brand-new subcategory under it, created live immediately - this is a much
+// bigger/rarer decision than a subcategory tweak, so it's left as-is).
+// A brand-new SUBCATEGORY under an EXISTING category, though, no longer has a live "אחר" escape
+// hatch (removed 2026-08-27, per explicit request) - she can only pick from the category's real
+// existing subcategory list now (or leave it blank), and separately, optionally, write a
+// free-text *recommendation* for a missing one (ר' recordSubcategorySuggestion למטה) that goes
+// to a real admin approval queue instead of appearing live immediately. If a stale/tampered
+// subcategoryId ever comes in that doesn't actually belong to the chosen category, it's
+// silently dropped rather than trusted.
+// wasCustomSubcategory is true only when path (1) (a genuinely new top-level category) created a
+// brand-new subcategory too - the caller uses this to set customSubcategoryPending on the
+// freelancer record, which surfaces a review highlight for Sapir on the admin panel.
 function resolveCategorySelection(d, body) {
   let categoryId = body.get("categoryId");
   let subcategoryId = body.get("subcategoryId") || "";
@@ -653,17 +651,32 @@ function resolveCategorySelection(d, body) {
     } else {
       subcategoryId = "";
     }
-  } else if (subcategoryId === "__other__") {
-    const subName = (body.get("customSubcategoryOnly") || "").trim();
-    if (categoryId && subName) {
-      const result = findOrCreateSubcategory(d, categoryId, subName);
-      subcategoryId = result ? result.sub.id : "";
-      wasCustomSubcategory = !!(result && result.isNew);
-    } else {
-      subcategoryId = "";
-    }
+  } else if (!subcategoriesOf(d, categoryId).some((s) => s.id === subcategoryId)) {
+    subcategoryId = "";
   }
   return { categoryId, subcategoryId, wasCustomSubcategory };
+}
+// "המלצה על תת-תחום חדש" (נוסף 2026-08-27) - הדרך היחידה כיום להציע תת-תחום שלא ברשימה הקיימת.
+// בניגוד למנגנון הישן (ר' resolveCategorySelection למעלה) - זה לא יוצר שום דבר חי מיד, רק
+// שומר המלצה שממתינה לאישור המנהלת (d.subcategorySuggestions ב-db.js). קוראות לזה גם POST
+// /join וגם POST /freelancer-dashboard, אחרי resolveCategorySelection. לא נשמרת המלצה כפולה -
+// לא אם כבר קיים תת-תחום אמיתי באותו שם (אולי בדיוק אושרה המלצה קודמת), ולא אם כבר יש המלצה
+// תלויה זהה (אותה קטגוריה + אותו שם) מעצמאית אחרת, כדי לא להציף את המנהלת בכפילויות.
+function recordSubcategorySuggestion(d, body, categoryId, freelancerId, freelancerLabel) {
+  const name = clip((body.get("subcategorySuggestion") || "").trim(), 80);
+  if (!name || !categoryId || categoryId === "__other__") return;
+  const category = d.categories.find((c) => c.id === categoryId);
+  if (!category) return;
+  const alreadyExists = (category.subcategories || []).some((s) => s.name.trim().toLowerCase() === name.toLowerCase());
+  if (alreadyExists) return;
+  d.subcategorySuggestions = d.subcategorySuggestions || [];
+  const alreadyPending = d.subcategorySuggestions.some((s) => s.status === "pending" && s.categoryId === categoryId && s.name.trim().toLowerCase() === name.toLowerCase());
+  if (alreadyPending) return;
+  d.subcategorySuggestions.push({
+    id: db.nextId("subcategorySuggestion"),
+    categoryId, name, freelancerId, freelancerLabel,
+    status: "pending", createdAt: new Date().toISOString(),
+  });
 }
 
 // "כמה שנים את בתחום?" - required at signup (and separately for every additional field she
@@ -1560,7 +1573,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update87 - 2026-08-27 - \"המשך טיפול\" בכל תורי האישור בניהול + חיפוש חכם (גרסה חינמית, ללא AI חיצוני) + שיתוף פרקי תהילים ב\"בלב אחד\"";
+const DEPLOY_MARKER = "update88 - 2026-08-27 - הרשמת עצמאית: תת-תחום רק מרשימה קיימת + המלצה על תת-תחום חדש שממתינה לאישור מנהלת";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -4914,7 +4927,6 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${p.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
   const subcatOptionsForPrefill = (p.categoryId && p.categoryId !== "__other__")
     ? subcategoriesOf(d, p.categoryId).map((s) => `<option value="${s.id}" ${p.subcategoryId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")
-      + `<option value="__other__" ${p.subcategoryId === "__other__" ? "selected" : ""}>אחר - תת-התחום שלי לא ברשימה</option>`
     : "";
   const filesNote = isRetry ? ` <span style="color:var(--danger);font-weight:700;">(שימי לב - יש לצרף שוב, קבצים לא נשמרים אוטומטית)</span>` : "";
   const body = `
@@ -4957,10 +4969,9 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     ${isRetry ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
     <label>🌸 מה התחום שלך?
     <select name="categoryId" required onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBox');"><option value="">בחרי תחום</option>${catOptions}<option value="__other__" ${p.categoryId === "__other__" ? "selected" : ""}>אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>🌸 תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat" onchange="scToggleOtherSubcategory(this, 'scOtherSubcategoryBox')">${p.categoryId && p.categoryId !== "__other__" ? subcatOptionsForPrefill : '<option value="">בחרי קודם תחום</option>'}</select></label>
-    <div id="scOtherSubcategoryBox" style="display:${p.subcategoryId === "__other__" ? "block" : "none"};">
-      <label>🌸 מה שם תת-התחום שלך?<input type="text" name="customSubcategoryOnly" value="${esc(p.customSubcategoryOnly || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
-    </div>
+    <label>🌸 תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat">${p.categoryId && p.categoryId !== "__other__" ? subcatOptionsForPrefill : '<option value="">בחרי קודם תחום</option>'}</select></label>
+    <label>🌸 לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" value="${esc(p.subcategorySuggestion || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
     <div id="scOtherCategoryBox" style="display:${p.categoryId === "__other__" ? "block" : "none"};">
       <label>🌸 מה שם התחום שלך?<input type="text" name="customCategory" value="${esc(p.customCategory || "")}" placeholder="למשל: עיצוב אירועים" /></label>
       <label>🌸 תת-תחום (לא חובה)<input type="text" name="customSubcategory" value="${esc(p.customSubcategory || "")}" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
@@ -5081,7 +5092,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       name: body.get("name"), businessName: body.get("businessName"), email: body.get("email"),
       categoryId: body.get("categoryId"), subcategoryId: body.get("subcategoryId"),
       customCategory: body.get("customCategory"), customSubcategory: body.get("customSubcategory"),
-      customSubcategoryOnly: body.get("customSubcategoryOnly"),
+      subcategorySuggestion: body.get("subcategorySuggestion"),
       yearsInField: body.get("yearsInField"), cityId: body.get("cityId"), phone: body.get("phone"),
       hasWhatsapp: body.get("hasWhatsapp") === "1", offersOnline: body.get("offersOnline") === "1",
       offersHomeVisit: body.get("offersHomeVisit") === "1", instagram: body.get("instagram"),
@@ -5122,6 +5133,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
     .filter(Boolean);
   const { categoryId, subcategoryId, wasCustomSubcategory } = resolveCategorySelection(d, body);
+  recordSubcategorySuggestion(d, body, categoryId, id, body.get("businessName") || body.get("name") || "");
   const additionalListings = [0, 1, 2].map((i) => readExtraListingFromBody(d, body, "extra", i)).filter(Boolean);
   db.load().freelancers.push({
     id, name: body.get("name"), businessName: body.get("businessName"), email: body.get("email"),
@@ -5706,8 +5718,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const f = d.freelancers.find((x) => x.id === ctx.session.id);
   const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved");
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${c.id === f.categoryId ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const subcatOptions = subcategoriesOf(d, f.categoryId).map((s) => `<option value="${s.id}" ${s.id === f.subcategoryId ? "selected" : ""}>${esc(s.name)}</option>`).join("")
-    + `<option value="__other__">אחר - תת-התחום שלי לא ברשימה</option>`;
+  const subcatOptions = subcategoriesOf(d, f.categoryId).map((s) => `<option value="${s.id}" ${s.id === f.subcategoryId ? "selected" : ""}>${esc(s.name)}</option>`).join("");
   const statusLabel = paymentStatusLabel(f.paymentStatus);
   const matchingCustomer = d.customers.find((c) => c.email === f.email);
   const profileUrl = `${getOrigin(req)}/freelancer/${f.id}`;
@@ -5883,10 +5894,9 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <label>שם העסק<input type="text" name="businessName" value="${esc(f.businessName)}" required /></label>
     <label>תחום
     <select name="categoryId" onchange="scUpdateSubcats(this, document.getElementById('scSubcat'), '');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat" onchange="scToggleOtherSubcategory(this, 'scOtherSubcategoryBoxDash')"><option value="">ללא תת-תחום</option>${subcatOptions}</select></label>
-    <div id="scOtherSubcategoryBoxDash" style="display:none;">
-      <label>מה שם תת-התחום שלך?<input type="text" name="customSubcategoryOnly" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
-    </div>
+    <label>תת-תחום (לא חובה)<select name="subcategoryId" id="scSubcat"><option value="">ללא תת-תחום</option>${subcatOptions}</select></label>
+    <label>לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
     <div id="scOtherCategoryBoxDash" style="display:none;">
       <label>מה שם התחום שלך?<input type="text" name="customCategory" placeholder="למשל: עיצוב אירועים" /></label>
       <label>תת-תחום (לא חובה)<input type="text" name="customSubcategory" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
@@ -6249,6 +6259,7 @@ route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const resolvedCat = resolveCategorySelection(d, body);
   f.categoryId = resolvedCat.categoryId;
   f.subcategoryId = resolvedCat.subcategoryId;
+  recordSubcategorySuggestion(d, body, resolvedCat.categoryId, f.id, f.businessName || f.name || "");
   // Only ever sets the flag to true here - never clears it - so an edit that doesn't touch the
   // subcategory can't accidentally wipe out a still-unreviewed flag from earlier. Clearing only
   // happens explicitly via the admin rename/dismiss actions (see customSubcategoryNoteHtml).
@@ -6489,6 +6500,33 @@ route("POST", "/admin/unsnooze", async (req, res, params, query, ctx) => {
   redirect(res, `/admin?ok=${encodeURIComponent("הוחזר לתור האישורים הרגיל.")}#pending-approvals`);
 });
 
+// אישור המלצה לתת-תחום חדש (ר' recordSubcategorySuggestion למעלה) - יוצר בפועל תת-תחום אמיתי
+// דרך findOrCreateSubcategory (מופיע מאותו רגע בכל התפריטים באתר), ואם העצמאית ששלחה את
+// ההמלצה עדיין בלי תת-תחום נבחר - קושר אותו אליה אוטומטית כטובה קטנה (לא דורס תת-תחום שהיא
+// כבר בחרה בינתיים).
+route("POST", "/admin/subcategory-suggestion/:id/approve", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const s = (d.subcategorySuggestions || []).find((x) => x.id === params.id);
+  if (!s) return redirect(res, "/admin");
+  const result = findOrCreateSubcategory(d, s.categoryId, s.name);
+  if (result) {
+    s.status = "approved";
+    const f = d.freelancers.find((x) => x.id === s.freelancerId);
+    if (f && f.categoryId === s.categoryId && !f.subcategoryId) f.subcategoryId = result.sub.id;
+  }
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("תת-התחום אושר ונוסף לרשימה!")}#subcategory-suggestions`);
+});
+route("POST", "/admin/subcategory-suggestion/:id/reject", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const s = (d.subcategorySuggestions || []).find((x) => x.id === params.id);
+  if (s) s.status = "rejected";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("ההמלצה נדחתה.")}#subcategory-suggestions`);
+});
+
 // ----- Admin -----
 route("GET", "/admin", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
@@ -6531,6 +6569,9 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // "המשך טיפול" - כל הפריטים שהוזזו הצידה מכל תור אישור (ר' isSnoozed/snoozeButtonHtml
   // למעלה) - ממוינים מהישן לחדש כדי שמה שמחכה הכי הרבה זמן יעלה קודם.
   const snoozedItems = (d.adminSnoozed || []).slice().sort((a, b) => new Date(a.snoozedAt) - new Date(b.snoozedAt));
+  // "המלצות לתת-תחום חדש" (ר' recordSubcategorySuggestion למעלה) - עצמאיות ממליצות, לא יוצרות
+  // תת-תחום חי בעצמן יותר - כל המלצה תלויה מחכה כאן לאישור/דחייה מפורש.
+  const pendingSubcategorySuggestions = (d.subcategorySuggestions || []).filter((s) => s.status === "pending" && !isSnoozed(d, `subcategorySuggestion:${s.id}`));
   const pendingListings = [];
   const approvedListings = [];
   d.freelancers.forEach((f) => {
@@ -6648,6 +6689,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <a href="#followup" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת המשך הטיפול">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${snoozedItems.length}</div>
         <div class="muted" style="margin-top:4px;">🕒 בהמשך טיפול ↓</div>
+      </a>
+      <a href="#subcategory-suggestions" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר להמלצות לתת-תחום חדש">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingSubcategorySuggestions.length}</div>
+        <div class="muted" style="margin-top:4px;">🆕 המלצות תת-תחום ↓</div>
       </a>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.totalVisits || 0}</div>
@@ -6827,6 +6872,23 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         </div>
         <form method="post" action="/admin/unsnooze"><input type="hidden" name="key" value="${esc(s.key)}" /><button class="btn btn-small" type="submit">↩️ החזרה לתור האישורים</button></form>
       </div>`).join("") : `<p class="muted">אין כרגע כלום בהמשך טיפול - השולחן נקי.</p>`}
+  </div>
+
+  <div class="panel" id="subcategory-suggestions" style="scroll-margin-top:90px;" data-badge="${pendingSubcategorySuggestions.length}">
+    <h3>🆕 המלצות לתת-תחום חדש (${pendingSubcategorySuggestions.length})</h3>
+    <p class="muted">עצמאיות שלא מצאו תת-תחום מתאים ברשימה יכולות רק להמליץ - זה לא נוסף אוטומטית, ורק אישור כאן יוצר אותו בפועל ומוסיף אותו לכל התפריטים באתר.</p>
+    ${pendingSubcategorySuggestions.length ? pendingSubcategorySuggestions.map((s) => `
+      <div class="panel" style="background:var(--cream);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;">"${esc(s.name)}" <span class="muted" style="font-weight:600;">(בתחום ${esc(catName(d, s.categoryId))})</span></div>
+          <div class="muted" style="font-size:12px;">המלצה מאת: ${esc(s.freelancerLabel || "-")} · ${esc(new Date(s.createdAt).toLocaleDateString("he-IL"))}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <form method="post" action="/admin/subcategory-suggestion/${s.id}/approve"><button class="btn btn-small" type="submit">✓ אישור והוספה</button></form>
+          <form method="post" action="/admin/subcategory-suggestion/${s.id}/reject"><button class="btn btn-small btn-outline" type="submit">✕ דחייה</button></form>
+          ${snoozeButtonHtml(`subcategorySuggestion:${s.id}`, "subcategorySuggestion", `המלצה לתת-תחום: "${s.name}"`)}
+        </div>
+      </div>`).join("") : `<p class="muted">אין כרגע המלצות ממתינות.</p>`}
   </div>
 
   <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;" data-badge="${pendingFreelancers.length}">

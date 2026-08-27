@@ -1643,16 +1643,9 @@ function scUpdateSubcats(catSelect, subSelect, currentValue, emptyLabel){
     if (s.id === currentValue) opt.selected = true;
     subSelect.appendChild(opt);
   });
-  // "אחר" here is only meaningful once a real (already-existing) category is chosen - not the
-  // top-level "__other__" category itself, which has its own separate free-text flow - and
-  // lets her add a brand-new subcategory even though her top-level category already exists.
-  if (catSelect.value && catSelect.value !== "__other__") {
-    var optOther = document.createElement("option");
-    optOther.value = "__other__";
-    optOther.textContent = "אחר - תת-התחום שלי לא ברשימה";
-    if (currentValue === "__other__") optOther.selected = true;
-    subSelect.appendChild(optOther);
-  }
+  // אין יותר אופציית "אחר" בתפריט תת-התחום עצמו (הוסרה 2026-08-27, לפי בקשה מפורשת) - היא
+  // הייתה יוצרת תת-תחום חדש חי מיד, ועכשיו הדרך היחידה להציע תת-תחום חדש היא שדה טקסט נפרד
+  // "המלצה על תת-תחום" שממתין לאישור מנהלת (ר' subcategorySuggestion ב-server.js).
 }
 function scToggleOtherSubcategory(select, boxId){
   var box = document.getElementById(boxId);

@@ -326,6 +326,23 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // /community/tehillim. מחיקה ע"י הכותבת (customerId) או אדמין בלבד.
     // { id, customerId, text, createdAt }
     tehillimSalvationStories: [],
+    // "המשך טיפול" (נוסף 2026-08-26) - רשימת "מפתחות" של פריטים בתורי האישור השונים (עצמאית/
+    // ביקורת/סיפור/שאלת זירה/התייעצות/תחום נוסף/פריט מאגר קהילה) שהמנהלת בחרה להזיז הצידה
+    // ולטפל בהם מאוחר יותר - ר' isSnoozed/snoozeButtonHtml ב-server.js. key מזהה את הרשומה
+    // המקורית (למשל "freelancer:42"), ה-status האמיתי של הרשומה לא משתנה בכלל - זו רק "מסננת
+    // תצוגה" שמסתירה אותה מהתור עד שהמנהלת לוחצת "החזרה לתור האישורים" (POST /admin/unsnooze).
+    // { key, itemType, itemLabel, snoozedAt }
+    adminSnoozed: [],
+    // "המלצות לתת-תחום חדש" (נוסף 2026-08-27) - עצמאית שנרשמת/מעדכנת פרופיל ולא מוצאת תת-תחום
+    // מתאים ברשימה הקיימת יכולה רק "להמליץ" על תת-תחום חדש בטופס (ר' subcategorySuggestion
+    // ב-body של POST /join ו-POST /freelancer-dashboard) - זה לא יוצר תת-תחום חי מיד כמו
+    // שהיה קודם, אלא רק רשומה כאן שממתינה לאישור המנהלת. אישור (POST /admin/subcategory-
+    // suggestion/:id/approve) יוצר בפועל תת-תחום אמיתי דרך findOrCreateSubcategory (וקושר
+    // אותו לעצמאית ששלחה את ההמלצה, אם היא עדיין בלי תת-תחום), ורק מאותו רגע הוא מופיע בכל
+    // התפריטים באתר. status: "pending" | "approved" | "rejected" (לא נמחק גם אחרי דחייה, כמו
+    // שאר תורי האישור באתר - נשאר להיסטוריה).
+    // { id, categoryId, name, freelancerId, freelancerLabel, status, createdAt }
+    subcategorySuggestions: [],
     // Each main category can have subcategories, so an area like "יופי וטיפוח" can be
     // broken down into "מאפרת כלות וערב", "מניקוריסטית ולק ג'ל" וכו'. A freelancer picks
     // a main category (required) and, if that category has subcategories, an optional
@@ -413,6 +430,8 @@ function migrate(data) {
   if (!Array.isArray(data.tehillimBooks)) { data.tehillimBooks = []; changed = true; }
   if (!Array.isArray(data.tehillimNames)) { data.tehillimNames = []; changed = true; }
   if (!Array.isArray(data.tehillimSalvationStories)) { data.tehillimSalvationStories = []; changed = true; }
+  if (!Array.isArray(data.adminSnoozed)) { data.adminSnoozed = []; changed = true; }
+  if (!Array.isArray(data.subcategorySuggestions)) { data.subcategorySuggestions = []; changed = true; }
   // מוודא ש-kabbalot תמיד קיים כמערך על כל רשומת שם ישנה (הגנה זהה לזו שמעל, לרמה מקוננת).
   (data.tehillimNames || []).forEach((n) => { if (!Array.isArray(n.kabbalot)) { n.kabbalot = []; changed = true; } });
   // מוסיף claimed לכל יחידה ישנה שנוצרה לפני שהשדה הזה נוסף (2026-08-26, כשנפתחה האפשרות
