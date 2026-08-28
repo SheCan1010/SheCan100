@@ -1628,7 +1628,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update100 - 2026-08-27 - עצמאית יכולה לסמן כמה תתי-תחומים באותו תחום (בהרשמה ובעריכת פרופיל)";
+const DEPLOY_MARKER = "update104 - 2026-08-27 - פאנל \"מגמות יומיות\" מקבל טבלת מספרים מדויקים ליד הגרף (כניסות/עצמאיות/לקוחות לכל יום)";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -1798,7 +1798,22 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </div>
       </section>` : ""}
   `;
-  sendHtml(res, 200, page({ title: "בית", session: ctx.session, body, query }));
+  sendHtml(res, 200, page({
+    title: "קהילת העצמאיות בישראל - מצאי בעלת עסק לפי תחום ועיר",
+    session: ctx.session, body, query,
+    description: "SheCan - כל העסקים, כל התחומים, במקום אחד. מצאי בעלת עסק עצמאית לפי תחום ועיר, קבלי הטבה בלעדית וסגרי איתה עסקה ישירות באתר.",
+    canonicalUrl: `${getOrigin(req)}/`,
+    ogImage: `${getOrigin(req)}/icons/icon-512.png`,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "SheCan",
+      alternateName: "SheCan - קהילת העצמאיות",
+      url: `${getOrigin(req)}/`,
+      description: "כל העסקים, כל התחומים, במקום אחד - קהילת העצמאיות של ישראל.",
+      inLanguage: "he",
+    },
+  }));
 });
 
 // ----- חיפוש חכם (נוסף 2026-08-26, הוחלף לגרסה חינמית ללא AI חיצוני ב-2026-08-27) -----
@@ -2037,7 +2052,32 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       <p id="scNoLiveMatch" class="muted" style="text-align:center;display:none;">אין כרגע עצמאית שמתאימה לזה... נסי לשנות קצת את החיפוש.</p>
       ${category ? `<p class="muted" style="text-align:center;margin-top:18px;">לא מצאת בדיוק את מי שאת מחפשת? <a href="/service-requests?category=${category}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום הזה יוכלו לפנות אלייך.</p>` : ""}
   `;
-  sendHtml(res, 200, page({ title: "חיפוש", session: ctx.session, body, query }));
+  // כותרת/תיאור/canonical דינמיים לפי הסינון (נוסף 2026-08-27, לפי בקשה מפורשת לשיפור הדירוג
+  // בגוגל) - עמוד "תחום X בעיר Y" ממוקד וברור לגוגל שווה הרבה יותר מ"חיפוש" גנרי לכל
+  // הקומבינציות. ה-canonical במכוון מתעלם מ-q/ai/sortQuality/homeVisit (טקסט חופשי ומיון) -
+  // כל אלה מציגים תת-קבוצה של אותה תוצאה בסיסית, ולא כדאי לפזר את "משקל" הדירוג בין המון
+  // כתובות כמעט-זהות; העמוד הנקי (תחום+תת-תחום+עיר) הוא זה שאמור להצטבר ולהיות מדורג.
+  const searchCatName = category ? catName(d, category) : "";
+  const searchSubName = (category && subcategory) ? subcatName(d, category, subcategory) : "";
+  const searchCityName = city ? cityName(d, city) : "";
+  let searchTitle = "חיפוש עצמאיות לפי תחום ועיר";
+  if (searchSubName || searchCatName) {
+    searchTitle = `${searchSubName || searchCatName}${searchCityName ? ` ב${searchCityName}` : ""} - חיפוש עצמאיות`;
+  } else if (searchCityName) {
+    searchTitle = `עצמאיות ב${searchCityName} - חיפוש`;
+  }
+  const searchDescription = (searchCatName || searchCityName)
+    ? `מחפשת ${searchSubName || searchCatName || "עצמאית"}${searchCityName ? ` ב${searchCityName}` : ""}? מצאי אותה ב-SheCan - כרטיסיות עסק, ביקורות אמיתיות והטבה בלעדית לכל עצמאית.`
+    : "חפשי עצמאיות לפי תחום ועיר, קבלי הטבה בלעדית וסגרי עסקה ישירות - הכל במקום אחד ב-SheCan.";
+  const canonicalParams = new URLSearchParams();
+  if (category) canonicalParams.set("category", category);
+  if (category && subcategory) canonicalParams.set("subcategory", subcategory);
+  if (city) canonicalParams.set("city", city);
+  const searchCanonical = `${getOrigin(req)}/search${canonicalParams.toString() ? `?${canonicalParams.toString()}` : ""}`;
+  sendHtml(res, 200, page({
+    title: searchTitle, session: ctx.session, body, query,
+    description: searchDescription, canonicalUrl: searchCanonical,
+  }));
 });
 
 // מקבל את הטקסט החופשי מתיבת "חיפוש חכם", מפרש אותו בעצמנו (ר' smartSearchHeuristic למעלה -
@@ -2065,43 +2105,6 @@ route("POST", "/search/ai", async (req, res, params, query, ctx) => {
   if (f.keywords) params2.set("q", f.keywords);
   params2.set("ai", "1");
   redirect(res, `/search?${params2.toString()}`);
-});
-
-// ----- יצירת לוגו ב-AI (חינמי, ללא מפתח/הרשמה) -----
-// לפי בקשה מפורשת של שפיר אחרי שהמונוגרם המקומי (ר' scDrawGeneratedLogo ב-layout.js, עדיין
-// קיים כרשת ביטחון) לא נראה לה מספיק מעניין/יפה - זה שירות ציבורי חיצוני וחינמי לגמרי
-// (image.pollinations.ai) שלא דורש ממנה שום הרשמה, מפתח API או תשלום. חשוב: אין מפתח = אין
-// גם הבטחת זמינות/מהירות (SLA) מהצד השני, אז יש כאן טיים-אאוט קצר וכל כשל (טיים-אאוט, סטטוס
-// לא תקין, תגובה שהיא לא תמונה) מוחזר כשגיאה ברורה - כדי שקוד הצד-לקוח (scSetupLogoGenerator
-// ב-layout.js) יידע ליפול חזרה אוטומטית למונוגרם המקומי, שתמיד עובד גם אם השירות החיצוני
-// למטה איטי/נופל/חסום - עצמאית שממלאת טופס הרשמה אף פעם לא צריכה להישאר תקועה בלי שום לוגו.
-// "no text/letters/words" מפורש בפרומפט כי מודלים ליצירת תמונות (כולל זה) כמעט תמיד מציירים
-// טקסט מטושטש ולא קריא - במיוחד עברית - אז עדיף אייקון/סמל נקי בלי ניסיון "לצייר" את השם.
-function buildAiLogoPrompt(businessName, categoryName) {
-  const subject = categoryName ? `${categoryName} small business` : "small business";
-  return `minimalist elegant logo emblem icon for a ${subject} named "${businessName}", flat vector illustration, soft dusty rose and cream color palette, clean modern feminine style, circular badge, professional graphic design, high quality, no text, no letters, no words, no writing, no typography, white background`;
-}
-route("GET", "/api/generate-logo-ai", async (req, res, params, query, ctx) => {
-  const businessName = clip((query.get("businessName") || "עסק").trim(), 60) || "עסק";
-  const categoryName = clip((query.get("category") || "").trim(), 40);
-  const seedParam = Number(query.get("seed"));
-  const seed = Number.isFinite(seedParam) ? seedParam : Math.floor(Math.random() * 100000);
-  const prompt = buildAiLogoPrompt(businessName, categoryName);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=640&height=640&seed=${seed}&nologo=true`;
-  try {
-    const upstream = await fetch(url, { signal: AbortSignal.timeout(25000) });
-    const contentType = upstream.headers.get("content-type") || "";
-    if (!upstream.ok || !contentType.startsWith("image/")) {
-      throw new Error(`upstream responded ${upstream.status} (${contentType})`);
-    }
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-store", "Content-Length": buf.length });
-    res.end(buf);
-  } catch (e) {
-    console.warn("[generate-logo-ai] upstream failed, client will fall back to local monogram:", e.message);
-    res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("AI logo service unavailable");
-  }
 });
 
 // ----- Freelancer profile -----
@@ -2254,7 +2257,37 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     </div>
   </div>` : ""}
   `;
-  sendHtml(res, 200, page({ title: f.businessName || f.name, session: ctx.session, body, query }));
+  // SEO לעמוד הפרופיל הציבורי (נוסף 2026-08-27, לפי בקשה מפורשת) - זה עמוד הכרטיסייה, הכי הרבה
+  // תנועה מגוגל צפויה לנחות בדיוק כאן. כותרת/תיאור עשירים בתחום+עיר (לא רק שם עסק), ו-JSON-LD
+  // מסוג LocalBusiness עם aggregateRating (כשיש ביקורות) - זה בדיוק המנגנון שגוגל משתמש בו כדי
+  // להציג כוכבי דירוג ישירות בתוצאות החיפוש (ר' Google Rich Results), מה שמעלה מאוד את אחוז
+  // ההקלקה גם בלי לשנות את הדירוג עצמו.
+  const profileCatLabel = subcatNames(d, f.categoryId, f.subcategoryIds) || catName(d, f.categoryId);
+  const profileCityLabel = f.cityId ? cityName(d, f.cityId) : "";
+  const profileDescription = clip((f.description || "").trim(), 160) ||
+    `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}. ${f.dealText ? `הטבה: ${f.dealText}. ` : ""}מצאי עוד עצמאיות ב-SheCan.`;
+  const profileTitle = `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}`;
+  const profileCanonical = `${getOrigin(req)}/freelancer/${f.id}`;
+  const profileAvatar = avatarUri(f, d);
+  const profileImageAbs = (profileAvatar && !profileAvatar.startsWith("data:")) ? `${getOrigin(req)}${profileAvatar}` : null;
+  const profileJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    name: f.businessName || f.name,
+    description: profileDescription,
+    url: profileCanonical,
+    ...(profileImageAbs ? { image: profileImageAbs } : {}),
+    ...(f.phone ? { telephone: f.phone } : {}),
+    ...(profileCityLabel ? { address: { "@type": "PostalAddress", addressLocality: profileCityLabel, addressCountry: "IL" } } : {}),
+    ...(profileReviewCount > 0 && profileAvgRating !== null ? {
+      aggregateRating: { "@type": "AggregateRating", ratingValue: Number(profileAvgRating.toFixed(1)), reviewCount: profileReviewCount },
+    } : {}),
+  };
+  sendHtml(res, 200, page({
+    title: profileTitle, session: ctx.session, body, query,
+    description: profileDescription, canonicalUrl: profileCanonical,
+    ogImage: profileImageAbs || undefined, jsonLd: profileJsonLd,
+  }));
 });
 
 // A freelancer's additional listing gets its own detail page - name/category/logo/gallery/
@@ -2836,15 +2869,13 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
   const currentFreelancer = isFreelancer ? d.freelancers.find((f) => f.id === ctx.session.id) : null;
   const origin = getOrigin(req);
 
-  // Record that this account visited the arena just now, so the "🥊 הזירה" nav badge (see
-  // nav() in layout.js) knows not to flag any poll published before this moment as "new" for
-  // her anymore. Only logged-in customers/freelancers get tracked - matches every other
-  // account-based badge on the site (unread chat, admin pending count, etc).
-  if (isCustomer || isFreelancer) {
-    d.arenaLastSeen = d.arenaLastSeen || {};
-    d.arenaLastSeen[`${ctx.session.role}:${ctx.session.id}`] = new Date().toISOString();
-    db.save();
-  }
+  // הוסר מכאן 2026-08-27 לפי בקשה מפורשת - עד עכשיו רק הכניסה לעמוד /arena (בלי קשר לאיזו
+  // לשונית היא בכלל פתחה) כבר סימנה הכל כ"נראה" ומיד ניקתה את התג המספרי ליד "🥊 הזירה"
+  // בתפריט, למרות שאף אחת מ-3 הלשוניות לא פתוחה כברירת מחדל (ר' scArenaShowTab ב-layout.js -
+  // "nothing is open by default") - כלומר הלקוחה יכלה בכלל לא להגיע ללשונית "מה דעתך?" ועדיין
+  // התג נעלם. הסימון כ"נראה" עבר לקרות רק כשהיא באמת פותחת את הלשונית עם הסקרים (ר' קריאת ה-
+  // fetch ל-POST /arena/mark-seen בתוך scArenaShowTab), או כשהיא מגיעה ישירות לסקר ספציפי
+  // (ר' GET /arena/poll/:id למטה, שלא השתנה).
 
   // ---- Section 1: אתן שואלות, המומחיות עונות ----
   const catOptions = d.categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
@@ -3040,6 +3071,23 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
   </div>
   `;
   sendHtml(res, 200, page({ title: "הזירה", session: ctx.session, body, query, noSidebars: true }));
+});
+
+// נוסף 2026-08-27 לפי בקשה מפורשת - מסמנת "נראה" רק כשהיא באמת פתחה את לשונית הסקרים בזירה
+// (ר' ה-fetch ל-scArenaShowTab ב-layout.js), במקום שזה יקרה אוטומטית סתם מהכניסה ל-/arena.
+// ראוט קליל בכוונה - שום דבר מלבד לחתום את הזמן, ותמיד עונה 204 כדי שקריאת ה-fetch בצד
+// הלקוח (fire-and-forget, בלי לחכות לתשובה) לעולם לא תיכשל בצורה שתפריע לחוויה שלה.
+route("POST", "/arena/mark-seen", async (req, res, params, query, ctx) => {
+  const isCustomer = requireRole(ctx.session, "customer");
+  const isFreelancer = requireRole(ctx.session, "freelancer");
+  if (isCustomer || isFreelancer) {
+    const d = db.load();
+    d.arenaLastSeen = d.arenaLastSeen || {};
+    d.arenaLastSeen[`${ctx.session.role}:${ctx.session.id}`] = new Date().toISOString();
+    db.save();
+  }
+  res.writeHead(204);
+  res.end();
 });
 
 route("POST", "/arena/ask", async (req, res, params, query, ctx) => {
@@ -5109,11 +5157,6 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" id="joinLogoInput" accept="image/*" data-sc-crop="1" /></label>
-    <p style="margin:-6px 0 6px;">
-      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="joinLogoInput:joinBusinessName:joinCategorySelect">✨ אין לך לוגו? ליצור אחד ב-AI</button>
-      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו ב-AI מותאם לשם ולתחום שלך, בחינם - אם השירות החיצוני לא זמין רגע, ניצור לך לוגו זמני במקום. אפשר גם להחליף בתמונה משלך בכל שלב.</span>
-      <span id="joinLogoInputGenPreview" style="display:block;margin-top:8px;"></span>
-    </p>
     <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך${filesNote}
     <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
     <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
@@ -6132,11 +6175,6 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ${avatarUri(f) ? `<div style="margin-bottom:10px;">${photoOrInitials(avatarUri(f), f.businessName, "profile-photo")}</div>` : ""}
     <label>תמונת פרופיל ${f.photoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="photo" accept="image/*" /></label>
     <label>לוגו העסק ${f.logoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="logo" id="dashLogoInput" accept="image/*" data-sc-crop="1" /></label>
-    <p style="margin:-6px 0 6px;">
-      <button type="button" class="btn btn-small btn-outline" data-sc-generate-logo="dashLogoInput:dashBusinessName:dashCategorySelect">✨ אין לך לוגו? ליצור אחד ב-AI</button>
-      <span class="muted" style="font-size:12.5px;display:block;margin-top:4px;">יוצר לך לוגו ב-AI מותאם לשם ולתחום שלך, בחינם - אם השירות החיצוני לא זמין רגע, ניצור לך לוגו זמני במקום. אפשר גם להחליף בתמונה משלך בכל שלב.</span>
-      <span id="dashLogoInputGenPreview" style="display:block;margin-top:8px;"></span>
-    </p>
     <label>שם העסק<input type="text" name="businessName" id="dashBusinessName" value="${esc(f.businessName)}" required /></label>
     <label>תחום
     <select name="categoryId" id="dashCategorySelect" onchange="scUpdateSubcatCheckboxes(this, 'scSubcatBox');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
@@ -6749,12 +6787,36 @@ function adminTrendChartsHtml(d, rangeDays) {
       <a href="/admin?trendRange=7#trend-charts" class="btn btn-small ${DAYS === 7 ? "" : "btn-outline"}">שבוע אחרון</a>
       <a href="/admin?trendRange=30#trend-charts" class="btn btn-small ${DAYS === 30 ? "" : "btn-outline"}">חודש אחרון</a>
     </div>`;
+  // טבלת מספרים מתחת לגרף (נוסף 2026-08-27, לפי בקשה מפורשת: "ממש במספרים... מספר על כל יום
+  // בנפרד") - הגרף למעלה נשאר כמו שהיה (מגמה כללית + hover לערך מדויק בנקודה), אבל היא רצתה
+  // גם לראות את המספרים המדויקים ישר על המסך בלי לרחף עם העכבר על כל נקודה בנפרד - במיוחד
+  // בנייד, שבו aין ממש "hover". אותם המספרים בדיוק כמו בגרף (days/dailyVisits/וכו' למעלה),
+  // רק בתצוגת טבלה - היום ראשון (הכי חדש) ולא הכי ישן, כדי שהיא לא תצטרך לגלול לסוף כדי לראות
+  // את אתמול/היום.
+  const dmy = (key) => key.slice(5).split("-").reverse().join(".");
+  const todayKeyForTable = new Date().toISOString().slice(0, 10);
+  const tableRows = days.slice().reverse().map((day) => `
+    <tr>
+      <td>${esc(dmy(day))}${day === todayKeyForTable ? " (היום)" : ""}</td>
+      <td>${dailyVisits[day] || 0}</td>
+      <td>${freelancersByDay[day] || 0}</td>
+      <td>${customersByDay[day] || 0}</td>
+    </tr>`).join("");
+  const numbersTableHtml = `
+  <div class="table-scroll" style="margin-top:8px;">
+    <table class="table-simple">
+      <tr><th>תאריך</th><th>כניסות לאתר</th><th>עצמאיות נרשמו</th><th>לקוחות נרשמו</th></tr>
+      ${tableRows}
+    </table>
+  </div>`;
   return `
   <div class="panel" id="trend-charts">
     <h3>מגמות יומיות 📈</h3>
-    <p class="muted">${DAYS} הימים האחרונים. כל מדד בגרף נפרד ובסקאלה שלו (כדי שמספרים קטנים כמו הרשמות לא "ייעלמו" ליד מספר הכניסות שגדול הרבה יותר) - כך רואים בכל יום אם היתה עליה או ירידה. אפשר לרחף עם העכבר מעל כל נקודה בגרף כדי לראות את התאריך והמספר המדויק.</p>
+    <p class="muted">${DAYS} הימים האחרונים. כל מדד בגרף נפרד ובסקאלה שלו (כדי שמספרים קטנים כמו הרשמות לא "ייעלמו" ליד מספר הכניסות שגדול הרבה יותר) - כך רואים בכל יום אם היתה עליה או ירידה. אפשר לרחף עם העכבר מעל כל נקודה בגרף כדי לראות את התאריך והמספר המדויק - ולמי שרוצה את המספרים המדויקים של כל יום בלי לרחף, יש טבלה מתחת לגרפים.</p>
     ${rangeToggleHtml}
     ${rows}
+    <h4 style="margin:18px 0 8px;">המספרים המדויקים, יום אחרי יום 🔢</h4>
+    ${numbersTableHtml}
   </div>`;
 }
 
@@ -9710,6 +9772,37 @@ route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
   res.end(txt);
 });
 
+// ----- sitemap.xml (נוסף 2026-08-27, לפי בקשה מפורשת לשיפור הדירוג בגוגל) -----
+// robots.txt (למעלה) כבר הצביע על /sitemap.xml מזמן, אבל שום ראוט לא באמת הגיש אותו - כלומר
+// גוגל היה מקבל 404 בכל פעם שהוא מנסה להביא את מפת האתר. בונה כאן רשימה אמיתית: העמודים
+// הסטטיים העיקריים, כל קטגוריה (עמוד "/search?category=X" שלה), וכל עצמאית/תחום-נוסף
+// שמאושרים ופעילים כרגע - בדיוק כמו robots.txt, מוגש תמיד (גם כש-searchEngineVisible כבוי)
+// כי קובץ XML לבד לא חושף כלום שלא ניתן להגיע אליו ישירות ממילא, וכך היא יכולה לבדוק/להכין
+// אותו מראש לפני שהיא בכלל פותחת את האתר לגוגל.
+route("GET", "/sitemap.xml", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const origin = getOrigin(req);
+  const urls = [];
+  const addUrl = (urlPath, changefreq, priority) => urls.push({ loc: `${origin}${urlPath}`, changefreq, priority });
+  addUrl("/", "daily", "1.0");
+  addUrl("/search", "daily", "0.9");
+  addUrl("/deals", "daily", "0.7");
+  addUrl("/magazine", "weekly", "0.6");
+  addUrl("/stories", "weekly", "0.6");
+  addUrl("/arena", "daily", "0.6");
+  addUrl("/join", "monthly", "0.5");
+  d.categories.forEach((c) => addUrl(`/search?category=${encodeURIComponent(c.id)}`, "weekly", "0.7"));
+  d.freelancers.filter((f) => f.status === "approved" && f.active !== false).forEach((f) => {
+    addUrl(`/freelancer/${encodeURIComponent(f.id)}`, "weekly", "0.8");
+    (f.additionalListings || []).filter((l) => l.status === "approved").forEach((l) => {
+      addUrl(`/freelancer/${encodeURIComponent(f.id)}/listing/${encodeURIComponent(l.id)}`, "weekly", "0.6");
+    });
+  });
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `<url><loc>${esc(u.loc)}</loc><changefreq>${u.changefreq}</changefreq><priority>${u.priority}</priority></url>`).join("\n")}\n</urlset>\n`;
+  res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8" });
+  res.end(xml);
+});
+
 // ---------- server ----------
 // Site-visit tracking, per explicit request - counts real page loads only (skips the admin
 // area itself, the freelancer dashboard, static/asset routes and anything that isn't a GET),
@@ -9727,7 +9820,7 @@ const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/icons/", 
 // left the chat open for 10 minutes alone would have added ~200 to the count. The matching admin
 // poll (GET /admin/support/thread/:key/poll) never had this problem - it already starts with
 // "/admin", covered by the prefix list above.
-const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/logout", "/support/poll"]);
+const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/sitemap.xml", "/logout", "/support/poll"]);
 
 // Best-effort bot/crawler detection via User-Agent, added per Sapir's request after she noticed
 // a traffic spike with no promotion behind it - the raw totalVisits/dailyVisits counters above
