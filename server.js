@@ -956,6 +956,35 @@ function israelLocalToUtc(year, month, day, hour, minute) {
   return guess;
 }
 
+// Returns the Israel-local calendar-day key ("YYYY-MM-DD") for a given moment - used everywhere
+// "day" is bucketed (site visits, daily signups, the exact-numbers table in "מגמות יומיות", the
+// backup-file date stamp) so a day rolls over at Israel midnight, correctly adjusted for DST,
+// instead of at UTC midnight - which used to roll over at 2am/3am Israel time depending on the
+// season. Per explicit request 2026-08-30: "day" should mean an actual Israel calendar day
+// everywhere, like a normal calendar, not a UTC one. `en-CA` is just a locale that happens to
+// format dates as YYYY-MM-DD - nothing Canada-specific about the date itself.
+const ISRAEL_DATE_KEY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" });
+function israelDateKey(date) {
+  return ISRAEL_DATE_KEY_FMT.format(date instanceof Date ? date : new Date(date));
+}
+
+// Today's Israel-local calendar date, as {year, month (1-12), day} - a single Intl query that
+// israelDayKeyOffset (below) then does plain UTC day-arithmetic from, instead of re-querying
+// Intl for every day in a loop (e.g. building 30 day-keys for the "מגמות יומיות" 30-day view).
+// This is safe because Israel's UTC offset is always positive (+2 or +3) - so Date.UTC(y, m-1,
+// d) for any Israel calendar day Y-M-D always falls a few hours INTO that same Israel day, and
+// reading it back as an ISO date trivially returns the same Y-M-D with no further conversion.
+function israelTodayParts() {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  return { year: get("year"), month: get("month"), day: get("day") };
+}
+// "YYYY-MM-DD" key for today's Israel-local date minus `daysAgo` days (0 = today itself).
+function israelDayKeyOffset(daysAgo) {
+  const { year, month, day } = israelTodayParts();
+  return new Date(Date.UTC(year, month - 1, day - daysAgo)).toISOString().slice(0, 10);
+}
+
 // Given a known-correct boundary (matching weekday+hour in Israel time), returns the next
 // one exactly `days` Israel-calendar-days later (default 7) - stepping in local calendar days
 // (not raw ms) so a DST shift that happens to fall inside that span is absorbed correctly.
@@ -1323,6 +1352,17 @@ function referralCounts(list, refField) {
   return counts;
 }
 
+// A one-line "who's leading and by how much" callout above an admin referral-ranking table
+// (see freelancerReferralRanking/customerReferralRanking in /admin) - per explicit request
+// 2026-08-30. `ranking` is already sorted highest-first and filtered to count > 0.
+function leaderGapSummaryHtml(ranking, noun) {
+  if (!ranking.length) return "";
+  const leader = ranking[0];
+  const second = ranking[1];
+  const gap = second ? leader.count - second.count : leader.count;
+  return `<p style="font-weight:800;color:var(--rose-dark);margin:0 0 12px;">👑 ${esc(leader.name)} מובילה כרגע עם ${leader.count} ${esc(noun)}${second ? ` - יתרון של ${gap} על המקום השני (${esc(second.name)}, ${second.count})` : " - עדיין אין מי שמתקרבת אליה"}!</p>`;
+}
+
 // Renders the personalized "your status in the race" panel shown to a logged-in customer
 // (in /account) or freelancer (in /freelancer-dashboard) - same ranking/leaderboard logic for
 // both, driven by small role-specific labels so the copy reads naturally in each context.
@@ -1450,11 +1490,17 @@ function supportKeyReadOnly(req, ctx) {
   return cookies.scAnon ? `anon:${cookies.scAnon}` : null;
 }
 
-// "מחוברת עכשיו" = Sapir has hit /admin/support/heartbeat (fired quietly in the background by
-// every admin page, see the inline script in layout.js's page()) sometime in the last 90
-// seconds. 90s (vs. e.g. 20s) gives a little slack for a slow tick or a brief tab-switch
-// without flickering the asker's "🟢 online" banner off and back on.
+// "מחוברת עכשיו" = both (a) Sapir explicitly turned the support service ON (d.settings.
+// adminSupportOnline - see the toggle panel/popup in /admin and POST /admin/support/toggle,
+// added per explicit request 2026-08-30 so she's only shown as online when she actually wants
+// to be, not just because she happens to be on some admin page) AND (b) she's hit
+// /admin/support/heartbeat (fired quietly in the background by every admin page, see the inline
+// script in layout.js's page()) sometime in the last 90 seconds - so if she closes the tab/
+// laptop without remembering to turn it off, she still stops showing as online after a short
+// while. 90s (vs. e.g. 20s) gives a little slack for a slow tick or a brief tab-switch without
+// flickering the asker's "🟢 online" banner off and back on.
 function isAdminOnline(d) {
+  if (!d.settings.adminSupportOnline) return false;
   const at = d.settings.adminSupportActiveAt;
   if (!at) return false;
   return Date.now() - new Date(at).getTime() < 90 * 1000;
@@ -1476,19 +1522,45 @@ function supportBubbleHtml(m) {
 // dedicated single-poll page at /arena/poll/:id (the whole point of the share link).
 function pollCardHtml(poll, voterKey, redirectTarget, shareUrl, canManage) {
   const totalVotes = poll.options.reduce((sum, o) => sum + (o.votes || 0), 0);
-  const voted = !!(voterKey && (poll.voters || []).includes(voterKey));
+  poll.voterChoices = poll.voterChoices || {};
+  const hasVoted = !!(voterKey && (poll.voters || []).includes(voterKey));
+  // A voter can change her answer (per explicit request 2026-08-30) as long as we actually know
+  // which option she picked before - tracked in poll.voterChoices (voterKey -> optionIndex,
+  // added alongside the older poll.voters list). A vote cast before this feature existed has no
+  // entry in voterChoices, so we can't safely tell POST /arena/poll/:id/vote which option's
+  // count to decrement if she tried to switch - those legacy votes stay read-only forever (a
+  // rare, harmless edge case that resolves itself as old polls close/expire) rather than risk
+  // corrupting the vote totals.
+  const myChoiceKnown = hasVoted && Object.prototype.hasOwnProperty.call(poll.voterChoices, voterKey);
+  const myChoice = myChoiceKnown ? poll.voterChoices[voterKey] : -1;
+  const canSwitch = myChoiceKnown && !poll.closed;
   const optionsHtml = poll.options.map((o, i) => {
     const pct = totalVotes ? Math.round(((o.votes || 0) / totalVotes) * 100) : 0;
-    if (voted || poll.closed) {
-      return `<div class="poll-option-row"><div class="poll-bar-wrap"><div class="poll-bar-fill" style="width:${pct}%;"></div><span class="poll-bar-label">${esc(o.text)} - ${pct}% (${o.votes || 0})</span></div></div>`;
+    const isMine = canSwitch && myChoice === i;
+    if (!hasVoted && !poll.closed) {
+      return `<form method="post" action="/arena/poll/${poll.id}/vote" style="margin-top:8px;">
+        <input type="hidden" name="optionIndex" value="${i}" />
+        <input type="hidden" name="redirectTo" value="${esc(redirectTarget)}" />
+        <button type="submit" class="btn-arena" style="width:100%;text-align:right;display:flex;justify-content:space-between;gap:10px;">
+          <span>${esc(o.text)}</span><span style="opacity:.85;">(${o.votes || 0})</span>
+        </button>
+      </form>`;
     }
-    return `<form method="post" action="/arena/poll/${poll.id}/vote" style="margin-top:8px;">
-      <input type="hidden" name="optionIndex" value="${i}" />
-      <input type="hidden" name="redirectTo" value="${esc(redirectTarget)}" />
-      <button type="submit" class="btn-arena" style="width:100%;text-align:right;display:flex;justify-content:space-between;gap:10px;">
-        <span>${esc(o.text)}</span><span style="opacity:.85;">(${o.votes || 0})</span>
-      </button>
-    </form>`;
+    if (canSwitch) {
+      // Still voted/closed-looking (result bars), but clickable - clicking a different bar
+      // re-submits to the same vote route, which now moves her vote instead of just ignoring it.
+      return `<form method="post" action="/arena/poll/${poll.id}/vote" style="margin-top:8px;">
+        <input type="hidden" name="optionIndex" value="${i}" />
+        <input type="hidden" name="redirectTo" value="${esc(redirectTarget)}" />
+        <button type="submit" class="poll-option-row${isMine ? " poll-option-selected" : ""}" style="width:100%;background:none;border:none;padding:0;cursor:pointer;font:inherit;color:inherit;text-align:right;">
+          <div class="poll-bar-wrap">
+            <div class="poll-bar-fill" style="width:${pct}%;"></div>
+            <span class="poll-bar-label">${esc(o.text)} - ${pct}% (${o.votes || 0})${isMine ? " ✓ הבחירה שלך" : ""}</span>
+          </div>
+        </button>
+      </form>`;
+    }
+    return `<div class="poll-option-row"><div class="poll-bar-wrap"><div class="poll-bar-fill" style="width:${pct}%;"></div><span class="poll-bar-label">${esc(o.text)} - ${pct}% (${o.votes || 0})</span></div></div>`;
   }).join("");
   // Admin-created surveys (source: "admin") are shown with a distinct "from the system" badge
   // instead of the usual "מאת <freelancer>" attribution line, so they read clearly as an
@@ -1506,6 +1578,7 @@ function pollCardHtml(poll, voterKey, redirectTarget, shareUrl, canManage) {
     <p style="margin:0 0 4px;font-weight:800;font-size:17px;">${esc(poll.question)}</p>
     ${attributionHtml}
     ${optionsHtml}
+    ${canSwitch ? `<p class="muted" style="font-size:12px;margin-top:6px;">אפשר ללחוץ על תשובה אחרת כדי לשנות את ההצבעה שלך.</p>` : ""}
     <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span class="muted" style="font-size:13px;" id="pollShareUrl-${poll.id}">${esc(shareUrl)}</span>
       <button type="button" class="arena-toggle" onclick="scArenaCopyLink('pollShareUrl-${poll.id}', this)">העתקת קישור לשיתוף</button>
@@ -1628,7 +1701,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update104 - 2026-08-27 - פאנל \"מגמות יומיות\" מקבל טבלת מספרים מדויקים ליד הגרף (כניסות/עצמאיות/לקוחות לכל יום)";
+const DEPLOY_MARKER = "update107 - 2026-08-30 - \"יום\" בכל האתר מתחלף בחצות שעון ישראל (לא UTC), ומאגר לקוחות עם מיילים + ייצוא CSV בניהול";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -3211,7 +3284,7 @@ route("POST", "/arena/poll", async (req, res, params, query, ctx) => {
   const id = db.nextId("poll");
   d.polls.push({
     id, freelancerId: f.id, freelancerName: f.businessName || f.name, question,
-    options: optionTexts.map((t) => ({ text: t, votes: 0 })), voters: [], createdAt: new Date().toISOString(),
+    options: optionTexts.map((t) => ({ text: t, votes: 0 })), voters: [], voterChoices: {}, createdAt: new Date().toISOString(),
   });
   db.save();
   redirect(res, `/arena?tab=3&ok=${encodeURIComponent("הסקר שלך פורסם!")}#poll-${id}`);
@@ -3239,9 +3312,22 @@ route("POST", "/arena/poll/:id/vote", async (req, res, params, query, ctx) => {
   }
   const { voterKey, newCookie } = arenaVoterIdentity(req, ctx);
   poll.voters = poll.voters || [];
-  if (!poll.voters.includes(voterKey)) {
+  poll.voterChoices = poll.voterChoices || {};
+  const alreadyVoted = poll.voters.includes(voterKey);
+  const prevChoice = poll.voterChoices[voterKey];
+  if (!alreadyVoted) {
     poll.voters.push(voterKey);
     poll.options[optionIndex].votes = (poll.options[optionIndex].votes || 0) + 1;
+    poll.voterChoices[voterKey] = optionIndex;
+    db.save();
+  } else if (prevChoice !== undefined && prevChoice !== optionIndex) {
+    // Switching an existing vote to a different option (per explicit request 2026-08-30) -
+    // move her vote instead of adding a second one: undo the old option's count, apply the new
+    // one. A voter with no recorded prevChoice (voted before this feature existed) falls
+    // through here doing nothing - see the matching note in pollCardHtml above.
+    if (poll.options[prevChoice]) poll.options[prevChoice].votes = Math.max(0, (poll.options[prevChoice].votes || 0) - 1);
+    poll.options[optionIndex].votes = (poll.options[optionIndex].votes || 0) + 1;
+    poll.voterChoices[voterKey] = optionIndex;
     db.save();
   }
   redirect(res, redirectTo + hash, newCookie);
@@ -5850,6 +5936,15 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
   ${dealReportReminderPopupHtml}
   <h1 class="section-title">היי ${esc(customer.name)} <span style="color:var(--danger);">♥</span></h1>
 
+  <div class="panel" id="account-profile-section" style="max-width:520px;margin:0 auto;scroll-margin-top:90px;">
+    <h3>הפרטים שלך</h3>
+    <form method="post" action="/account/update-name">
+      <label>השם שלך
+      <input type="text" name="name" maxlength="80" required value="${esc(customer.name)}" /></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שמירת השם</button>
+    </form>
+  </div>
+
   ${myAdminMessages.length ? `
   <div class="panel" style="max-width:680px;margin:0 auto;">
     <h3>הודעות מהנהלת SheCan 📣</h3>
@@ -6311,6 +6406,24 @@ route("POST", "/freelancer-dashboard/switch-to-customer", async (req, res, param
   redirect(res, "/account", [sessionCookie(sid), identityCookie("customer", customer.id)]);
 });
 
+// Lets a customer rename herself (see the "הפרטים שלך" panel in /account, added per explicit
+// request 2026-08-30) - just her display name, shown everywhere her account already shows it
+// (greeting, reviews, chat with freelancers, etc.) since those all read customer.name live.
+route("POST", "/account/update-name", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (!customer) return redirect(res, "/login");
+  const body = await readBody(req);
+  const newName = clip((body.get("name") || "").trim(), 80);
+  if (!newName) {
+    return redirect(res, `/account?err=${encodeURIComponent("נא להזין שם.")}#account-profile-section`);
+  }
+  customer.name = newName;
+  db.save();
+  redirect(res, `/account?ok=${encodeURIComponent("השם עודכן בהצלחה!")}#account-profile-section`);
+});
+
 // Mirror of the above, for a customer who's also a registered (approved) freelancer - lets
 // her flip between her two hats from whichever personal area she happens to be in, without
 // having to log out and back in.
@@ -6740,20 +6853,18 @@ function adminTrendChartsHtml(d, rangeDays) {
   const dailyVisits = (d.siteStats && d.siteStats.dailyRealVisits) || {};
   const days = [];
   for (let i = DAYS - 1; i >= 0; i--) {
-    const dt = new Date();
-    dt.setDate(dt.getDate() - i);
-    days.push(dt.toISOString().slice(0, 10));
+    days.push(israelDayKeyOffset(i));
   }
   const customersByDay = {};
   d.customers.forEach((c) => {
     if (!c.createdAt) return;
-    const key = new Date(c.createdAt).toISOString().slice(0, 10);
+    const key = israelDateKey(c.createdAt);
     customersByDay[key] = (customersByDay[key] || 0) + 1;
   });
   const freelancersByDay = {};
   d.freelancers.forEach((f) => {
     if (!f.createdAt) return;
-    const key = new Date(f.createdAt).toISOString().slice(0, 10);
+    const key = israelDateKey(f.createdAt);
     freelancersByDay[key] = (freelancersByDay[key] || 0) + 1;
   });
   const series = [
@@ -6794,7 +6905,7 @@ function adminTrendChartsHtml(d, rangeDays) {
   // רק בתצוגת טבלה - היום ראשון (הכי חדש) ולא הכי ישן, כדי שהיא לא תצטרך לגלול לסוף כדי לראות
   // את אתמול/היום.
   const dmy = (key) => key.slice(5).split("-").reverse().join(".");
-  const todayKeyForTable = new Date().toISOString().slice(0, 10);
+  const todayKeyForTable = israelDayKeyOffset(0);
   const tableRows = days.slice().reverse().map((day) => `
     <tr>
       <td>${esc(dmy(day))}${day === todayKeyForTable ? " (היום)" : ""}</td>
@@ -7036,6 +7147,18 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     .filter((r) => r.count > 0)
     .sort((a, b) => b.count - a.count);
 
+  // Same idea as freelancerReferralRanking just above, for the customers' "הביאי חברה" race
+  // (referredByCustomerId) - added per explicit request 2026-08-30 so admin can see "who's
+  // leading and by how much" for BOTH races in one place, not just the freelancer one.
+  const customerReferralCounts = referralCounts(d.customers, "referredByCustomerId");
+  const customerReferralRanking = d.customers
+    .map((c) => ({
+      id: c.id, name: c.name || c.email, count: customerReferralCounts[c.id] || 0,
+      referred: d.customers.filter((x) => x.referredByCustomerId === c.id).map((x) => x.name || x.email),
+    }))
+    .filter((r) => r.count > 0)
+    .sort((a, b) => b.count - a.count);
+
   // "עסקה נסגרה" two-sided confirmations (see /freelancer-dashboard/deal/close and
   // /deal-confirm/:token) - only status "confirmed" counts as a real closed deal here, since
   // that's the whole point of the two-sided flow: a freelancer marking it isn't enough on its
@@ -7074,15 +7197,13 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   const siteStats = d.siteStats || { totalVisits: 0, dailyVisits: {}, realVisits: 0, dailyRealVisits: {} };
   const siteStatsDailyReal = siteStats.dailyRealVisits || {};
   const siteStatsDailyRealEntries = siteStats.dailyRealUniqueEntries || {};
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = israelDayKeyOffset(0);
   const todayVisits = siteStats.dailyVisits[todayKey] || 0;
   const todayRealVisits = siteStatsDailyReal[todayKey] || 0;
   const todayRealEntries = siteStatsDailyRealEntries[todayKey] || 0;
   const last7Days = [];
   for (let i = 6; i >= 0; i--) {
-    const dt = new Date();
-    dt.setDate(dt.getDate() - i);
-    const key = dt.toISOString().slice(0, 10);
+    const key = israelDayKeyOffset(i);
     last7Days.push({ key, count: siteStats.dailyVisits[key] || 0, realCount: siteStatsDailyReal[key] || 0, entryCount: siteStatsDailyRealEntries[key] || 0 });
   }
   // "מאיפה הן מגיעות" table - all-time real (non-bot) entries broken down by source, sorted by
@@ -7104,13 +7225,96 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   const USER_VISITS_SHOW_MAX = 100;
   const userVisitsShown = userVisits.slice(0, USER_VISITS_SHOW_MAX);
 
+  // "מאגר הלקוחות" - טבלת כל הלקוחות הרשומות כולל כתובת המייל שלהן, לפי בקשה מפורשת
+  // 2026-08-30 - ממוינת מהחדשה לוותיקה. הטבלה בעמוד עצמו מוגבלת (כמו userVisits למעלה) כדי
+  // לא להכביד על טעינת העמוד עם כמות גדולה של לקוחות, אבל קובץ ה-CSV להורדה (GET
+  // /admin/export/customers.csv, למטה) כולל את כולן בלי הגבלה.
+  const allCustomersForDirectory = d.customers.slice().sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  const CUSTOMERS_DIRECTORY_SHOW_MAX = 300;
+  const customersDirectoryShown = allCustomersForDirectory.slice(0, CUSTOMERS_DIRECTORY_SHOW_MAX);
+
+  // "שירות תמיכה ללקוחות" - סטטוס פתוח/כבוי (ר' isAdminOnline/POST /admin/support/toggle
+  // למעלה) - פאנל קבוע שאפשר להפעיל/לכבות ממנו בכל רגע, ובנוסף פופאפ ששואל אותה במפורש בכל
+  // כניסה לעמוד הזה כל עוד השירות עדיין כבוי (לא נשאל שוב ברגע שהיא הדליקה אותו), לפי בקשה
+  // מפורשת 2026-08-30 - "רק כשהוא דלוק יופיע ללקוחות שאני מחוברת".
+  const adminSupportOnlineNow = !!d.settings.adminSupportOnline;
+  const supportTogglePanelHtml = `
+  <div class="panel" id="admin-support-toggle-panel">
+    <h3>שירות תמיכה ללקוחות 💬</h3>
+    <p class="muted">כשהשירות פעיל, לקוחות ועצמאיות שנכנסות ל"לתמיכה לחצי" רואות שאת מחוברת עכשיו ומקבלות ממך תשובה מיידית בצ'אט. כשהוא כבוי, הן משאירות הודעה ומקבלות תשובה בהמשך - גם באתר וגם במייל.</p>
+    <p id="scSupportToggleStatus" style="font-weight:800;${adminSupportOnlineNow ? "color:var(--rose-dark);" : ""}">${adminSupportOnlineNow ? "🟢 השירות פעיל עכשיו" : "⚪ השירות כבוי כרגע"}</p>
+    <button type="button" id="scSupportToggleBtn" class="btn btn-small${adminSupportOnlineNow ? " btn-outline" : ""}" onclick="scToggleAdminSupport(${adminSupportOnlineNow ? "false" : "true"})">${adminSupportOnlineNow ? "כיבוי שירות התמיכה" : "הפעלת שירות התמיכה"}</button>
+  </div>
+  ${!adminSupportOnlineNow ? `
+  <div class="sc-modal-overlay" id="scSupportPromptModal" onclick="if(event.target===this) this.remove();">
+    <div class="sc-modal" style="max-width:420px;">
+      <button type="button" class="sc-modal-close" onclick="this.closest('.sc-modal-overlay').remove()" aria-label="סגירה">✕</button>
+      <h2 style="font-size:21px;">להפעיל את שירות התמיכה ללקוחות? 💬</h2>
+      <p style="text-align:right;font-size:14.5px;">כשהשירות פעיל, לקוחות ועצמאיות שנכנסות ל"לתמיכה לחצי" רואות שאת מחוברת עכשיו ויכולות לקבל ממך תשובה מיידית. אפשר תמיד לכבות מאוחר יותר מהפאנל למטה.</p>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+        <button type="button" class="btn sc-modal-btn" onclick="scToggleAdminSupport(true); this.closest('.sc-modal-overlay').remove();">כן, הפעילי 🟢</button>
+        <button type="button" class="btn btn-outline sc-modal-btn" onclick="this.closest('.sc-modal-overlay').remove()">לא כרגע</button>
+      </div>
+    </div>
+  </div>` : ""}
+  <script>
+  function scToggleAdminSupport(on){
+    fetch('/admin/support/toggle', { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body: 'on=' + (on ? '1' : '0') })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var statusEl = document.getElementById('scSupportToggleStatus');
+        var btnEl = document.getElementById('scSupportToggleBtn');
+        if (statusEl) {
+          statusEl.textContent = data.online ? '🟢 השירות פעיל עכשיו' : '⚪ השירות כבוי כרגע';
+          statusEl.style.color = data.online ? 'var(--rose-dark)' : '';
+        }
+        if (btnEl) {
+          btnEl.textContent = data.online ? 'כיבוי שירות התמיכה' : 'הפעלת שירות התמיכה';
+          btnEl.setAttribute('onclick', 'scToggleAdminSupport(' + (data.online ? 'false' : 'true') + ')');
+          btnEl.className = data.online ? 'btn btn-small btn-outline' : 'btn btn-small';
+        }
+      }).catch(function(){ alert('שגיאה - נסי שוב.'); });
+  }
+  </script>`;
+
   const body = `
   <h1 class="section-title">הבמה שלך 👑</h1>
   <p class="muted" style="text-align:center;margin-top:-14px;">💡 לוחצים על כותרת של כל אזור כדי לפתוח או לסגור אותו.</p>
   <div class="sc-admin-page">
+  ${supportTogglePanelHtml}
   <div class="panel">
     <h3>מספרים כלליים</h3>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;">
+      <!-- כל הריבועים שדורשים ממנה פעולה/אישור קובצו יחד בתחילת השורה, ממוינים לפי סדר
+           דחיפות מפורש (עצמאיות ← סיפורים ← משפטי השראה ← תמיכה ← המלצות תת-תחום ← המשך
+           טיפול) - לפי בקשה מפורשת 2026-08-30, כדי שהכי דחוף תמיד יהיה הכי בולט/ראשון בלי
+           לגלול או לחפש בין המספרים המידעיים (לקוחות רשומות, כניסות לאתר וכו') שמופיעים
+           אחריהם. צבע מודגש (#FBEAEA, גוון אדמדם עדין) מבדיל אותם ויזואלית מהריבועים
+           האינפורמטיביים הרגילים. -->
+      <a href="#pending-approvals" style="flex:1;min-width:160px;background:#FBEAEA;border:1.5px solid #E0435B;border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת הממתינות לאישור">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingFreelancers.length}</div>
+        <div class="muted" style="margin-top:4px;">👩‍💼 עצמאיות ממתינות לאישור ↓</div>
+      </a>
+      <a href="#pending-stories" style="flex:1;min-width:160px;background:#FBEAEA;border:1.5px solid #E0435B;border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לסיפורים הממתינים לאישור">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingStories.length}</div>
+        <div class="muted" style="margin-top:4px;">📖 סיפורים ממתינים ↓</div>
+      </a>
+      <a href="#inspiration-quotes" style="flex:1;min-width:160px;background:#FBEAEA;border:1.5px solid #E0435B;border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר למשפטי השראה הממתינים לאישור">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingInspirationQuotes.length}</div>
+        <div class="muted" style="margin-top:4px;">💬 משפטי השראה ↓</div>
+      </a>
+      <a href="#support-threads" style="flex:1;min-width:160px;background:#FBEAEA;border:1.5px solid #E0435B;border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לשיחות התמיכה הממתינות למענה">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${openSupportMessages}</div>
+        <div class="muted" style="margin-top:4px;">💬 תמיכה ממתינה למענה ↓</div>
+      </a>
+      <a href="#subcategory-suggestions" style="flex:1;min-width:160px;background:#FBEAEA;border:1.5px solid #E0435B;border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר להמלצות לתת-תחום חדש">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingSubcategorySuggestions.length}</div>
+        <div class="muted" style="margin-top:4px;">🆕 המלצות תת-תחום ↓</div>
+      </a>
+      <a href="#followup" style="flex:1;min-width:160px;background:#FBEAEA;border:1.5px solid #E0435B;border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת המשך הטיפול">
+        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${snoozedItems.length}</div>
+        <div class="muted" style="margin-top:4px;">🕒 בהמשך טיפול ↓</div>
+      </a>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${d.customers.length}</div>
         <div class="muted" style="margin-top:4px;">לקוחות רשומות</div>
@@ -7123,22 +7327,6 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${activeFreelancers.length}</div>
         <div class="muted" style="margin-top:4px;">עצמאיות מאושרות ופעילות</div>
       </div>
-      <a href="#pending-approvals" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת הממתינות לאישור">
-        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingFreelancers.length}</div>
-        <div class="muted" style="margin-top:4px;">ממתינות לאישור ↓</div>
-      </a>
-      <a href="#followup" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר לרשימת המשך הטיפול">
-        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${snoozedItems.length}</div>
-        <div class="muted" style="margin-top:4px;">🕒 בהמשך טיפול ↓</div>
-      </a>
-      <a href="#subcategory-suggestions" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר להמלצות לתת-תחום חדש">
-        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingSubcategorySuggestions.length}</div>
-        <div class="muted" style="margin-top:4px;">🆕 המלצות תת-תחום ↓</div>
-      </a>
-      <a href="#inspiration-quotes" style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;text-decoration:none;color:inherit;display:block;" title="מעבר למשפטי השראה הממתינים לאישור">
-        <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${pendingInspirationQuotes.length}</div>
-        <div class="muted" style="margin-top:4px;">💬 משפטי השראה ↓</div>
-      </a>
       <div style="flex:1;min-width:160px;background:var(--cream);border-radius:10px;padding:16px;text-align:center;">
         <div style="font-size:34px;font-weight:800;color:var(--rose-dark);">${siteStats.totalVisits || 0}</div>
         <div class="muted" style="margin-top:4px;">כניסות לאתר (סה"כ, כולל בוטים)</div>
@@ -7263,6 +7451,21 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       ${userVisitsShown.map((u) => `<tr><td>${esc(u.name)}</td><td>${u.roleLabel}</td><td>${u.count}</td></tr>`).join("")}
     </table></div>
     ${userVisits.length > USER_VISITS_SHOW_MAX ? `<p class="muted" style="margin-top:8px;">מוצגות ${USER_VISITS_SHOW_MAX} המובילות מתוך ${userVisits.length} - השאר נשמרות בנתונים אבל לא מוצגות כאן.</p>` : ""}` : `<p class="muted">עדיין אין נתוני כניסות למשתמשות רשומות - זה ייאסף מכאן והלאה, בכל פעם שלקוחה או עצמאית מתחברות.</p>`}
+  </div>
+
+  <div class="panel">
+    <h3>מאגר הלקוחות (${d.customers.length}) 📇</h3>
+    <p class="muted">כל הלקוחות שנרשמו באתר, כולל כתובת המייל שלהן - ממוין מהחדשה לוותיקה.${d.customers.length > CUSTOMERS_DIRECTORY_SHOW_MAX ? ` מוצגות כאן ${CUSTOMERS_DIRECTORY_SHOW_MAX} האחרונות - להורדת הרשימה המלאה יש את קובץ ה-CSV למטה.` : ""}</p>
+    <p><a class="btn btn-small" href="/admin/export/customers.csv">⬇️ הורדת כל הלקוחות כקובץ אקסל (CSV)</a></p>
+    ${customersDirectoryShown.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>אימייל</th><th>עיר</th><th>מייל מאומת</th><th>תאריך הצטרפות</th></tr>
+      ${customersDirectoryShown.map((c) => `<tr>
+        <td>${esc(c.name || "-")}</td>
+        <td>${esc(c.email || "-")}</td>
+        <td>${esc(cityName(d, c.cityId))}</td>
+        <td>${c.emailVerified ? "כן ✓" : "לא"}</td>
+        <td>${c.createdAt ? esc(new Date(c.createdAt).toLocaleDateString("he-IL")) : "-"}</td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">עדיין אין לקוחות רשומות.</p>`}
   </div>
 
   <div class="panel">
@@ -7437,7 +7640,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     }).join("") : `<p class="muted">עוד אין תגובות שפורסמו.</p>`}
   </div>
 
-  <div class="panel" data-badge="${pendingStories.length}">
+  <div class="panel" id="pending-stories" style="scroll-margin-top:90px;" data-badge="${pendingStories.length}">
     <h3>סיפורים ממתינים לאישור (${pendingStories.length})</h3>
     ${pendingStories.length ? pendingStories.map((s) => {
       const sf = d.freelancers.find((x) => x.id === s.freelancerId);
@@ -7720,12 +7923,25 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   <div class="panel">
     <h3>מרוץ ההפניות של העצמאיות - מי מובילה 🏆</h3>
     <p class="muted">כל עצמאית שהצטרפה דרך קישור אישי של עצמאית אחרת (או שבחרה את שמה ידנית ב"איך שמעת עלינו" בטופס ההרשמה) - ממוין מהכי הרבה הפניות להכי פחות, כולל השמות של מי שנכנסה דרך הקישור של כל אחת.</p>
+    ${leaderGapSummaryHtml(freelancerReferralRanking, "הפניות")}
     ${freelancerReferralRanking.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מקום</th><th>עצמאית</th><th>כמות הפניות</th><th>מי נכנסה דרכה</th></tr>
       ${freelancerReferralRanking.map((r, i) => `<tr>
         <td>${i + 1}${i === 0 ? " 👑" : ""}</td><td>${esc(r.name)}</td><td>${r.count}</td>
         <td>${esc(r.referred.join(", "))}</td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין אין הפניות בפועל - אף עצמאית לא נרשמה עדיין דרך הקישור האישי של עצמאית אחרת.</p>`}
+  </div>
+
+  <div class="panel">
+    <h3>מרוץ ההפניות של הלקוחות - מי מובילה 🏆</h3>
+    <p class="muted">כל לקוחה שנרשמה דרך הקישור האישי של לקוחה אחרת ("הביאי חברה") - ממוין מהכי הרבה הפניות להכי פחות, כולל השמות של מי שנרשמה דרך הקישור של כל אחת.</p>
+    ${leaderGapSummaryHtml(customerReferralRanking, "חברות")}
+    ${customerReferralRanking.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מקום</th><th>לקוחה</th><th>כמות הפניות</th><th>מי נרשמה דרכה</th></tr>
+      ${customerReferralRanking.map((r, i) => `<tr>
+        <td>${i + 1}${i === 0 ? " 👑" : ""}</td><td>${esc(r.name)}</td><td>${r.count}</td>
+        <td>${esc(r.referred.join(", "))}</td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">עדיין אין הפניות בפועל - אף לקוחה לא נרשמה עדיין דרך הקישור האישי של לקוחה אחרת.</p>`}
   </div>
 
   <div class="panel">
@@ -7931,9 +8147,9 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </table></div>` : `<p class="muted">עדיין לא התקבלו הודעות.</p>`}
   </div>
 
-  <div class="panel" data-badge="${openSupportMessages}">
+  <div class="panel" id="support-threads" style="scroll-margin-top:90px;" data-badge="${openSupportMessages}">
     <h3>לתמיכה לחצי 💬 (${openSupportMessages} ממתינות לתשובה)</h3>
-    <p class="muted">שיחות שנפתחו דרך הכפתור הצף שמופיע בכל עמוד באתר - גם מלקוחות/עצמאיות מחוברות וגם מגולשות אנונימיות. כל עוד את נמצאת באיזשהו עמוד ניהול, השואלת רואה שאת "מחוברת עכשיו" ומקבלת תשובה חיה בלי רענון; כשאת לא, היא משאירה הודעה ומקבלת תשובה גם באתר וגם במייל.</p>
+    <p class="muted">שיחות שנפתחו דרך הכפתור הצף שמופיע בכל עמוד באתר - גם מלקוחות/עצמאיות מחוברות וגם מגולשות אנונימיות. השואלת תמיד רואה את הכפתור, אבל רואה שאת "מחוברת עכשיו" רק כשהדלקת את שירות התמיכה (ר' הפאנל "שירות תמיכה ללקוחות" למעלה) - ואז מקבלת תשובה חיה בלי רענון; כשהשירות כבוי, היא משאירה הודעה ומקבלת תשובה גם באתר וגם במייל.</p>
     ${supportThreads.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>מייל</th><th>הודעה אחרונה</th><th>תאריך</th><th></th></tr>
       ${supportThreads.map((t) => `<tr${t.unread ? ` style="font-weight:800;"` : ""}>
         <td>${esc(t.name)}</td><td>${esc(t.email)}</td>
@@ -8518,7 +8734,7 @@ route("POST", "/admin/survey", async (req, res, params, query, ctx) => {
   d.polls = d.polls || [];
   d.polls.push({
     id, source: "admin", audience, freelancerId: null, freelancerName: "SheCan", question,
-    options: optionTexts.map((t) => ({ text: t, votes: 0 })), voters: [], createdAt: new Date().toISOString(),
+    options: optionTexts.map((t) => ({ text: t, votes: 0 })), voters: [], voterChoices: {}, createdAt: new Date().toISOString(),
   });
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("הסקר פורסם בזירה!")}`);
@@ -8684,6 +8900,24 @@ route("GET", "/admin/export/freelancers.csv", async (req, res, params, query, ct
   res.end(csv);
 });
 
+// "מאגר הלקוחות" CSV - כל הלקוחות בלי הגבלה (בשונה מהטבלה בעמוד עצמו, שמוגבלת
+// ל-CUSTOMERS_DIRECTORY_SHOW_MAX כדי לא להכביד על טעינת /admin) - לפי בקשה מפורשת 2026-08-30.
+route("GET", "/admin/export/customers.csv", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const csvEscape = (v) => `"${String(v === undefined || v === null ? "" : v).replace(/"/g, '""')}"`;
+  const headers = ["שם", "אימייל", "עיר", "מייל מאומת", "מספר כניסות לאתר", "תאריך הצטרפות"];
+  const rows = d.customers
+    .slice()
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .map((c) => [
+      c.name, c.email, cityName(d, c.cityId), c.emailVerified ? "כן" : "לא", c.siteVisitCount || 0, c.createdAt,
+    ]);
+  const csv = "﻿" + [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\r\n");
+  res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="shecan-customers.csv"' });
+  res.end(csv);
+});
+
 // Full-database backup download, per explicit request - lets Sapir keep her own independent
 // copy of everything (freelancers, customers, reviews, stories, settings, and every embedded
 // photo/logo as base64) outside of Render's own automatic disk snapshots. Reads straight off
@@ -8698,7 +8932,7 @@ route("GET", "/admin/backup/download", async (req, res, params, query, ctx) => {
   } catch (e) {
     return redirect(res, `/admin?err=${encodeURIComponent("לא הצלחתי לקרוא את קובץ הנתונים לגיבוי.")}`);
   }
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = israelDayKeyOffset(0);
   res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="shecan-backup-${stamp}.json"` });
   res.end(raw);
 });
@@ -9472,6 +9706,21 @@ route("POST", "/admin/support/heartbeat", async (req, res, params, query, ctx) =
   sendHtml(res, 200, JSON.stringify({ ok: true }), { "Content-Type": "application/json; charset=utf-8" });
 });
 
+// Manual on/off switch for the support service (see the panel + first-visit popup near the top
+// of /admin, added per explicit request 2026-08-30) - isAdminOnline() now requires this to be
+// true, on top of the existing heartbeat freshness check, so customers/freelancers only ever
+// see her as "online" when she actually chose to turn the service on.
+route("POST", "/admin/support/toggle", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return sendHtml(res, 401, JSON.stringify({ ok: false }), { "Content-Type": "application/json; charset=utf-8" });
+  const d = db.load();
+  const body = await readBody(req);
+  const on = body.get("on") === "1";
+  d.settings.adminSupportOnline = on;
+  if (on) d.settings.adminSupportActiveAt = new Date().toISOString();
+  db.save();
+  sendHtml(res, 200, JSON.stringify({ ok: true, online: isAdminOnline(d) }), { "Content-Type": "application/json; charset=utf-8" });
+});
+
 route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -9949,7 +10198,7 @@ function trackSiteVisit(method, pathname, session, req, res, query) {
   d.siteStats.realVisits = d.siteStats.realVisits || 0;
   d.siteStats.dailyRealVisits = d.siteStats.dailyRealVisits || {};
   d.siteStats.totalVisits = (d.siteStats.totalVisits || 0) + 1;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = israelDayKeyOffset(0);
   d.siteStats.dailyVisits[today] = (d.siteStats.dailyVisits[today] || 0) + 1;
   // "Real" (estimated non-bot) counters - same events as above, minus anything whose User-Agent
   // matches BOT_UA_REGEX or is missing entirely.

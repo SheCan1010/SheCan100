@@ -109,9 +109,11 @@ function communityUnseenCount(session) {
 
 // Green version of badge() (vs. the red "unread" one above), used only on the admin's own
 // "ניהול" nav link - a quick, always-visible signal that something is waiting on her, without
-// needing to actually open /admin to find out. Per explicit request.
+// needing to actually open /admin to find out. Per explicit request. Shows the EXACT count, not
+// capped at "9+" like the customer/freelancer unread badge above - per explicit request
+// 2026-08-30, she wants to know precisely how many items are waiting, not just "more than 9".
 function pendingBadge(count) {
-  return count > 0 ? `<span class="pending-badge">${count > 9 ? "9+" : count}</span>` : "";
+  return count > 0 ? `<span class="pending-badge">${count}</span>` : "";
 }
 
 // Every category of thing that sits in an admin moderation queue somewhere on /admin - kept in
@@ -457,6 +459,10 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
    both backgrounds at once, without needing to split the label into two separately-colored
    pieces. */
 .poll-bar-label{position:absolute;inset:0;display:flex;align-items:center;padding:0 10px;font-size:13px;font-weight:700;color:#fff;text-shadow:-1px -1px 0 rgba(0,0,0,.55),1px -1px 0 rgba(0,0,0,.55),-1px 1px 0 rgba(0,0,0,.55),1px 1px 0 rgba(0,0,0,.55),0 0 4px rgba(0,0,0,.35);}
+/* Result bars are clickable buttons once a voter's own choice is known (see pollCardHtml/
+   POST /arena/poll/:id/vote) so she can switch her answer - this just marks which bar is
+   currently hers. */
+.poll-option-selected .poll-bar-wrap{outline:3px solid var(--arena-dark);outline-offset:2px;}
 /* "הזירה" nav button: pinned to the far (visual) left edge of the header via an auto
    inline-start margin (absorbs all remaining row space on its own row), and colored with the
    requested #cfa193 instead of the arena page's own deep-rose accent color. */
@@ -832,6 +838,10 @@ form .field{margin-bottom:6px;}
 .sc-modal p{font-size:16px;color:var(--dark);line-height:1.7;margin:0;}
 .sc-modal-close{position:absolute;top:12px;left:14px;background:none;border:none;font-size:22px;color:var(--gray);cursor:pointer;}
 .sc-modal-btn{margin-top:20px;}
+/* Admin-only periodic gratitude reminder toast (see scShowGratitudeToast in the client script
+   below) - bottom corner, small, self-dismissing, never blocks the page underneath it. */
+.sc-gratitude-toast{position:fixed;bottom:20px;left:20px;z-index:150;background:var(--white);border:1.5px solid var(--rose);border-radius:14px;padding:16px 18px;max-width:300px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:14px;line-height:1.6;text-align:right;}
+@media (max-width:600px){.sc-gratitude-toast{left:12px;right:12px;max-width:none;bottom:12px;}}
 `;
 
 function subcatsJsMap() {
@@ -950,13 +960,29 @@ function sidebarColumnsHtml(d) {
   return col(right, "side-col-right") + col(left, "side-col-left");
 }
 
+// תיאור ברירת מחדל (meta description) לכל עמוד שלא מעביר description משלו - נבחר עמודים
+// חשובים (בית, חיפוש, פרופיל עצמאית) מעבירים תיאור ממוקד יותר, ר' קריאות ל-page() ב-server.js.
+const SITE_DEFAULT_DESCRIPTION = "SheCan - קהילת העצמאיות בישראל. כל העסקים, כל התחומים, במקום אחד. מצאי בעלת עסק עצמאית לפי תחום ועיר, קבלי הטבה בלעדית וסגרי איתה עסקה ישירות באתר.";
+// הזרקה בטוחה של JSON-LD (נתונים מובנים לגוגל, ר' page() למטה) לתוך <script type="application/ld+json">
+// - ה-"</" היחיד שצריך להיזהר ממנו הוא אם טקסט חופשי שהיא כתבה (למשל תיאור עסק) מכיל במקרה
+// את הרצף "</script>", מה שהיה סוגר את התגית מוקדם מדי ושובר את שאר הדף; JSON.stringify לבד
+// לא מטפל בזה כי זה שובר HTML, לא JSON.
+function jsonLdScriptHtml(data) {
+  if (!data) return "";
+  return `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
+}
 // noSidebars is used for private back-office screens (admin, freelancer/customer
 // dashboards) - the sponsor/ad slots are a public-marketing feature for visitor-facing
 // pages, and forcing them into the narrower back-office layouts was pushing those pages'
 // own wide content (like the admin freelancers table) past the page edge.
-function page({ title, session, body, query, noSidebars }) {
+// תוספות SEO (נוסף 2026-08-27, לפי בקשה מפורשת - "שהאתר יופיע כמה שיותר למעלה בגוגל" ברגע
+// שהיא תפתח אותו למנועי חיפוש): description/canonicalUrl/ogImage/jsonLd הם כולם אופציונליים,
+// עם ברירת מחדל סבירה כשלא מועברים - כך שאף קריאה קיימת ל-page() באתר (יש עשרות) לא נשברת,
+// ורק העמודים החשובים ביותר לדירוג (בית, חיפוש, פרופיל עצמאית) מעבירים גרסה מותאמת.
+function page({ title, session, body, query, noSidebars, description, canonicalUrl, ogImage, jsonLd }) {
   const d = db.load();
   const searchEngineVisible = d.settings.searchEngineVisible;
+  const metaDescription = description || SITE_DEFAULT_DESCRIPTION;
   // Whether the logged-in customer/freelancer opted into push notifications (checkbox at
   // signup/join) - drives the quiet auto-subscribe flow in the script block below, since
   // there's no standing "enable notifications" nav button anymore.
@@ -978,6 +1004,20 @@ function page({ title, session, body, query, noSidebars }) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(title)} | SheCan</title>
 ${searchEngineVisible ? "" : '<meta name="robots" content="noindex, nofollow" />'}
+<meta name="description" content="${esc(metaDescription)}" />
+${canonicalUrl ? `<link rel="canonical" href="${esc(canonicalUrl)}" />` : ""}
+<meta property="og:site_name" content="SheCan" />
+<meta property="og:type" content="website" />
+<meta property="og:locale" content="he_IL" />
+<meta property="og:title" content="${esc(title)} | SheCan" />
+<meta property="og:description" content="${esc(metaDescription)}" />
+${canonicalUrl ? `<meta property="og:url" content="${esc(canonicalUrl)}" />` : ""}
+${ogImage ? `<meta property="og:image" content="${esc(ogImage)}" />` : ""}
+<meta name="twitter:card" content="${ogImage ? "summary_large_image" : "summary"}" />
+<meta name="twitter:title" content="${esc(title)} | SheCan" />
+<meta name="twitter:description" content="${esc(metaDescription)}" />
+${ogImage ? `<meta name="twitter:image" content="${esc(ogImage)}" />` : ""}
+${jsonLdScriptHtml(jsonLd)}
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@200;300;400;500;600;700;800&family=Rubik:wght@500;600;700;800;900&family=Assistant:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -1159,6 +1199,32 @@ if (SC_IS_ADMIN) {
   setInterval(function(){
     fetch("/admin/support/heartbeat", { method: "POST" }).catch(function(){});
   }, 20000);
+}
+// תזכורת תודה קטנה לספיר, פעם ב-10 דקות כל עוד היא באזור הניהול - לפי בקשה מפורשת 2026-08-30.
+// מבוססת על "מזמור לתודה" (תהלים ק'), נעלמת לבד אחרי חצי דקה או בלחיצה על "תודה 🙏".
+if (SC_IS_ADMIN) {
+  var scGratitudeMessages = [
+    "הכל משמיים 🙏 את בדיוק במקום שאת אמורה להיות בו עכשיו.",
+    "רגע קטן להגיד תודה - על היום הזה, ועל כל מה שבנית עד כה.",
+    "לפני שממשיכים - תודה. על העבודה, על הכוח, ועל כל מי שאת עוזרת לה דרך SheCan.",
+    "אל תשכחי להגיד תודה היום - גם על הדברים הקטנים.",
+  ];
+  function scShowGratitudeToast(){
+    if (document.getElementById("scGratitudeToast")) return;
+    var msg = scGratitudeMessages[Math.floor(Math.random() * scGratitudeMessages.length)];
+    var div = document.createElement("div");
+    div.id = "scGratitudeToast";
+    div.className = "sc-gratitude-toast";
+    div.innerHTML =
+      '<div style="font-weight:800;margin-bottom:6px;">🙏 תזכורת קטנה</div>' +
+      '<div>' + msg + '</div>' +
+      '<div class="muted" style="margin-top:8px;font-size:12px;line-height:1.6;">מתוך "מזמור לתודה" (תהלים ק׳): "עִבְדוּ אֶת ה׳ בְּשִׂמְחָה... כִּי טוֹב ה׳, לְעוֹלָם חַסְדּוֹ".</div>' +
+      '<button type="button" class="btn btn-small" style="margin-top:10px;width:100%;">תודה 🙏</button>';
+    div.querySelector("button").addEventListener("click", function(){ div.remove(); });
+    document.body.appendChild(div);
+    setTimeout(function(){ if (div.parentNode) div.parentNode.removeChild(div); }, 30000);
+  }
+  setInterval(scShowGratitudeToast, 10 * 60 * 1000);
 }
 var SC_CITIES = ${JSON.stringify(d.cities.map((c) => ({ id: c.id, name: c.name })))};
 
@@ -1346,147 +1412,9 @@ function scOpenCropModal(img, input, boxSize, outSize) {
 }
 document.addEventListener("DOMContentLoaded", scSetupLogoCropper);
 
-// ---- "אין לך לוגו? ליצור אחד ב-AI" - לכל <button
-// data-sc-generate-logo="FILE_INPUT_ID:BUSINESS_NAME_INPUT_ID:CATEGORY_SELECT_ID"> באתר (כרגע:
-// הרשמה + עדכון פרופיל באזור האישי). מנסה קודם שירות AI חיצוני חינמי (ר' GET
-// /api/generate-logo-ai ב-server.js - image.pollinations.ai, בלי מפתח/הרשמה/עלות) שמייצר לוגו
-// אמיתי מותאם לשם ולתחום שלה; ורק אם זה נכשל/איטי מדי (שירות ציבורי בלי SLA), נופל אוטומטית
-// חזרה למונוגרם המקומי מבוסס-canvas למטה (1-2 האותיות הראשונות על רקע גרדיאנט ממותג) - כך
-// שהיא אף פעם לא נשארת תקועה בלי שום לוגו. בשני המקרים מזריקה את התוצאה כקובץ תמונה אמיתי
-// לתוך ה-<input type="file"> הקיים באמצעות DataTransfer - בדיוק כמו שאישור החיתוך ב-
-// scOpenCropModal למעלה כבר עושה - כך שקוד השרת (fileToDataUri על body.files.logo) לא צריך
-// שום שינוי וזה מתנהג בדיוק כמו העלאת קובץ רגילה על ידה.
-var SC_LOGO_PALETTE = [
-  ["#c1b2a1", "#9a8e81"], ["#E8B4C0", "#C98A9A"], ["#D4A574", "#B8895A"],
-  ["#C97B63", "#A85D47"], ["#A3B18A", "#7D8C5C"], ["#B08BA0", "#8C6A80"],
-  ["#8FA3AD", "#6B838F"], ["#A67B5B", "#8A6244"],
-];
-function scLogoInitials(name) {
-  // הערה: הקובץ הזה כולו נבנה בתוך template literal ענק אחד (ר' page() ב-layout.js) - בתוכו
-  // \\s הופך בזמן ה-parse ל-\s בפועל (ורק \\s עם קו נטוי כפול שורד ומגיע ככה לדפדפן) - בלי
-  // ההכפלה, \s הופך ל-s בטעות (הקו הנטוי הבודד נבלע כי הוא לא תו escape מוכר ב-template
-  // literal), מה שגורם לפיצול לפי האות s במקום לפי רווח.
-  var words = (name || "").trim().split(/\\s+/).filter(Boolean);
-  var chars = words.slice(0, 2).map(function (w) { return w.charAt(0); }).join("");
-  return (chars || "?").toUpperCase();
-}
-function scLogoColorIndex(seedText) {
-  var h = 0;
-  for (var i = 0; i < seedText.length; i++) h = (h * 31 + seedText.charCodeAt(i)) >>> 0;
-  return h % SC_LOGO_PALETTE.length;
-}
-function scDrawGeneratedLogo(canvas, name, variant) {
-  var size = canvas.width;
-  var ctx = canvas.getContext("2d");
-  var colors = SC_LOGO_PALETTE[scLogoColorIndex((name || "עסק") + "|" + variant)];
-  var grad = ctx.createLinearGradient(0, 0, size, size);
-  grad.addColorStop(0, colors[0]);
-  grad.addColorStop(1, colors[1]);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold " + Math.round(size * 0.42) + "px Arial, Helvetica, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  // חובה במפורש - קנבס חדש שלא הוזרק ל-DOM לא יורש את כיווניות RTL של הדף, ובלעדי זה שני
-  // אותיות עבריות (כמו רוב שמות העסקים) עלולות להיצייר בסדר הפוך (LTR כברירת מחדל של קנבס).
-  ctx.direction = "rtl";
-  ctx.fillText(scLogoInitials(name), size / 2, size / 2 + size * 0.02);
-}
-function scSetupLogoGenerator() {
-  document.querySelectorAll("[data-sc-generate-logo]").forEach(function (btn) {
-    if (btn.dataset.scWired) return;
-    btn.dataset.scWired = "1";
-    var ids = btn.getAttribute("data-sc-generate-logo").split(":");
-    var fileInput = document.getElementById(ids[0]);
-    var nameInput = document.getElementById(ids[1]);
-    var categorySelect = ids[2] ? document.getElementById(ids[2]) : null;
-    var previewWrap = document.getElementById(ids[0] + "GenPreview");
-    if (!fileInput || !previewWrap) return;
-    var seed = Math.floor(Math.random() * 100000);
-    var originalLabel = btn.textContent;
-
-    function applyBlobToInput(blob, filename, mimeType) {
-      if (!blob || !window.DataTransfer) return false;
-      try {
-        var dt = new DataTransfer();
-        dt.items.add(new File([blob], filename, { type: mimeType }));
-        fileInput.files = dt.files;
-        return true;
-      } catch (err) { return false; }
-    }
-    function showPreview(src, noteText) {
-      previewWrap.innerHTML = "";
-      var img = document.createElement("img");
-      img.src = src;
-      img.alt = "תצוגה מקדימה של הלוגו שנוצר";
-      img.style.cssText = "width:90px;height:90px;object-fit:cover;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);vertical-align:middle;";
-      var retryBtn = document.createElement("button");
-      retryBtn.type = "button";
-      retryBtn.className = "btn btn-small btn-outline";
-      retryBtn.textContent = "🔄 גרסה אחרת";
-      retryBtn.style.cssText = "margin-inline-start:10px;vertical-align:middle;";
-      retryBtn.addEventListener("click", function () { seed = Math.floor(Math.random() * 100000); generate(); });
-      var okNote = document.createElement("span");
-      okNote.className = "muted";
-      okNote.style.cssText = "display:block;font-size:12px;margin-top:6px;";
-      okNote.textContent = noteText;
-      previewWrap.appendChild(img);
-      previewWrap.appendChild(retryBtn);
-      previewWrap.appendChild(okNote);
-    }
-    function generateLocalFallback(name, note) {
-      var canvas = document.createElement("canvas");
-      canvas.width = 640; canvas.height = 640;
-      scDrawGeneratedLogo(canvas, name, seed);
-      canvas.toBlob(function (blob) {
-        if (!applyBlobToInput(blob, "logo-generated.png", "image/png")) return;
-        showPreview(canvas.toDataURL("image/png"), note);
-      }, "image/png");
-    }
-    function generate() {
-      var name = (nameInput && nameInput.value) || "";
-      if (!name.trim()) {
-        alert("קודם תכתבי את שם העסק למעלה, ואז אפשר ליצור לוגו ממנו :)");
-        return;
-      }
-      var categoryName = "";
-      if (categorySelect && categorySelect.selectedIndex > 0) {
-        var opt = categorySelect.options[categorySelect.selectedIndex];
-        categoryName = opt ? opt.text : "";
-      }
-      btn.disabled = true;
-      btn.textContent = "יוצרת לוגו ב-AI... (עד כמה שניות)";
-      var qs = "businessName=" + encodeURIComponent(name) + "&category=" + encodeURIComponent(categoryName) + "&seed=" + seed;
-      var controller = window.AbortController ? new AbortController() : null;
-      var timeoutId = controller ? setTimeout(function () { controller.abort(); }, 27000) : null;
-      fetch("/api/generate-logo-ai?" + qs, { signal: controller ? controller.signal : undefined })
-        .then(function (resp) {
-          if (timeoutId) clearTimeout(timeoutId);
-          if (!resp.ok) throw new Error("upstream not ok");
-          return resp.blob();
-        })
-        .then(function (blob) {
-          if (!blob || blob.size === 0 || blob.type.indexOf("image/") !== 0) throw new Error("not an image");
-          var ext = blob.type.indexOf("png") !== -1 ? "png" : "jpg";
-          if (!applyBlobToInput(blob, "logo-ai-generated." + ext, blob.type)) throw new Error("could not attach file");
-          var objectUrl = URL.createObjectURL(blob);
-          showPreview(objectUrl, "✓ נוצר לוגו ב-AI! זה יישמר כלוגו שלך כשתלחצי על שמירה.");
-        })
-        .catch(function () {
-          // שירות ה-AI החיצוני לא זמין/איטי מדי/נכשל - נופלים חזרה למונוגרם המקומי, כדי שהיא
-          // תמיד תצא מפה עם איזשהו לוגו ולא תישאר תקועה.
-          generateLocalFallback(name, "⚠️ שירות ה-AI לא זמין כרגע - יצרנו לך לוגו זמני במקום. אפשר ללחוץ למטה על גרסה אחרת כדי לנסות שוב.");
-        })
-        .finally(function () {
-          btn.disabled = false;
-          btn.textContent = originalLabel;
-        });
-    }
-    btn.addEventListener("click", generate);
-  });
-}
-document.addEventListener("DOMContentLoaded", scSetupLogoGenerator);
+// "אין לך לוגו? ליצור אחד ב-AI" (יצירת לוגו אוטומטית - AI חיצוני + נפילה למונוגרם מקומי)
+// הוסרה 2026-08-27 לפי בקשה מפורשת - חזרה לפשוט להעלות תמונת לוגו רגילה (ר' data-sc-crop
+// למעלה, שעדיין עובד בדיוק כמו קודם לחיתוך לוגו שהיא כן מעלה בעצמה).
 
 // ---- Inspiration-story minimum-answers live counter ----
 // Both the /join and freelancer-dashboard story forms mark their question textareas with
@@ -2258,6 +2186,14 @@ function scArenaShowTab(n, btn){
   for (var j = 0; j < btns.length; j++) btns[j].classList.remove("active");
   var activeBtn = btn || btns[n - 1];
   if (activeBtn) activeBtn.classList.add("active");
+  // תג "🥊 הזירה" בתפריט (ר' arenaUnseenPollCount למעלה) נוגע רק בלשונית 3 (הסקרים) - מסמנת
+  // "נראה" בשרת רק ברגע שהיא באמת פותחת את הלשונית הזו (בין אם בלחיצה ובין אם דרך קישור עמוק
+  // שנוחת ישר עליה), לא סתם מהכניסה ל-/arena - לפי בקשה מפורשת, כדי שהמספר לא ייעלם לפני
+  // שהיא בכלל ראתה את הסקר החדש. fire-and-forget בכוונה - גם אם זה נכשל (או שהיא לא מחוברת
+  // בכלל), אין שום צורך לעכב או לשנות את מה שכבר קורה על המסך.
+  if (n === 3 && typeof SC_LOGGED_IN !== "undefined" && SC_LOGGED_IN) {
+    fetch("/arena/mark-seen", { method: "POST" }).catch(function () {});
+  }
   // On a phone, the hero text + 3 tab buttons above fill most (or all) of the screen, so
   // picking a tab used to leave its content sitting below the fold - she'd have to notice and
   // scroll down herself to realize anything happened. This brings the freshly-opened section
