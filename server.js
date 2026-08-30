@@ -1105,9 +1105,28 @@ function getWeeklyFeature(d) {
   const withQuotes = d.freelancers
     .filter((f) => f.status === "approved" && f.active !== false && (f.inspirationQuote || "").trim())
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  // tickRotation still runs unconditionally, exactly as before the referral-winner override
+  // below existed - it keeps its own internal automatic-rotation state (currentIdKey/
+  // lastBoundaryKey) correctly advancing in the background even while the override is showing
+  // instead of the auto pick, the same way it already tolerates nobody visiting for a while
+  // (see the comment above tickRotation) - so the automatic queue is never surprised or thrown
+  // off once the override eventually expires.
   const autoId = tickRotation(d, withQuotes, (f) => f.id, WEEKLY_TIP_BOUNDARY, {
     currentIdKey: "weeklyTipCurrentFreelancerId", lastBoundaryKey: "weeklyTipLastBoundary", manualIdKey: "freelancerOfWeekId",
   });
+  // "זכיית מרוץ ההפניות" - פרס אמיתי של חשיפה בדף הבית למשך פרק זמן שהיא קובעת (למשל חודש
+  // שלם), לא רק מחזור שבועי אחד כמו הפין הידני freelancerOfWeekId למטה - לפי בקשה מפורשת
+  // 2026-08-30 ("רוצה שההבטחה בפועל תתקיים בלי מאמץ נוסף ממך"). עדיפות עליונה על הפין הרגיל
+  // ועל הרוטציה האוטומטית, כל עוד freelancerReferralWinnerUntil (תאריך "YYYY-MM-DD", לפי
+  // israelDayKeyOffset) עדיין היום או בעתיד - נבדק בכל טעינה, בלי צורך "לנקות" אותו בעצמה
+  // כשהוא פג: הוא פשוט מפסיק להתאים מעצמו וחוזרים לפין הרגיל/לרוטציה האוטומטית.
+  if (d.settings.freelancerReferralWinnerId && d.settings.freelancerReferralWinnerUntil && israelDayKeyOffset(0) <= d.settings.freelancerReferralWinnerUntil) {
+    const winner = d.freelancers.find((x) => x.id === d.settings.freelancerReferralWinnerId && x.status === "approved" && x.active !== false);
+    if (winner) {
+      if ((winner.inspirationQuote || "").trim() && !winner.weeklyTipPublished) { winner.weeklyTipPublished = true; db.save(); }
+      return { text: winner.inspirationQuote || d.settings.weeklyMessage, freelancer: winner, isReferralWinner: true };
+    }
+  }
   if (d.settings.freelancerOfWeekId) {
     const picked = d.freelancers.find((x) => x.id === d.settings.freelancerOfWeekId && x.status === "approved" && x.active !== false);
     if (picked) {
@@ -1788,7 +1807,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update108 - 2026-08-30 - וידג'ט שיחות תמיכה ממתינות + תזכורת חצי שעה + סגירה/המשך טיפול + כפתורי הדבקה מהירה, ניהול מלא של תחומים ותתי-תחומים (שינוי שם/מחיקה עם חסימת שימוש/שיוך מחדש), הערה מהירה למבצע ההפניות של עצמאיות/לקוחות";
+const DEPLOY_MARKER = "update108 - 2026-08-30 - וידג'ט שיחות תמיכה ממתינות + תזכורת חצי שעה + סגירה/המשך טיפול + כפתורי הדבקה מהירה, ניהול מלא של תחומים ותתי-תחומים (שינוי שם/מחיקה עם חסימת שימוש/שיוך מחדש), הערה מהירה למבצע ההפניות, והכרזת מנצחת אמיתית עם פרסום בדף הבית עד תאריך שנבחר";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -1881,7 +1900,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
 
       ${weekly.text ? `
       <div class="weekly-tip">
-        <span class="weekly-tip-kicker">From the Pros | טיפ שבועי מהמומחית</span>
+        <span class="weekly-tip-kicker">${weekly.isReferralWinner ? "🏆 העסק המוביל של מרוץ ההפניות" : "From the Pros | טיפ שבועי מהמומחית"}</span>
         <p class="weekly-tip-quote">${esc(weekly.text)}</p>
         <button type="button" class="weekly-tip-like" id="scWeeklyLike" data-like-key="${esc(weeklyLikeKey)}" onclick="scLikeWeeklyQuote(this)" aria-label="סמני לייק למשפט השבוע">
           <span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${weeklyLikeCount}</span>
@@ -8051,6 +8070,33 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <button class="btn btn-small" type="submit">עדכון המבצע</button>
       </form>
     </div>
+    <!-- הכרזת מנצחת ופרסום אמיתי בדף הבית - לפי בקשה מפורשת 2026-08-30 ("רוצה שההבטחה בפועל
+         תתקיים בלי מאמץ נוסף ממך"). זה שונה מ"עצמאית השבוע" הרגיל (freelancerOfWeekId, בפאנל
+         "התוכן השבועי" למעלה) - זה פין שמחזיק מעצמו עד תאריך שהיא בוחרת (למשל חודש שלם), לא
+         רק מחזור שבועי אחד. ר' getWeeklyFeature למעלה בקובץ ל-override עצמו. -->
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <h4 style="margin:0 0 6px;">🏆 הכרזת מנצחת ופרסום בדף הבית</h4>
+      ${(() => {
+        const currentWinner = d.settings.freelancerReferralWinnerId && d.settings.freelancerReferralWinnerUntil && israelDayKeyOffset(0) <= d.settings.freelancerReferralWinnerUntil
+          ? d.freelancers.find((x) => x.id === d.settings.freelancerReferralWinnerId) : null;
+        return currentWinner
+          ? `<p class="muted">מוצגת כרגע כ"העסק המוביל" בדף הבית: <strong>${esc(currentWinner.businessName || currentWinner.name)}</strong>, עד ה-${esc(d.settings.freelancerReferralWinnerUntil)}.</p>
+             <form method="post" action="/admin/referral-settings/clear-winner" style="margin-bottom:10px;"><button class="btn btn-small btn-outline" type="submit">ביטול הפרסום</button></form>`
+          : `<p class="muted">אין כרגע מנצחת מוכרזת - כשתבחרי אחת, היא תוצג בדף הבית (בלוק "טיפ שבועי") עד התאריך שתקבעי, בלי תלות ברוטציה השבועית הרגילה.</p>`;
+      })()}
+      <form method="post" action="/admin/referral-settings/set-winner" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <label style="flex:2;min-width:200px;">המנצחת
+          <select name="freelancerId" required>
+            <option value="">בחרי עצמאית</option>
+            ${d.freelancers.filter((f) => f.status === "approved").sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he")).map((f) => `<option value="${f.id}" ${freelancerReferralRanking[0] && freelancerReferralRanking[0].id === f.id ? "selected" : ""}>${esc(f.businessName || f.name)}${freelancerReferralRanking[0] && freelancerReferralRanking[0].id === f.id ? " (מובילה כרגע)" : ""}</option>`).join("")}
+          </select>
+        </label>
+        <label style="flex:1;min-width:150px;">מוצגת עד תאריך
+          <input type="date" name="until" value="${esc(israelDateKey(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))}" required />
+        </label>
+        <button class="btn btn-small" type="submit">פרסום כמנצחת</button>
+      </form>
+    </div>
   </div>
 
   <div class="panel" id="customer-referral-race" style="scroll-margin-top:90px;">
@@ -8738,6 +8784,34 @@ route("POST", "/admin/referral-settings/quick-update", async (req, res, params, 
   d.settings[`${which}ReferralPromoNote`] = clip((body.get("note") || "").trim(), 200);
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("המבצע עודכן!")}#${which}-referral-race`);
+});
+
+// הכרזת מנצחת מרוץ ההפניות ופרסום אמיתי בדף הבית עד תאריך שהיא בוחרת - ר' getWeeklyFeature
+// למעלה בקובץ שממש נותן לזה עדיפות בתצוגה. "until" הוא מחרוזת "YYYY-MM-DD" (מגיע מ-<input
+// type="date">) - אותו פורמט בדיוק כמו israelDayKeyOffset, כדי שההשוואה בין השניים תהיה פשוטה
+// והשוואת מחרוזות רגילה (עובד כי שני הצדדים תמיד "YYYY-MM-DD").
+route("POST", "/admin/referral-settings/set-winner", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const f = d.freelancers.find((x) => x.id === body.get("freelancerId"));
+  const until = (body.get("until") || "").trim();
+  if (!f || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    return redirect(res, `/admin?err=${encodeURIComponent("יש לבחור עצמאית ותאריך תקין.")}#freelancer-referral-race`);
+  }
+  d.settings.freelancerReferralWinnerId = f.id;
+  d.settings.freelancerReferralWinnerUntil = until;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`${f.businessName || f.name} תוצג כ"העסק המוביל" בדף הבית עד ה-${until}!`)}#freelancer-referral-race`);
+});
+
+route("POST", "/admin/referral-settings/clear-winner", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.freelancerReferralWinnerId = null;
+  d.settings.freelancerReferralWinnerUntil = null;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הפרסום בוטל - חוזרים לרוטציה הרגילה.")}#freelancer-referral-race`);
 });
 
 route("POST", "/admin/magazine", async (req, res, params, query, ctx) => {
