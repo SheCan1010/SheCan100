@@ -130,9 +130,17 @@ function pendingAdminCount() {
   const unreadMessages = (d.contactMessages || []).filter((m) => !m.read).length;
   // Support chat is now multi-message per thread (grouped by voterKey), not single Q&A
   // records - count THREADS that have at least one unread asker message, not raw messages.
+  // A thread she closed or moved to "המשך טיפול" no longer counts as "waiting" here either
+  // (kept in sync by hand with the identical openSupportMessages logic in GET /admin,
+  // server.js - see the comment on this function above).
   const supportByKey = {};
   (d.supportMessages || []).forEach((m) => { (supportByKey[m.voterKey] = supportByKey[m.voterKey] || []).push(m); });
-  const openSupportMessages = Object.values(supportByKey).filter((msgs) => msgs.some((m) => m.from === "asker" && !m.read)).length;
+  const supportClosedSet = new Set(d.supportClosed || []);
+  const supportSnoozedSet = new Set((d.adminSnoozed || []).map((s) => s.key));
+  const openSupportMessages = Object.keys(supportByKey).filter((key) => {
+    if (supportClosedSet.has(key) || supportSnoozedSet.has(`support:${key}`)) return false;
+    return supportByKey[key].some((m) => m.from === "asker" && !m.read);
+  }).length;
   let pendingListings = 0;
   d.freelancers.forEach((f) => (f.additionalListings || []).forEach((l) => { if (l.status === "pending") pendingListings++; }));
   const pendingCommunityListings = (d.communityListings || []).filter((c) => c.status === "pending").length;
@@ -842,6 +850,16 @@ form .field{margin-bottom:6px;}
    below) - bottom corner, small, self-dismissing, never blocks the page underneath it. */
 .sc-gratitude-toast{position:fixed;bottom:20px;left:20px;z-index:150;background:var(--white);border:1.5px solid var(--rose);border-radius:14px;padding:16px 18px;max-width:300px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:14px;line-height:1.6;text-align:right;}
 @media (max-width:600px){.sc-gratitude-toast{left:12px;right:12px;max-width:none;bottom:12px;}}
+/* וידג'ט "שיחות תמיכה ממתינות" הצף - צד ימין למעלה, כדי לא להתנגש עם הכפתור הצף ללקוחה
+   (bottom:right) או עם טוסט התודה/וידג'ט הנגישות (bottom:left) - ר' scSupportOpenWidget למטה. */
+.sc-support-open-widget{position:fixed;top:78px;left:20px;z-index:140;background:var(--white);border:1.5px solid var(--rose);border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13.5px;max-width:280px;text-align:right;overflow:hidden;}
+.sc-support-open-widget-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;background:#FBEAEA;cursor:pointer;font-weight:800;}
+.sc-support-open-widget-body{max-height:320px;overflow-y:auto;padding:6px 10px 10px;}
+.sc-support-open-item{border-top:1px solid #eee2d8;padding:8px 0;}
+.sc-support-open-item:first-child{border-top:none;}
+.sc-support-open-item a{display:block;font-weight:700;color:var(--rose-dark);}
+.sc-support-open-item .muted{margin:2px 0 0;}
+@media (max-width:600px){.sc-support-open-widget{left:8px;right:8px;max-width:none;top:auto;bottom:8px;}}
 `;
 
 function subcatsJsMap() {
@@ -1225,6 +1243,63 @@ if (SC_IS_ADMIN) {
     setTimeout(function(){ if (div.parentNode) div.parentNode.removeChild(div); }, 30000);
   }
   setInterval(scShowGratitudeToast, 10 * 60 * 1000);
+}
+// וידג'ט צף "שיחות תמיכה ממתינות" - לפי בקשה מפורשת 2026-08-30 ("שים את השיחה פתוחה כזה
+// בצד במוקטן כדי שאזכור לענות לה") - מוצג בכל עמוד ניהול (לא רק ב-/admin עצמו), ניזון מ-GET
+// /admin/support/open-summary (server.js, גם מפעיל שם את בדיקת תזכורת חצי השעה). נעלם לגמרי
+// כשאין אף שיחה ממתינה. מצב "מוקטן/מורחב" נשמר ב-localStorage כדי שלא "יקפוץ" בחזרה בכל טעינת
+// עמוד אחרי שהיא כיווצה אותו.
+if (SC_IS_ADMIN) {
+  var scSupportWidgetEl = null;
+  function scRenderSupportWidget(threads){
+    if (!threads || !threads.length) {
+      if (scSupportWidgetEl && scSupportWidgetEl.parentNode) scSupportWidgetEl.parentNode.removeChild(scSupportWidgetEl);
+      scSupportWidgetEl = null;
+      return;
+    }
+    var minimized = false;
+    try { minimized = localStorage.getItem("scSupportWidgetMinimized") === "1"; } catch (e) {}
+    if (!scSupportWidgetEl) {
+      scSupportWidgetEl = document.createElement("div");
+      scSupportWidgetEl.className = "sc-support-open-widget";
+      document.body.appendChild(scSupportWidgetEl);
+    }
+    var head = document.createElement("div");
+    head.className = "sc-support-open-widget-head";
+    head.innerHTML = "<span>💬 " + threads.length + " שיחות ממתינות למענה</span><span>" + (minimized ? "▾" : "▴") + "</span>";
+    head.addEventListener("click", function(){
+      var next = !minimized;
+      try { localStorage.setItem("scSupportWidgetMinimized", next ? "1" : "0"); } catch (e) {}
+      scRenderSupportWidget(threads);
+    });
+    var wrap = document.createElement("div");
+    wrap.appendChild(head);
+    if (!minimized) {
+      var bodyEl = document.createElement("div");
+      bodyEl.className = "sc-support-open-widget-body";
+      threads.slice(0, 8).forEach(function(t){
+        var item = document.createElement("div");
+        item.className = "sc-support-open-item";
+        var waitLabel = t.waitingMinutes >= 60 ? Math.round(t.waitingMinutes / 60) + " שעות" : t.waitingMinutes + " דק'";
+        item.innerHTML =
+          '<a href="' + t.url + '">' + t.name.replace(/</g, "&lt;") + (t.unread > 1 ? " (" + t.unread + " חדשות)" : "") + '</a>' +
+          '<div class="muted" style="font-size:12px;">' + t.lastText.replace(/</g, "&lt;") + '</div>' +
+          '<div class="muted" style="font-size:11px;margin-top:2px;">⏳ ' + waitLabel + ' בלי מענה</div>';
+        bodyEl.appendChild(item);
+      });
+      wrap.appendChild(bodyEl);
+    }
+    scSupportWidgetEl.innerHTML = "";
+    scSupportWidgetEl.appendChild(wrap);
+  }
+  function scPollSupportWidget(){
+    fetch("/admin/support/open-summary", { headers: { "Accept": "application/json" } })
+      .then(function(r){ return r.json(); })
+      .then(function(data){ scRenderSupportWidget(data.threads || []); })
+      .catch(function(){});
+  }
+  scPollSupportWidget();
+  setInterval(scPollSupportWidget, 20000);
 }
 var SC_CITIES = ${JSON.stringify(d.cities.map((c) => ({ id: c.id, name: c.name })))};
 

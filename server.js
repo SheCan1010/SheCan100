@@ -651,6 +651,37 @@ function findOrCreateSubcategory(d, categoryId, name) {
   category.subcategories.push(sub);
   return { sub, isNew: true };
 }
+// "מחיקה חוסמת שימוש" (נוסף 2026-08-30, לפי בקשה מפורשת: אף פעם לא למחוק תחום/תת-תחום
+// שמשויכים אליו עסקים/בקשות בפועל, כדי לא להשאיר רשומה עם שיוך "יתום") - סופרות בכמה מקומות
+// באתר תחום/תת-תחום נתון עדיין בשימוש בפועל: התחום/תת-התחום הראשי של עצמאית, התחומים הנוספים
+// שלה (additionalCategoryIds), כל אחד מ"התחומים הנוספים" שלה כרשומה נפרדת (additionalListings),
+// בקשות שירות פתוחות (serviceRequests) ושאלות בזירה (arenaQuestions). אם הספירה גדולה מ-0,
+// המחיקה חסומה בצד השרת (לא רק מוסתר הכפתור בתצוגה) - היא צריכה קודם לשייך את מה שמשתמש בזה
+// מחדש דרך פאנל "שיוך מחדש" (ר' POST /admin/reassign-listing למטה).
+function categoryUsageCount(d, categoryId) {
+  let count = 0;
+  d.freelancers.forEach((f) => {
+    if (f.categoryId === categoryId) count++;
+    if ((f.additionalCategoryIds || []).includes(categoryId)) count++;
+    (f.additionalListings || []).forEach((l) => { if (l.categoryId === categoryId) count++; });
+  });
+  (d.serviceRequests || []).forEach((r) => { if (r.categoryId === categoryId) count++; });
+  (d.arenaQuestions || []).forEach((q) => { if (q.categoryId === categoryId) count++; });
+  return count;
+}
+function subcategoryUsageCount(d, categoryId, subcategoryId) {
+  let count = 0;
+  d.freelancers.forEach((f) => {
+    if (f.categoryId === categoryId) {
+      const ids = f.subcategoryIds && f.subcategoryIds.length ? f.subcategoryIds : (f.subcategoryId ? [f.subcategoryId] : []);
+      if (ids.includes(subcategoryId)) count++;
+    }
+    (f.additionalListings || []).forEach((l) => { if (l.categoryId === categoryId && l.subcategoryId === subcategoryId) count++; });
+  });
+  (d.serviceRequests || []).forEach((r) => { if (r.categoryId === categoryId && r.subcategoryId === subcategoryId) count++; });
+  (d.arenaQuestions || []).forEach((q) => { if (q.categoryId === categoryId && q.subcategoryId === subcategoryId) count++; });
+  return count;
+}
 // Resolves the category/subcategory a freelancer picked at registration or profile-update time.
 // categoryId === "__other__" is still the one remaining "אחר" (Other) escape hatch - her field
 // isn't in the top-level category list at all, so she typed a whole new category (and
@@ -1512,6 +1543,62 @@ function isAdminOnline(d) {
 function encodeSupportKey(key) { return Buffer.from(String(key), "utf8").toString("base64url"); }
 function decodeSupportKey(enc) { try { return Buffer.from(String(enc), "base64url").toString("utf8"); } catch { return ""; } }
 
+// "לסגור את השיחה" (נוסף 2026-08-30, לפי בקשה מפורשת) - d.supportClosed הוא פשוט רשימת
+// voterKey שסומנו כסגורים על ידה. זה נפרד לגמרי מ"המשך טיפול" (isSnoozed/d.adminSnoozed עם
+// מפתח support:<voterKey>, ר' הפאנל הגנרי למעלה): "סגירה" אומרת "השיחה הזו נגמרה", "המשך
+// טיפול" אומר "אני עוד אחזור לזה". שתיהן מוציאות את השיחה מ"ממתינה למענה" (openSupportMessages/
+// התג בניווט/הוידג'ט הצף/תזכורת חצי השעה), אבל שיחה סגורה עדיין מופיעה בטבלת השיחות (מסומנת
+// "🔒 סגורה") בעוד ששיחה במעקב נעלמת ממנה לגמרי (בדיוק כמו כל פריט אחר שהועבר להמשך טיפול).
+function isSupportClosed(d, key) {
+  return (d.supportClosed || []).includes(key);
+}
+// הודעה חדשה מהשואלת היא סימן חיים - "מפתיעה" אותה בחזרה לתור הרגיל גם אם היא הייתה סגורה וגם
+// אם הייתה מסומנת "המשך טיפול", כדי שהודעה טרייה אף פעם לא תישאר קבורה מבלי שהיא תשים לב.
+function reopenSupportThread(d, key) {
+  if (d.supportClosed && d.supportClosed.includes(key)) {
+    d.supportClosed = d.supportClosed.filter((k) => k !== key);
+  }
+  if (d.adminSnoozed && d.adminSnoozed.some((s) => s.key === `support:${key}`)) {
+    d.adminSnoozed = d.adminSnoozed.filter((s) => s.key !== `support:${key}`);
+  }
+}
+// תזכורת "עדיין לא ענית" אחרי חצי שעה בלי מענה (לפי בקשה מפורשת 2026-08-30). האתר לא מריץ
+// תהליך רקע קבוע (אין setInterval בצד שרת בכל הקובץ) - הבדיקה הזו רצה בכל פינג-חי/טעינת עמוד
+// ניהול (ר' קריאות ל-checkAndSendUnansweredReminders למטה), כלומר כל עוד היא פעילה איפשהו
+// באזור הניהול. remindedAt נשמר על ההודעה הישנה ביותר שעדיין לא נענתה בכל שרשור, כדי לשלוח את
+// התזכורת פעם אחת בלבד לכל "פרק זמן בלי מענה" - לא בכל פעם שהבדיקה רצה, ולא שוב לאחר שהיא
+// ענתה/סגרה/העבירה להמשך טיפול (שתי הפעולות האלה גם חוסמות את הבדיקה מלכתחילה, ר' isSupportClosed/
+// isSnoozed למטה).
+function checkAndSendUnansweredReminders(d) {
+  const REMIND_AFTER_MS = 30 * 60 * 1000;
+  const now = Date.now();
+  const byKey = {};
+  (d.supportMessages || []).forEach((m) => { (byKey[m.voterKey] = byKey[m.voterKey] || []).push(m); });
+  let changed = false;
+  Object.keys(byKey).forEach((key) => {
+    if (isSupportClosed(d, key) || isSnoozed(d, `support:${key}`)) return;
+    const oldestUnread = byKey[key]
+      .filter((m) => m.from === "asker" && !m.read)
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
+    if (!oldestUnread || oldestUnread.remindedAt) return;
+    if (now - new Date(oldestUnread.createdAt).getTime() < REMIND_AFTER_MS) return;
+    oldestUnread.remindedAt = new Date().toISOString();
+    changed = true;
+    const notifyAdmin = d.admins[0];
+    const notifyTo = d.settings.contactEmail || notifyAdmin.email;
+    const url = `/admin/support/thread/${encodeSupportKey(key)}`;
+    sendPushToUser(notifyAdmin, { title: "עדיין לא ענית בתמיכה 💬", body: `${oldestUnread.name}: ${oldestUnread.text}`.slice(0, 140), url })
+      .then((pushed) => {
+        if (!pushed) {
+          sendEmail(notifyTo, `תזכורת - לא ענית ל${oldestUnread.name} בתמיכה`,
+            `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>ההודעה הזו מ${esc(oldestUnread.name)} מחכה למענה כבר יותר מחצי שעה:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(oldestUnread.text)}</p><p>אפשר לענות, לסגור את השיחה או להעביר להמשך טיפול מפאנל הניהול.</p></div>`
+          ).catch(() => {});
+        }
+      }).catch(() => {});
+  });
+  if (changed) db.save();
+}
+
 function supportBubbleHtml(m) {
   const cls = m.from === "admin" ? "from-admin" : "from-asker";
   return `<div class="chat-msg ${cls}" data-id="${esc(m.id)}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.createdAt).toLocaleString("he-IL"))}</span></div>`;
@@ -1701,7 +1788,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update107 - 2026-08-30 - \"יום\" בכל האתר מתחלף בחצות שעון ישראל (לא UTC), ומאגר לקוחות עם מיילים + ייצוא CSV בניהול";
+const DEPLOY_MARKER = "update108 - 2026-08-30 - וידג'ט שיחות תמיכה ממתינות + תזכורת חצי שעה + סגירה/המשך טיפול + כפתורי הדבקה מהירה, ניהול מלא של תחומים ותתי-תחומים (שינוי שם/מחיקה עם חסימת שימוש/שיוך מחדש), הערה מהירה למבצע ההפניות של עצמאיות/לקוחות";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -5860,6 +5947,7 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
       <button type="button" class="btn btn-small" onclick="scCopyLink('scCustomerRefLink')">העתקת קישור</button>
     </div>
     <p class="muted" style="font-size:12px;margin-top:10px;">*הרישום והתחרות פעילים עד ה-${esc(d.settings.customerReferralContestEndDate)}, והזוכות יוכרזו ב-${esc(d.settings.customerReferralAnnounceDate)}!</p>
+    ${d.settings.customerReferralPromoNote ? `<p style="font-weight:700;margin-top:8px;">📢 ${esc(d.settings.customerReferralPromoNote)}</p>` : ""}
   </div>
   ${referralStatusHtml({
     entities: d.customers, refField: "referredByCustomerId", selfId: customer.id,
@@ -6227,6 +6315,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
       <button type="button" class="btn btn-small" onclick="scCopyLink('scFreelancerRefLink')">העתקת קישור</button>
     </div>
     <p class="muted" style="font-size:11.5px;margin-top:10px;">*התחרות פעילה עד ה-${esc(d.settings.freelancerReferralContestEndDate)} ופרסום העסק המוביל יחל ב-${esc(d.settings.freelancerReferralAnnounceDate)}.</p>
+    ${d.settings.freelancerReferralPromoNote ? `<p style="font-weight:700;margin-top:8px;">📢 ${esc(d.settings.freelancerReferralPromoNote)}</p>` : ""}
   </div>
   ${referralStatusHtml({
     entities: d.freelancers, refField: "referredByFreelancerId", selfId: f.id,
@@ -7077,6 +7166,9 @@ route("POST", "/admin/inspiration-quote/:id/reject", async (req, res, params, qu
 route("GET", "/admin", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
+  // בכל טעינה של עמוד הניהול בודקים אם יש שיחת תמיכה שממתינה למענה כבר יותר מחצי שעה בלי
+  // תזכורת - ר' checkAndSendUnansweredReminders למעלה.
+  checkAndSendUnansweredReminders(d);
   const admin = d.admins.find((a) => a.id === ctx.session.id) || d.admins[0];
   // טוגל "שבוע אחרון / חודש אחרון" בפאנל "מגמות יומיות" (ר' adminTrendChartsHtml) - כל ערך
   // אחר מלבד "30" (כולל חסר) נופל חזרה לברירת המחדל 7, לפי בקשה מפורשת.
@@ -7179,17 +7271,24 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // Groups the flat supportMessages list (individual chat messages, see db.js) into one row per
   // conversation (by voterKey) - last message preview + how many of HER unread asker messages
   // are waiting, sorted most-recently-active first, so the newest/most urgent threads sit on top.
+  // שיחה שסומנה "המשך טיפול" (isSnoozed עם מפתח support:<key>) נעלמת מכאן לגמרי - בדיוק כמו כל
+  // פריט אחר שהועבר להמשך טיפול - ומופיעה רק בפאנל "#followup". שיחה "סגורה" (isSupportClosed)
+  // כן נשארת ברשימה (מסומנת closed:true) כדי שההיסטוריה עדיין נגישה, אבל לא נספרת כ"ממתינה
+  // למענה" (ר' openSupportMessages למטה).
   const supportThreads = (() => {
     const byKey = {};
     (d.supportMessages || []).forEach((m) => { (byKey[m.voterKey] = byKey[m.voterKey] || []).push(m); });
-    return Object.keys(byKey).map((key) => {
-      const msgs = byKey[key].slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      const last = msgs[msgs.length - 1];
-      const unread = msgs.filter((m) => m.from === "asker" && !m.read).length;
-      return { key, name: last.name, email: last.email, lastText: last.text, lastFrom: last.from, lastAt: last.createdAt, unread };
-    }).sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+    return Object.keys(byKey)
+      .filter((key) => !isSnoozed(d, `support:${key}`))
+      .map((key) => {
+        const msgs = byKey[key].slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        const last = msgs[msgs.length - 1];
+        const unread = msgs.filter((m) => m.from === "asker" && !m.read).length;
+        const closed = isSupportClosed(d, key);
+        return { key, name: last.name, email: last.email, lastText: last.text, lastFrom: last.from, lastAt: last.createdAt, unread, closed };
+      }).sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
   })();
-  const openSupportMessages = supportThreads.filter((t) => t.unread > 0).length;
+  const openSupportMessages = supportThreads.filter((t) => !t.closed && t.unread > 0).length;
 
   // Site-visit numbers for the "מספרים כלליים" panel - counted by trackSiteVisit() on every
   // real page load (see near the bottom of the file). Last-7-days breakdown built from
@@ -7382,7 +7481,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <tbody>
         ${sourceRows.map((r) => `<tr><td style="padding:6px 4px;border-bottom:1px solid #eee;">${esc(r.label)}</td><td style="padding:6px 4px;border-bottom:1px solid #eee;">${r.count}</td><td style="padding:6px 4px;border-bottom:1px solid #eee;">${r.pct}%</td></tr>`).join("")}
       </tbody>
-    </table>` : `<p class="muted" style="margin-top:10px;">עדיין אין נתוני מקור - יופיעו כאן ברגע שיהיו כניסות חדשות לאתר.</p>`}
+    </table>
+    <p class="muted" style="margin-top:8px;font-size:12px;">שימי לב: כל אחוז מעוגל בנפרד, אז לפעמים סכום העמודה יוצא 99% או 101% במקום 100% בדיוק - זה טבעי ולא טעות בספירה עצמה.</p>` : `<p class="muted" style="margin-top:10px;">עדיין אין נתוני מקור - יופיעו כאן ברגע שיהיו כניסות חדשות לאתר.</p>`}
   </div>
 
   <div class="panel">
@@ -7908,6 +8008,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <input type="text" name="customerReferralContestEndDate" value="${esc(d.settings.customerReferralContestEndDate || "")}" /></label>
       <label>תאריך הכרזת הזוכות
       <input type="text" name="customerReferralAnnounceDate" value="${esc(d.settings.customerReferralAnnounceDate || "")}" /></label>
+      <label>הערה למבצע (אופציונלי - מוצגת ללקוחות ליד המבצע, למשל "המבצע הוארך!")
+      <input type="text" name="customerReferralPromoNote" maxlength="200" value="${esc(d.settings.customerReferralPromoNote || "")}" placeholder="השאירי ריק אם אין הערה" /></label>
 
       <h4 style="margin-top:22px;">תחרות הפניות - עצמאיות ("צרפי חברה")</h4>
       <p class="muted" style="margin-top:-6px;">שולט על הבלוק שמופיע באזור האישי של העצמאיות.</p>
@@ -7916,11 +8018,13 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <input type="text" name="freelancerReferralContestEndDate" value="${esc(d.settings.freelancerReferralContestEndDate || "")}" /></label>
       <label>תאריך פרסום העסק המוביל
       <input type="text" name="freelancerReferralAnnounceDate" value="${esc(d.settings.freelancerReferralAnnounceDate || "")}" /></label>
+      <label>הערה למבצע (אופציונלי - מוצגת לעצמאיות ליד המבצע, למשל "המבצע הוארך!")
+      <input type="text" name="freelancerReferralPromoNote" maxlength="200" value="${esc(d.settings.freelancerReferralPromoNote || "")}" placeholder="השאירי ריק אם אין הערה" /></label>
       <button class="btn btn-small" style="margin-top:10px;" type="submit">עדכון</button>
     </form>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="freelancer-referral-race" style="scroll-margin-top:90px;">
     <h3>מרוץ ההפניות של העצמאיות - מי מובילה 🏆</h3>
     <p class="muted">כל עצמאית שהצטרפה דרך קישור אישי של עצמאית אחרת (או שבחרה את שמה ידנית ב"איך שמעת עלינו" בטופס ההרשמה) - ממוין מהכי הרבה הפניות להכי פחות, כולל השמות של מי שנכנסה דרך הקישור של כל אחת.</p>
     ${leaderGapSummaryHtml(freelancerReferralRanking, "הפניות")}
@@ -7930,9 +8034,26 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td>${esc(r.referred.join(", "))}</td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין אין הפניות בפועל - אף עצמאית לא נרשמה עדיין דרך הקישור האישי של עצמאית אחרת.</p>`}
+    <!-- עדכון מהיר של תאריך הסיום/הכרזה וההערה של המבצע - ישירות מהפאנל הזה, בלי לצאת אליו, לפי
+         בקשה מפורשת 2026-08-30 ("תן לי אופציה לרשום ליד המבצע... כי אני רוצה להאריך את המבצע").
+         נתיב נפרד (לא הטופס הכללי של /admin/referral-settings) כדי שלא יאפס בטעות את שאר השדות
+         (כולל תחרות הלקוחות) שלא מופיעים בטופס המצומצם הזה. -->
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <p class="muted" style="margin:0 0 8px;">עדכון מהיר של המבצע (מוצג לעצמאיות באזור האישי שלהן)${d.settings.freelancerReferralPromoNote ? ` - הערה נוכחית: "${esc(d.settings.freelancerReferralPromoNote)}"` : ""}</p>
+      <form method="post" action="/admin/referral-settings/quick-update" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <input type="hidden" name="which" value="freelancer" />
+        <label style="flex:1;min-width:130px;">תאריך סיום
+        <input type="text" name="endDate" value="${esc(d.settings.freelancerReferralContestEndDate || "")}" /></label>
+        <label style="flex:1;min-width:130px;">תאריך הכרזה
+        <input type="text" name="announceDate" value="${esc(d.settings.freelancerReferralAnnounceDate || "")}" /></label>
+        <label style="flex:2;min-width:200px;">הערה למבצע (אופציונלי)
+        <input type="text" name="note" maxlength="200" value="${esc(d.settings.freelancerReferralPromoNote || "")}" placeholder="למשל: המבצע הוארך!" /></label>
+        <button class="btn btn-small" type="submit">עדכון המבצע</button>
+      </form>
+    </div>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="customer-referral-race" style="scroll-margin-top:90px;">
     <h3>מרוץ ההפניות של הלקוחות - מי מובילה 🏆</h3>
     <p class="muted">כל לקוחה שנרשמה דרך הקישור האישי של לקוחה אחרת ("הביאי חברה") - ממוין מהכי הרבה הפניות להכי פחות, כולל השמות של מי שנרשמה דרך הקישור של כל אחת.</p>
     ${leaderGapSummaryHtml(customerReferralRanking, "חברות")}
@@ -7942,6 +8063,19 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td>${esc(r.referred.join(", "))}</td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין אין הפניות בפועל - אף לקוחה לא נרשמה עדיין דרך הקישור האישי של לקוחה אחרת.</p>`}
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <p class="muted" style="margin:0 0 8px;">עדכון מהיר של המבצע (מוצג ללקוחות באזור האישי שלהן)${d.settings.customerReferralPromoNote ? ` - הערה נוכחית: "${esc(d.settings.customerReferralPromoNote)}"` : ""}</p>
+      <form method="post" action="/admin/referral-settings/quick-update" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <input type="hidden" name="which" value="customer" />
+        <label style="flex:1;min-width:130px;">תאריך סיום
+        <input type="text" name="endDate" value="${esc(d.settings.customerReferralContestEndDate || "")}" /></label>
+        <label style="flex:1;min-width:130px;">תאריך הכרזה
+        <input type="text" name="announceDate" value="${esc(d.settings.customerReferralAnnounceDate || "")}" /></label>
+        <label style="flex:2;min-width:200px;">הערה למבצע (אופציונלי)
+        <input type="text" name="note" maxlength="200" value="${esc(d.settings.customerReferralPromoNote || "")}" placeholder="למשל: המבצע הוארך!" /></label>
+        <button class="btn btn-small" type="submit">עדכון המבצע</button>
+      </form>
+    </div>
   </div>
 
   <div class="panel">
@@ -8151,11 +8285,16 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <h3>לתמיכה לחצי 💬 (${openSupportMessages} ממתינות לתשובה)</h3>
     <p class="muted">שיחות שנפתחו דרך הכפתור הצף שמופיע בכל עמוד באתר - גם מלקוחות/עצמאיות מחוברות וגם מגולשות אנונימיות. השואלת תמיד רואה את הכפתור, אבל רואה שאת "מחוברת עכשיו" רק כשהדלקת את שירות התמיכה (ר' הפאנל "שירות תמיכה ללקוחות" למעלה) - ואז מקבלת תשובה חיה בלי רענון; כשהשירות כבוי, היא משאירה הודעה ומקבלת תשובה גם באתר וגם במייל.</p>
     ${supportThreads.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>מייל</th><th>הודעה אחרונה</th><th>תאריך</th><th></th></tr>
-      ${supportThreads.map((t) => `<tr${t.unread ? ` style="font-weight:800;"` : ""}>
-        <td>${esc(t.name)}</td><td>${esc(t.email)}</td>
+      ${supportThreads.map((t) => `<tr${t.unread && !t.closed ? ` style="font-weight:800;"` : ""}${t.closed ? ` style="opacity:.6;"` : ""}>
+        <td>${esc(t.name)}${t.closed ? ` <span class="muted" style="font-weight:400;">🔒 סגורה</span>` : ""}</td><td>${esc(t.email)}</td>
         <td>${t.lastFrom === "admin" ? "את: " : ""}${esc((t.lastText || "").slice(0, 60))}${(t.lastText || "").length > 60 ? "…" : ""}</td>
         <td>${esc(new Date(t.lastAt).toLocaleString("he-IL"))}</td>
-        <td><a class="btn btn-small" href="/admin/support/thread/${encodeURIComponent(encodeSupportKey(t.key))}">${t.unread ? `פתיחת שיחה (${t.unread} חדשות)` : "פתיחת שיחה"}</a></td>
+        <td style="display:flex;gap:6px;flex-wrap:wrap;">
+          <a class="btn btn-small" href="/admin/support/thread/${encodeURIComponent(encodeSupportKey(t.key))}">${t.unread && !t.closed ? `פתיחת שיחה (${t.unread} חדשות)` : "פתיחת שיחה"}</a>
+          ${!t.closed ? `${snoozeButtonHtml(`support:${t.key}`, "support", `שיחת תמיכה עם ${t.name}`)}
+          <form method="post" action="/admin/support/thread/${encodeURIComponent(encodeSupportKey(t.key))}/close" style="display:inline;"><button class="btn btn-small btn-outline" type="submit" title="השיחה נגמרה - להסתיר מ&quot;ממתינות למענה&quot;">✖ סגירה</button></form>`
+          : `<form method="post" action="/admin/support/thread/${encodeURIComponent(encodeSupportKey(t.key))}/reopen" style="display:inline;"><button class="btn btn-small btn-outline" type="submit">פתיחה מחדש</button></form>`}
+        </td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין לא נפתחו שיחות.</p>`}
   </div>
@@ -8179,12 +8318,72 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
-  <div class="panel">
-    <h3>התחומים באתר</h3>
-    <div class="cat-grid">${d.categories.map((c) => `<div class="cat-card">${esc(c.name)}</div>`).join("")}</div>
-    <form method="post" action="/admin/category" style="margin-top:14px;max-width:360px;">
+  <div class="panel" id="categories-management" style="scroll-margin-top:90px;">
+    <h3>התחומים ותתי-התחומים באתר</h3>
+    <p class="muted">אפשר לשנות שם לתחום/תת-תחום או למחוק אותו - אבל אי אפשר למחוק תחום או תת-תחום שעדיין משויכים אליו עסקים/בקשות/שאלות בפועל (כדי לא להשאיר עסק בלי שיוך). אם המחיקה חסומה, אפשר לשייך את מה שמשתמש בזה לתחום/תת-תחום אחר קודם, בפאנל "שיוך מחדש" למטה - ורק אז למחוק.</p>
+    ${d.categories.map((c) => {
+      const catUsage = categoryUsageCount(d, c.id);
+      return `
+      <div style="border:1px solid #eee2d8;border-radius:12px;padding:14px;margin-top:14px;">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between;">
+          <form method="post" action="/admin/category/${c.id}/rename" style="display:flex;gap:8px;align-items:center;flex:1;min-width:220px;margin:0;">
+            <input type="text" name="name" value="${esc(c.name)}" required style="flex:1;" />
+            <button class="btn btn-small" type="submit">שינוי שם</button>
+          </form>
+          <form method="post" action="/admin/category/${c.id}/delete" style="margin:0;" onsubmit="return confirm('למחוק את התחום ' + ${JSON.stringify(c.name)} + '?');">
+            <button class="btn btn-small btn-outline" type="submit" ${catUsage ? `disabled title="בשימוש ע&quot;י ${catUsage} רשומות - אי אפשר למחוק"` : ""}>מחיקת התחום${catUsage ? ` (בשימוש ע"י ${catUsage})` : ""}</button>
+          </form>
+        </div>
+        <div style="margin-top:12px;padding-inline-start:16px;border-inline-start:2px solid #eee2d8;">
+          ${(c.subcategories || []).length ? (c.subcategories || []).map((s) => {
+            const subUsage = subcategoryUsageCount(d, c.id, s.id);
+            return `
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0;">
+              <form method="post" action="/admin/subcategory/${c.id}/${s.id}/rename" style="display:flex;gap:6px;align-items:center;flex:1;min-width:200px;margin:0;">
+                <input type="text" name="name" value="${esc(s.name)}" required style="flex:1;" />
+                <button class="btn btn-small btn-outline" type="submit">שינוי שם</button>
+              </form>
+              <form method="post" action="/admin/subcategory/${c.id}/${s.id}/delete" style="margin:0;" onsubmit="return confirm('למחוק את תת-התחום ' + ${JSON.stringify(s.name)} + '?');">
+                <button class="btn btn-small btn-outline" type="submit" ${subUsage ? `disabled title="בשימוש ע&quot;י ${subUsage} רשומות - אי אפשר למחוק"` : ""}>מחיקה${subUsage ? ` (בשימוש ע"י ${subUsage})` : ""}</button>
+              </form>
+            </div>`;
+          }).join("") : `<p class="muted" style="margin:6px 0;">אין עדיין תת-תחום בתחום הזה.</p>`}
+          <form method="post" action="/admin/subcategory" style="margin-top:8px;display:flex;gap:8px;max-width:360px;">
+            <input type="hidden" name="categoryId" value="${c.id}" />
+            <input type="text" name="name" placeholder="תת-תחום חדש" required style="flex:1;" />
+            <button class="btn btn-small" type="submit">הוספת תת-תחום</button>
+          </form>
+        </div>
+      </div>`;
+    }).join("")}
+    <form method="post" action="/admin/category" style="margin-top:16px;max-width:360px;">
       <input type="text" name="name" placeholder="תחום חדש" required />
-      <button class="btn btn-small" style="margin-top:10px;" type="submit">הוספה</button>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">הוספת תחום חדש</button>
+    </form>
+  </div>
+
+  <div class="panel" id="category-reassign" style="scroll-margin-top:90px;">
+    <h3>שיוך מחדש של עסק לתחום/תת-תחום אחר</h3>
+    <p class="muted">בוחרים עסק (התחום/התת-תחום הנוכחיים שלו מופיעים ליד השם), ואז את התחום החדש ותת-התחום החדש - אפשר לבחור תת-תחום קיים מהרשימה, או להקליד שם לתת-תחום חדש (הוא ייווצר רק אם תקלידי שם כאן, בפעולה מפורשת - אף פעם לא נוצר תת-תחום אוטומטית). שימי לב: הכלי הזה משייך את התחום/התת-תחום ה<strong>ראשי</strong> של העסק - אם יש לה גם "תחומים נוספים" בפרופיל, הם לא מושפעים מכאן.</p>
+    <form method="post" action="/admin/reassign-listing">
+      <label>עסק
+        <select name="freelancerId" required>
+          <option value="">בחרי עסק</option>
+          ${d.freelancers.slice().sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he")).map((f) => `<option value="${f.id}">${esc(f.businessName || f.name)} - ${esc(catName(d, f.categoryId))}${subcatNames(d, f.categoryId, f.subcategoryIds) ? " / " + esc(subcatNames(d, f.categoryId, f.subcategoryIds)) : ""}</option>`).join("")}
+        </select>
+      </label>
+      <label>תחום חדש
+        <select name="categoryId" id="scReassignCategory" required onchange="scUpdateSubcats(this, document.getElementById('scReassignSubcat'), '');">
+          <option value="">בחרי תחום</option>${d.categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}
+        </select>
+      </label>
+      <label>תת-תחום קיים (לא חובה אם ממלאים תת-תחום חדש למטה)
+        <select name="subcategoryId" id="scReassignSubcat"><option value="">בחרי קודם תחום למעלה</option></select>
+      </label>
+      <label>או תת-תחום חדש (ייווצר רק אם ממלאים כאן)
+        <input type="text" name="newSubcategoryName" placeholder="השאירי ריק אם לא צריך תת-תחום חדש" />
+      </label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שיוך מחדש</button>
     </form>
   </div>
 
@@ -8514,11 +8713,31 @@ route("POST", "/admin/referral-settings", async (req, res, params, query, ctx) =
   d.settings.customerReferralContestActive = body.get("customerReferralContestActive") === "1";
   d.settings.customerReferralContestEndDate = (body.get("customerReferralContestEndDate") || "").trim();
   d.settings.customerReferralAnnounceDate = (body.get("customerReferralAnnounceDate") || "").trim();
+  // הערה חופשית שמוצגת ללקוחות/לעצמאיות ליד המבצע שלהן (למשל "המבצע הוארך!") - לפי בקשה
+  // מפורשת 2026-08-30. אופציונלי - ריקה כברירת מחדל, לא מוצגת בכלל אם לא מולאה.
+  d.settings.customerReferralPromoNote = clip((body.get("customerReferralPromoNote") || "").trim(), 200);
   d.settings.freelancerReferralContestActive = body.get("freelancerReferralContestActive") === "1";
   d.settings.freelancerReferralContestEndDate = (body.get("freelancerReferralContestEndDate") || "").trim();
   d.settings.freelancerReferralAnnounceDate = (body.get("freelancerReferralAnnounceDate") || "").trim();
+  d.settings.freelancerReferralPromoNote = clip((body.get("freelancerReferralPromoNote") || "").trim(), 200);
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("הגדרות התחרות עודכנו!")}`);
+});
+
+// עדכון מהיר של תאריך סיום/הכרזה + הערה למבצע אחד בלבד (עצמאיות או לקוחות) - ישירות מפאנל
+// "מרוץ ההפניות...מי מובילה" ב-GET /admin, בלי לגעת בכלל בשדות של המבצע השני או בטוגל "פעיל"
+// (ר' ההערה על כך למעלה, ליד הטופס עצמו) - נתיב נפרד ומצומצם בכוונה, כדי שלא יהיה סיכון לאפס
+// בטעות שדות שלא מוצגים בטופס הקטן הזה.
+route("POST", "/admin/referral-settings/quick-update", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const which = body.get("which") === "customer" ? "customer" : "freelancer";
+  d.settings[`${which}ReferralContestEndDate`] = (body.get("endDate") || "").trim();
+  d.settings[`${which}ReferralAnnounceDate`] = (body.get("announceDate") || "").trim();
+  d.settings[`${which}ReferralPromoNote`] = clip((body.get("note") || "").trim(), 200);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("המבצע עודכן!")}#${which}-referral-race`);
 });
 
 route("POST", "/admin/magazine", async (req, res, params, query, ctx) => {
@@ -8996,7 +9215,113 @@ route("POST", "/admin/category", async (req, res, params, query, ctx) => {
   const id = String(d.categories.length + 1) + "-" + Date.now();
   d.categories.push({ id, name: body.get("name") });
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent("נוסף בהצלחה.")}`);
+  redirect(res, `/admin?ok=${encodeURIComponent("נוסף בהצלחה.")}#categories-management`);
+});
+
+// שינוי שם לתחום - ה-id נשאר קבוע, רק c.name משתנה, אז שום דבר אחר באתר (freelancer.categoryId
+// וכו') לא צריך לזוז בעקבות זה - ר' הפאנל "התחומים ותתי-התחומים באתר" ב-GET /admin.
+route("POST", "/admin/category/:id/rename", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const c = d.categories.find((x) => x.id === params.id);
+  const name = clip((body.get("name") || "").trim(), 60);
+  if (!c || !name) return redirect(res, `/admin?err=${encodeURIComponent("לא נמצא תחום או שם ריק.")}#categories-management`);
+  c.name = name;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("שם התחום עודכן.")}#categories-management`);
+});
+
+// מחיקה חסומה אם התחום עדיין בשימוש בפועל (ר' categoryUsageCount למעלה) - זה נבדק גם כאן בצד
+// השרת, לא רק דרך ה-disabled בכפתור בתצוגה, כדי שאי אפשר יהיה לעקוף את זה.
+route("POST", "/admin/category/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const c = d.categories.find((x) => x.id === params.id);
+  if (!c) return redirect(res, `/admin?err=${encodeURIComponent("התחום לא נמצא.")}#categories-management`);
+  const usage = categoryUsageCount(d, c.id);
+  if (usage > 0) {
+    return redirect(res, `/admin?err=${encodeURIComponent(`אי אפשר למחוק את "${c.name}" - ${usage} רשומות עדיין משויכות אליו. אפשר לשייך אותן מחדש בפאנל "שיוך מחדש" למטה.`)}#categories-management`);
+  }
+  d.categories = d.categories.filter((x) => x.id !== params.id);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("התחום נמחק.")}#categories-management`);
+});
+
+// הוספת תת-תחום מפורשת דרך הפאנל - יחד עם אישור המלצת תת-תחום מעצמאית (ר' POST
+// /admin/subcategory-suggestion/:id/approve למעלה בקובץ) זו נקודת הכניסה השנייה והיחידה
+// ל-findOrCreateSubcategory בכל הקובץ - שתיהן פעולת מנהלת מפורשת ומודעת, אף פעם לא תוצר לוואי
+// של פעולה אחרת (לפי בקשה מפורשת: "אל תוסיף אוטומטית תתי תחום חדשים בשום אופן בצורה אוטומטית").
+route("POST", "/admin/subcategory", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const categoryId = body.get("categoryId") || "";
+  const name = (body.get("name") || "").trim();
+  if (!name) return redirect(res, `/admin?err=${encodeURIComponent("לא הוזן שם תת-תחום.")}#categories-management`);
+  const result = findOrCreateSubcategory(d, categoryId, name);
+  if (!result) return redirect(res, `/admin?err=${encodeURIComponent("התחום לא נמצא.")}#categories-management`);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(result.isNew ? "תת-התחום נוסף." : "תת-התחום הזה כבר קיים - לא נוצר כפול.")}#categories-management`);
+});
+
+route("POST", "/admin/subcategory/:categoryId/:subId/rename", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const category = d.categories.find((c) => c.id === params.categoryId);
+  const sub = category && (category.subcategories || []).find((s) => s.id === params.subId);
+  const name = clip((body.get("name") || "").trim(), 60);
+  if (!sub || !name) return redirect(res, `/admin?err=${encodeURIComponent("לא נמצא תת-תחום או שם ריק.")}#categories-management`);
+  sub.name = name;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("שם תת-התחום עודכן.")}#categories-management`);
+});
+
+route("POST", "/admin/subcategory/:categoryId/:subId/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const category = d.categories.find((c) => c.id === params.categoryId);
+  const sub = category && (category.subcategories || []).find((s) => s.id === params.subId);
+  if (!sub) return redirect(res, `/admin?err=${encodeURIComponent("תת-התחום לא נמצא.")}#categories-management`);
+  const usage = subcategoryUsageCount(d, params.categoryId, params.subId);
+  if (usage > 0) {
+    return redirect(res, `/admin?err=${encodeURIComponent(`אי אפשר למחוק את "${sub.name}" - ${usage} רשומות עדיין משויכות אליו. אפשר לשייך אותן מחדש בפאנל "שיוך מחדש" למטה.`)}#categories-management`);
+  }
+  category.subcategories = (category.subcategories || []).filter((s) => s.id !== params.subId);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("תת-התחום נמחק.")}#categories-management`);
+});
+
+// "שיוך מחדש" - הכלי שנותן לה בפועל לפנות תחום/תת-תחום שהיא רוצה למחוק (הכפתור למעלה חוסם
+// מחיקה כל עוד יש שימוש בפועל) - משייך מחדש רק את השיוך ה"ראשי" של העסק (f.categoryId/
+// subcategoryId/subcategoryIds), לא את "התחומים הנוספים" שלה (additionalCategoryIds) ולא רשומות
+// additionalListings בנפרד - אלה נשארים כפי שהם. תת-תחום חדש נוצר רק אם newSubcategoryName מולא
+// בפועל (findOrCreateSubcategory) - פעולה מפורשת ומודעת, בדיוק כמו POST /admin/subcategory למעלה.
+route("POST", "/admin/reassign-listing", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const f = d.freelancers.find((x) => x.id === body.get("freelancerId"));
+  const categoryId = body.get("categoryId") || "";
+  const category = d.categories.find((c) => c.id === categoryId);
+  if (!f || !category) {
+    return redirect(res, `/admin?err=${encodeURIComponent("יש לבחור עסק ותחום תקין.")}#category-reassign`);
+  }
+  const newSubcategoryName = (body.get("newSubcategoryName") || "").trim();
+  let subId = "";
+  if (newSubcategoryName) {
+    const result = findOrCreateSubcategory(d, categoryId, newSubcategoryName);
+    subId = result ? result.sub.id : "";
+  } else {
+    const requested = body.get("subcategoryId") || "";
+    subId = (category.subcategories || []).some((s) => s.id === requested) ? requested : "";
+  }
+  f.categoryId = categoryId;
+  f.subcategoryId = subId;
+  f.subcategoryIds = subId ? [subId] : [];
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`${f.businessName || f.name} שויכה מחדש ל${category.name}${subId ? " / " + subcatName(d, categoryId, subId) : ""}.`)}#category-reassign`);
 });
 
 route("POST", "/admin/city", async (req, res, params, query, ctx) => {
@@ -9672,6 +9997,9 @@ route("POST", "/support/send", async (req, res, params, query, ctx) => {
   const message = { id, voterKey: key, name, email, from: "asker", text, createdAt: new Date().toISOString(), read: false };
   d.supportMessages = d.supportMessages || [];
   d.supportMessages.push(message);
+  // הודעה חדשה ממנה היא סימן חיים - "מעירה" שיחה שהיא סימנה כסגורה/המשך טיפול בחזרה לתור
+  // הרגיל, כדי שהודעה טרייה אף פעם לא תישאר קבורה (ר' reopenSupportThread למעלה).
+  reopenSupportThread(d, key);
   db.save();
   // Only push/email-notify Sapir when she's NOT already live in the admin panel watching - keeps
   // an active back-and-forth chat from spamming her inbox, while a message left while she's away
@@ -9732,12 +10060,25 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
   if (anyMarkedRead) db.save();
   const last = messages[messages.length - 1];
   const lastTs = last.createdAt;
+  const closedNow = isSupportClosed(d, voterKey);
   const body = `
   <h1 class="section-title">💬 שיחה עם ${esc(last.name)}</h1>
   <p class="muted" style="text-align:center;">${esc(last.email)}</p>
   <div class="panel" style="max-width:560px;margin:0 auto;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">
+      ${closedNow
+        ? `<p class="muted" style="width:100%;text-align:center;margin:0 0 4px;">🔒 השיחה הזו מסומנת כסגורה.</p><form method="post" action="/admin/support/thread/${esc(params.key)}/reopen"><button class="btn btn-small btn-outline" type="submit">פתיחה מחדש</button></form>`
+        : `${snoozeButtonHtml(`support:${voterKey}`, "support", `שיחת תמיכה עם ${last.name}`)}<form method="post" action="/admin/support/thread/${esc(params.key)}/close"><button class="btn btn-small btn-outline" type="submit">✖ סגירת השיחה</button></form>`}
+    </div>
     <div id="scSupportThread" class="chat-thread" style="max-height:480px;">
       ${messages.map(supportBubbleHtml).join("")}
+    </div>
+    <!-- כפתורי הדבקה מהירה - לפי בקשה מפורשת 2026-08-30 ("במקום השלמה אוטומטית, שים לי אותן
+         למעלה וכשאני לוחצת עליהן הן יופיעו בתיבת הכתיבה שלי") - מזריקות טקסט לתיבת התשובה שלה
+         (scSupportInput) במיקום הסמן הנוכחי, בלי לגעת בכלל בטקסט שכבר כתובה שם. -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <button type="button" class="btn btn-small btn-outline" onclick="scInsertIntoSupportReply('shecan.office@gmail.com')">📧 shecan.office@gmail.com</button>
+      <button type="button" class="btn btn-small btn-outline" onclick="scInsertIntoSupportReply('SheCan')">SheCan</button>
     </div>
     <form id="scSupportSendForm" method="post" action="/admin/support/thread/${esc(params.key)}/send">
       <textarea name="text" id="scSupportInput" required maxlength="800" placeholder="כתבי תשובה..." style="min-height:60px;"></textarea>
@@ -9746,6 +10087,16 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
   </div>
   <p class="muted" style="text-align:center;margin-top:16px;"><a href="/admin">חזרה לפאנל הניהול</a></p>
   <script>
+  function scInsertIntoSupportReply(text){
+    var ta = document.getElementById('scSupportInput');
+    if (!ta) return;
+    var start = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+    var end = ta.selectionEnd == null ? ta.value.length : ta.selectionEnd;
+    ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+    var pos = start + text.length;
+    ta.focus();
+    try { ta.setSelectionRange(pos, pos); } catch (e) {}
+  }
   (function(){
     var lastTs = ${JSON.stringify(lastTs)};
     var seenIds = {};
@@ -9840,6 +10191,59 @@ route("POST", "/admin/support/thread/:key/send", async (req, res, params, query,
   ).catch(() => {});
   if (wantsJson) return sendHtml(res, 200, JSON.stringify({ ok: true, message }), { "Content-Type": "application/json; charset=utf-8" });
   redirect(res, `/admin/support/thread/${params.key}`);
+});
+
+// "לסגור את השיחה" (ר' isSupportClosed למעלה) - שיחה חוזרת לתור הרגיל לבד ברגע שהשואלת כותבת
+// שוב (ר' reopenSupportThread ב-POST /support/send), אז אין צורך "לזכור" לפתוח מחדש ידנית.
+route("POST", "/admin/support/thread/:key/close", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const voterKey = decodeSupportKey(params.key);
+  d.supportClosed = d.supportClosed || [];
+  if (!d.supportClosed.includes(voterKey)) d.supportClosed.push(voterKey);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("השיחה סומנה כסגורה.")}#support-threads`);
+});
+
+route("POST", "/admin/support/thread/:key/reopen", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const voterKey = decodeSupportKey(params.key);
+  d.supportClosed = (d.supportClosed || []).filter((k) => k !== voterKey);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("השיחה נפתחה מחדש.")}#support-threads`);
+});
+
+// JSON קטן שמזין את הוידג'ט הצף (ר' layout.js, בתוך ה-if (SC_IS_ADMIN) השלישי) - רשימת שיחות
+// שממתינות למענה כרגע (לא סגורות ולא במעקב), הכי ותיקה-בלי-מענה קודם, כדי שהכי דחוף תמיד למעלה.
+// גם מפעילה כאן את בדיקת התזכורת (ר' checkAndSendUnansweredReminders) כדי שהיא תרוץ גם כשהיא
+// נמצאת רק על עמוד השיחה עצמה או על עמוד ניהול אחר שלא טוען מחדש את /admin.
+route("GET", "/admin/support/open-summary", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return sendHtml(res, 401, JSON.stringify({ threads: [] }), { "Content-Type": "application/json; charset=utf-8" });
+  const d = db.load();
+  checkAndSendUnansweredReminders(d);
+  const byKey = {};
+  (d.supportMessages || []).forEach((m) => { (byKey[m.voterKey] = byKey[m.voterKey] || []).push(m); });
+  const now = Date.now();
+  const threads = Object.keys(byKey)
+    .filter((key) => !isSupportClosed(d, key) && !isSnoozed(d, `support:${key}`))
+    .map((key) => {
+      const msgs = byKey[key].slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const unreadMsgs = msgs.filter((m) => m.from === "asker" && !m.read);
+      if (!unreadMsgs.length) return null;
+      const oldest = unreadMsgs[0];
+      const last = msgs[msgs.length - 1];
+      return {
+        url: `/admin/support/thread/${encodeSupportKey(key)}`,
+        name: last.name,
+        lastText: (last.text || "").slice(0, 90),
+        unread: unreadMsgs.length,
+        waitingMinutes: Math.max(0, Math.round((now - new Date(oldest.createdAt).getTime()) / 60000)),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.waitingMinutes - a.waitingMinutes);
+  sendHtml(res, 200, JSON.stringify({ threads }), { "Content-Type": "application/json; charset=utf-8" });
 });
 
 route("GET", "/terms", async (req, res, params, query, ctx) => {
