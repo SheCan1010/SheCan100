@@ -1807,7 +1807,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update108 - 2026-08-30 - וידג'ט שיחות תמיכה ממתינות + תזכורת חצי שעה + סגירה/המשך טיפול + כפתורי הדבקה מהירה, ניהול מלא של תחומים ותתי-תחומים (שינוי שם/מחיקה עם חסימת שימוש/שיוך מחדש), הערה מהירה למבצע ההפניות, והכרזת מנצחת אמיתית עם פרסום בדף הבית עד תאריך שנבחר";
+const DEPLOY_MARKER = "update108 - 2026-08-30 - וידג'ט שיחות תמיכה ממתינות + תזכורת חצי שעה + סגירה/המשך טיפול + כפתורי הדבקה מהירה, ניהול מלא של תחומים ותתי-תחומים (שינוי שם/מחיקה עם חסימת שימוש/שיוך מחדש), הערה מהירה למבצע ההפניות, הכרזת מנצחת אמיתית עם פרסום בדף הבית עד תאריך שנבחר, וגיבוי ידני להפניית לקוחות/עצמאיות (בהרשמה + תיקון רטרואקטיבי בניהול)";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -5812,6 +5812,8 @@ function signupFormBody(d, { refId, referrer, prefill }) {
     <label>מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
     <label>בחרי סיסמה<input type="password" name="password" required /></label>
     ${prefill ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
+    ${!referrer ? `<label>הוזמנת ע"י חברה? המייל שלה כאן יזכה אותה בהפניה (לא חובה)
+    <input type="email" name="referrerEmail" value="${esc(p.referrerEmail || "")}" placeholder="למשל friend@example.com" /></label>` : ""}
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
     <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לשאלה או להתייעצות שלך בזירה, או כשעצמאית עונה להודעה שכתבת לה.</p>
     <button class="btn" style="margin-top:16px;width:100%;" type="submit">צרפי אותי</button>
@@ -5839,6 +5841,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     const prefill = {
       name: body.get("name"), email: body.get("email"),
       wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+      referrerEmail: body.get("referrerEmail") || "",
     };
     const formBody = signupFormBody(d, { refId, referrer, prefill });
     const errQuery = new URLSearchParams({ err: "כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום." });
@@ -5851,7 +5854,19 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
   // Only credited if it actually resolves to a real, different customer - guards against a
   // stale/tampered ref value crediting a deleted account or, worse, someone referring herself.
   const refId = body.get("ref") || "";
-  const referrer = refId && refId !== id ? d.customers.find((c) => c.id === refId) : null;
+  let referrer = refId && refId !== id ? d.customers.find((c) => c.id === refId) : null;
+  // גיבוי ידני כשהקישור האישי לא שרד עד לשליחת הטופס (למשל נשלח דרך אפליקציה שמקצצת פרמטרים
+  // בקישור, או שהיא פשוט הקלידה את הכתובת ידנית אחרי ששמעה בעל פה) - לפי בקשה מפורשת 2026-08-30,
+  // אחרי שהתברר שלקוחה טענה שהפנתה חברות אבל הן לא נספרו. בניגוד לעצמאיות (שיש להן רשימת בחירה
+  // מתוך "איך שמעת עלינו") - כאן מזהים לפי מייל, כי לשם פרטי אין זיהוי ייחודי בין לקוחות. הקישור
+  // האישי תמיד מנצח אם הוא כן הצליח (בדיוק כמו אצל עצמאיות) - זה רק גיבוי כשהוא נכשל.
+  if (!referrer) {
+    const referrerEmail = (body.get("referrerEmail") || "").trim().toLowerCase();
+    if (referrerEmail) {
+      const manualReferrer = d.customers.find((c) => (c.email || "").toLowerCase() === referrerEmail);
+      if (manualReferrer && manualReferrer.id !== id) referrer = manualReferrer;
+    }
+  }
   db.load().customers.push({
     id, name, email,
     passwordHash: auth.hashPassword(body.get("password")), cityId: "",
@@ -8097,6 +8112,20 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <button class="btn btn-small" type="submit">פרסום כמנצחת</button>
       </form>
     </div>
+    <!-- תיקון שיוך הפניה ידני - מקביל לזה שנוסף לפאנל הלקוחות למטה, לאותה סיבה בדיוק (הקישור
+         האישי לא תמיד שורד עד ההרשמה, ואצל עצמאית גם התאמת שם ידנית ב"איך שמעת עלינו" יכולה
+         להיכשל אם השם לא הוקלד בדיוק כמו שם העסק). -->
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <h4 style="margin:0 0 6px;">תיקון שיוך הפניה ידני</h4>
+      <p class="muted" style="margin:0 0 8px;">אם עצמאית טוענת שהפנתה חברה אבל זה לא נספר - אפשר לשייך את זה ידנית כאן, לפי מייל. השארת "מייל מי שהזמינה" ריק תנקה שיוך קיים.</p>
+      <form method="post" action="/admin/freelancer/fix-referral" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <label style="flex:1;min-width:200px;">מייל העצמאית שנרשמה
+        <input type="email" name="freelancerEmail" required placeholder="שנרשמה@example.com" /></label>
+        <label style="flex:1;min-width:200px;">מייל מי שהזמינה (ריק = ניקוי שיוך)
+        <input type="email" name="referrerEmail" placeholder="שהזמינה@example.com" /></label>
+        <button class="btn btn-small" type="submit">עדכון שיוך</button>
+      </form>
+    </div>
   </div>
 
   <div class="panel" id="customer-referral-race" style="scroll-margin-top:90px;">
@@ -8120,6 +8149,22 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <label style="flex:2;min-width:200px;">הערה למבצע (אופציונלי)
         <input type="text" name="note" maxlength="200" value="${esc(d.settings.customerReferralPromoNote || "")}" placeholder="למשל: המבצע הוארך!" /></label>
         <button class="btn btn-small" type="submit">עדכון המבצע</button>
+      </form>
+    </div>
+    <!-- תיקון שיוך הפניה ידני - לפי בקשה מפורשת 2026-08-30 (לקוחה טענה שהפנתה חברות שלא נספרו).
+         הסיבה הסבירה: שיוך הפניה של לקוחה תלוי לגמרי בקישור האישי ששרד עד לשליחת הטופס - בניגוד
+         לעצמאיות, ללקוחות אין רשימת "איך שמעת עלינו" עם בחירה ידנית (ר' /signup, שעכשיו כן קיבל
+         גיבוי ידני לפי מייל להרשמות עתידיות) - אז זה הכלי לתקן רטרואקטיבית מי שכבר נרשמה בלי
+         שהקישור עבד. השארת שדה "מייל מי שהזמינה" ריק מנקה שיוך שגוי קיים. -->
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <h4 style="margin:0 0 6px;">תיקון שיוך הפניה ידני</h4>
+      <p class="muted" style="margin:0 0 8px;">אם לקוחה טוענת שהפנתה חברה אבל זה לא נספר (בדרך כלל כי הקישור האישי לא שרד עד ההרשמה) - אפשר לשייך את זה ידנית כאן, לפי מייל. השארת "מייל מי שהזמינה" ריק תנקה שיוך קיים.</p>
+      <form method="post" action="/admin/customer/fix-referral" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <label style="flex:1;min-width:200px;">מייל הלקוחה שנרשמה
+        <input type="email" name="customerEmail" required placeholder="שנרשמה@example.com" /></label>
+        <label style="flex:1;min-width:200px;">מייל מי שהזמינה (ריק = ניקוי שיוך)
+        <input type="email" name="referrerEmail" placeholder="שהזמינה@example.com" /></label>
+        <button class="btn btn-small" type="submit">עדכון שיוך</button>
       </form>
     </div>
   </div>
@@ -8812,6 +8857,59 @@ route("POST", "/admin/referral-settings/clear-winner", async (req, res, params, 
   d.settings.freelancerReferralWinnerUntil = null;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("הפרסום בוטל - חוזרים לרוטציה הרגילה.")}#freelancer-referral-race`);
+});
+
+// תיקון רטרואקטיבי של שיוך הפניה - לפי בקשה מפורשת 2026-08-30 (לקוחה טענה שהפנתה חברות בפועל
+// והן לא נספרו, ככל הנראה כי הקישור האישי לא שרד עד לשליחת טופס ההרשמה - ר' /signup, שקיבל
+// באותו עדכון גיבוי ידני לפי מייל להרשמות עתידיות; זה הכלי המקביל לתקן מי שכבר נרשמה בעבר בלי
+// שהקישור עבד). זיהוי לפי מייל משני הצדדים - השארת "מייל מי שהזמינה" ריק מנקה שיוך קיים בלי
+// למחוק את הרשומה עצמה.
+route("POST", "/admin/customer/fix-referral", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const customerEmail = (body.get("customerEmail") || "").trim().toLowerCase();
+  const referrerEmail = (body.get("referrerEmail") || "").trim().toLowerCase();
+  const customer = d.customers.find((c) => (c.email || "").toLowerCase() === customerEmail);
+  if (!customer) {
+    return redirect(res, `/admin?err=${encodeURIComponent("לא נמצאה לקוחה עם המייל הזה.")}#customer-referral-race`);
+  }
+  if (!referrerEmail) {
+    customer.referredByCustomerId = null;
+    db.save();
+    return redirect(res, `/admin?ok=${encodeURIComponent(`שיוך ההפניה של ${customer.name} נוקה.`)}#customer-referral-race`);
+  }
+  const referrer = d.customers.find((c) => (c.email || "").toLowerCase() === referrerEmail);
+  if (!referrer || referrer.id === customer.id) {
+    return redirect(res, `/admin?err=${encodeURIComponent("לא נמצאה לקוחה מזמינה עם המייל הזה (או שזה אותו מייל).")}#customer-referral-race`);
+  }
+  customer.referredByCustomerId = referrer.id;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`${customer.name} שויכה כהפניה של ${referrer.name}.`)}#customer-referral-race`);
+});
+
+route("POST", "/admin/freelancer/fix-referral", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const freelancerEmail = (body.get("freelancerEmail") || "").trim().toLowerCase();
+  const referrerEmail = (body.get("referrerEmail") || "").trim().toLowerCase();
+  const freelancer = d.freelancers.find((f) => (f.email || "").toLowerCase() === freelancerEmail);
+  if (!freelancer) {
+    return redirect(res, `/admin?err=${encodeURIComponent("לא נמצאה עצמאית עם המייל הזה.")}#freelancer-referral-race`);
+  }
+  if (!referrerEmail) {
+    freelancer.referredByFreelancerId = null;
+    db.save();
+    return redirect(res, `/admin?ok=${encodeURIComponent(`שיוך ההפניה של ${freelancer.businessName || freelancer.name} נוקה.`)}#freelancer-referral-race`);
+  }
+  const referrer = d.freelancers.find((f) => (f.email || "").toLowerCase() === referrerEmail);
+  if (!referrer || referrer.id === freelancer.id) {
+    return redirect(res, `/admin?err=${encodeURIComponent("לא נמצאה עצמאית מזמינה עם המייל הזה (או שזה אותו מייל).")}#freelancer-referral-race`);
+  }
+  freelancer.referredByFreelancerId = referrer.id;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`${freelancer.businessName || freelancer.name} שויכה כהפניה של ${referrer.businessName || referrer.name}.`)}#freelancer-referral-race`);
 });
 
 route("POST", "/admin/magazine", async (req, res, params, query, ctx) => {
