@@ -1924,7 +1924,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update111 - 2026-08-30 - עוזרת AI לתמיכה: מסמך מדיניות/FAQ בהגדרות + כפתור \"הצע לי תשובה\" בשיחת תמיכה, וחיפוש חכם מבוסס AI אמיתי בעמוד החיפוש - כבוי כברירת מחדל (כדי לא לצבור עלות לא צפויה), עם מתג הפעלה/כיבוי ידני בפאנל \"עוזרת AI באתר\" בניהול; כשכבוי, נופל אוטומטית לחיפוש החכם המקומי והחינמי - הכל מבוסס Anthropic API, דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update112 - 2026-08-30 - תיבת אישור חובה בהרשמה (גם ללקוחות וגם לעצמאיות) שהפרטים/התוכן הפומבי גלויים לכלל הציבור באתר - כולל גברים, ולא רק נשים; האישור נבדק גם בצד השרת ונשמר עם תאריך לתיעוד. וגם: עוזרת AI לתמיכה + חיפוש חכם מבוסס AI (כבוי כברירת מחדל, מתג הפעלה בניהול) - הכל מבוסס Anthropic API, דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -5493,6 +5493,11 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
     <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לך (בזירה או במסר), כשלקוחה מתעניינת פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בזירה בתחום שלך.</p>
 
+    <label style="display:flex;align-items:flex-start;gap:8px;font-weight:700;margin-top:14px;background:var(--cream);border-radius:8px;padding:10px 12px;">
+      <input type="checkbox" name="publicListingConsent" value="1" ${p.publicListingConsent ? "checked" : ""} required style="width:auto;margin-top:3px;" />
+      <span>אני מאשרת שהפרטים, התמונות והתיאור שאעלה יוצגו בכרטיסייה הפומבית שלי באתר SheCan, ושכל מי שנכנסת/נכנס לאתר - כולל גברים, ולא רק נשים - יכולה/יכול לצפות בהם.</span>
+    </label>
+
     <div class="muted" style="margin-top:16px;background:var(--cream);border-radius:8px;padding:12px 14px;font-size:14px;">
       ברגע שתסיימי להירשם, המערכת שלנו תייצר עבורך באופן אוטומטי קוד קופון אישי וייחודי (בסגנון SheCan1234), שתוכלי להעביר ללקוחות שלך. הקוד הזה יהיה הכרטיס המזהה שלך בקהילה.
     </div>
@@ -5597,6 +5602,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       offersHomeVisit: body.get("offersHomeVisit") === "1", instagram: body.get("instagram"),
       portfolioUrl: body.get("portfolioUrl"), description: body.get("description"), dealText: body.get("dealText"),
       tier: body.get("tier"), wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+      publicListingConsent: body.get("publicListingConsent") === "1",
       howHeardChoice: body.get("howHeardChoice"), howHeardBusinessName: body.get("howHeardBusinessName"),
       // Preserve whatever she'd already typed into the inspiration-story questions too, so a
       // validation failure elsewhere on the form (or the story-minimum check below) doesn't make
@@ -5614,6 +5620,12 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   const d = db.load();
   if (d.freelancers.find((f) => f.email === body.get("email"))) {
     return rerenderWithError(d, "כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום.");
+  }
+  // חובה לאשר במפורש שהפרטים יהיו גלויים לכלל הציבור (לא רק לנשים) - לפי בקשה מפורשת
+  // 2026-08-30. יש גם required בטופס עצמו (חוסם שליחה בדפדפן), אבל זה נבדק שוב כאן בצד השרת
+  // כרשת ביטחון - בדיוק כמו כל שדה required אחר בטופס הזה - כי required ב-HTML לבד אפשר לעקוף.
+  if (body.get("publicListingConsent") !== "1") {
+    return rerenderWithError(d, "צריך לאשר את תיבת הסימון שהפרטים שלך יהיו גלויים לכלל הציבור (כולל גברים) כדי להירשם.");
   }
   // City is optional now, but she must give customers SOME way to reach her - either a city,
   // or an online/digital service, or a home-visit service. At least one of the three.
@@ -5670,6 +5682,9 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     description: clip(body.get("description"), 500), dealText: clip(body.get("dealText"), 200), dealCode,
     yearsInField: body.get("yearsInField") || "",
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+    // נשמר לתיעוד - חובה לאשר (ר' publicListingConsent למעלה) שהכרטיסייה הפומבית שלה גלויה
+    // לכלל הציבור (כולל גברים), לא רק לנשים. שמירת התאריך נותנת הוכחה בדיעבד שהאישור אכן ניתן.
+    publicListingConsentAt: new Date().toISOString(),
     inspirationQuote: "", weeklyTipPublished: false, weeklyQuoteLikeCount: 0,
     // משפט השראה שנכתב בהרשמה (אופציונלי, ניתן לדילוג) נשמר כאן כטיוטה בלבד וממתין לאישור
     // מנהלת (POST /admin/inspiration-quote/:id/approve) לפני שהוא הופך לחי ב-inspirationQuote
@@ -5945,6 +5960,10 @@ function signupFormBody(d, { refId, referrer, prefill }) {
     <input type="email" name="referrerEmail" value="${esc(p.referrerEmail || "")}" placeholder="למשל friend@example.com" /></label>` : ""}
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
     <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לשאלה או להתייעצות שלך בזירה, או כשעצמאית עונה להודעה שכתבת לה.</p>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-weight:700;margin-top:14px;background:var(--cream);border-radius:8px;padding:10px 12px;">
+      <input type="checkbox" name="publicVisibilityConsent" value="1" ${p.publicVisibilityConsent ? "checked" : ""} required style="width:auto;margin-top:3px;" />
+      <span>אני מאשרת שאם אכתוב חוות דעת (אלא אם אבחר "אנונימית") או שאלה/פנייה בזירה, השם שלי עשוי להיות גלוי לכלל הציבור הגולש באתר - כולל גברים, ולא רק נשים.</span>
+    </label>
     <button class="btn" style="margin-top:16px;width:100%;" type="submit">צרפי אותי</button>
   </form>
   `;
@@ -5964,17 +5983,27 @@ route("GET", "/signup", async (req, res, params, query, ctx) => {
 route("POST", "/signup", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
   const d = db.load();
-  if (d.customers.find((c) => c.email === body.get("email"))) {
+  // שני מקרי כשל אפשריים כאן משתפים אותה צורת re-render (200 + prefill) כדי שלא תצטרך להקליד
+  // הכל מחדש - קודם אימייל כפול, אחר כך (חדש, 2026-08-30) אישור הפרסום הפומבי, שנבדק גם כאן
+  // בצד השרת ולא רק כ-required בטופס עצמו, בדיוק כמו כל שדה required אחר בכל טופס באתר.
+  const rerenderSignupWithError = (errMsg) => {
     const refId = body.get("ref") || "";
     const referrer = refId ? d.customers.find((c) => c.id === refId) : null;
     const prefill = {
       name: body.get("name"), email: body.get("email"),
       wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+      publicVisibilityConsent: body.get("publicVisibilityConsent") === "1",
       referrerEmail: body.get("referrerEmail") || "",
     };
     const formBody = signupFormBody(d, { refId, referrer, prefill });
-    const errQuery = new URLSearchParams({ err: "כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום." });
+    const errQuery = new URLSearchParams({ err: errMsg });
     return sendHtml(res, 200, page({ title: "הרשמה", session: ctx.session, body: formBody, query: errQuery }));
+  };
+  if (d.customers.find((c) => c.email === body.get("email"))) {
+    return rerenderSignupWithError("כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום.");
+  }
+  if (body.get("publicVisibilityConsent") !== "1") {
+    return rerenderSignupWithError("צריך לאשר את תיבת הסימון שהשם שלך עשוי להיות גלוי לכלל הציבור (כולל גברים) כדי להירשם.");
   }
   const id = db.nextId("customer");
   const emailVerifyToken = crypto.randomBytes(24).toString("hex");
@@ -6003,6 +6032,9 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     communityNotifyTags: {},
     emailVerified: false, emailVerifyToken,
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+    // נשמר לתיעוד - חובה לאשר (ר' publicVisibilityConsent למעלה) שתוכן ציבורי שהיא עשויה
+    // לכתוב (חוות דעת/זירה) גלוי לכלל הציבור, לא רק לנשים. התאריך נותן הוכחה בדיעבד שהאישור ניתן.
+    publicVisibilityConsentAt: new Date().toISOString(),
     referredByCustomerId: referrer ? referrer.id : null,
     referralPopupSeen: false,
     siteVisitCount: 0,
