@@ -153,6 +153,56 @@ function getOrigin(req) {
   return `${proto}://${host}`;
 }
 
+// Render sits in front of the app behind a reverse proxy, so the real visitor IP arrives in
+// x-forwarded-for (same trust assumption already made for x-forwarded-proto in getOrigin above)
+// - falls back to the raw socket address for local/dev runs where there's no proxy at all.
+function getClientIp(req) {
+  const xff = req.headers["x-forwarded-for"];
+  if (xff) return String(xff).split(",")[0].trim();
+  return (req.socket && req.socket.remoteAddress) || "unknown";
+}
+
+// ---------- הגנת ספאם לטופס "צרי קשר" (נוסף 2026-08-31, אחרי שספיר קיבלה הצפה של עשרות
+// הודעות זהות מבוט פרסומת; עודכן באותו יום אחרי ששאלה בצדק "מה אם לקוחה אמיתית שולחת כמה
+// הודעות שונות ברצף?" - הגרסה הראשונה חסמה לפי כמות גולמית בלבד (עד 3 הודעות/10 דק') וזה היה
+// עלול לתפוס לקוחה אמיתית בטעות) ----------
+// שלושה מנגנונים משלימים, כולם "נכשלים בשקט": ר' POST /contact למטה - ההגשה מקבלת בדיוק אותה
+// הודעת "תודה" כמו הגשה תקינה גם כשהיא נחסמת, כדי לא ללמד בוט להתחמק בפעם הבאה (רק שההודעה
+// בפועל לא נשמרת ולא מגיעה לספיר):
+// (1) honeypot - שדה טקסט מוסתר ב-CSS (לא type="hidden", כי בוטים "חכמים" יותר סורקים ומדלגים
+//     בדיוק על type=hidden אבל עדיין ממלאים כל שדה עם label שנראה לקורא-קוד; בן/בת אדם אמיתיים
+//     פשוט לא רואים את השדה בכלל ולכן לעולם לא ימלאו אותו) - אם הוא לא ריק, זה כמעט בוודאות בוט.
+// (2) חסימת תוכן כפול - אם אותה כתובת IP שולחת בדיוק את אותו טקסט הודעה פעם נוספת תוך
+//     CONTACT_DUPLICATE_WINDOW_MS, זה בדיוק הדפוס שראינו בפועל (אותה הודעת פרסומת, מילה
+//     במילה, שוב ושוב) - נחסם כבר מהפעם השנייה, בלי קשר לספירה הכוללת. לקוחה אמיתית ששולחת
+//     כמה הודעות שונות בזמן קצר (למשל נזכרה שהיא שכחה לציין משהו) אף פעם לא נתקלת בזה, כי
+//     הטקסט שלה משתנה בין הודעה להודעה.
+// (3) הגבלת קצב לפי IP - רשת ביטחון נוספת בלבד למקרה של בוט שמדלג במכוון גם על ה-honeypot
+//     וגם משנה מעט את הטקסט בכל פעם: עד CONTACT_RATE_LIMIT_MAX הגשות מאותה IP תוך
+//     CONTACT_RATE_LIMIT_WINDOW_MS. הסף גבוה בכוונה (הרבה מעבר למה שלקוחה אמיתית תשלח) - הוא
+//     נועד לתפוס רק הצפה אמיתית, לא כמה הודעות שונות ולגיטימיות ברצף.
+// שני המנגנונים (2)+(3) נשמרים בזיכרון בלבד (Map), לא ב-DB - מספיק כדי לעצור הצפה חיה,
+// ומתאפס ממילא בכל הפעלה מחדש של השרת; לא בעיה בקנה מידה של טופס יצירת קשר של אתר קטן.
+const contactDuplicateMap = new Map(); // `${ip}::${normalizedText}` -> timestamp of last occurrence
+const CONTACT_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
+function isDuplicateContactMessage(ip, text) {
+  const key = `${ip}::${String(text || "").trim().toLowerCase().slice(0, 300)}`;
+  const now = Date.now();
+  const last = contactDuplicateMap.get(key);
+  contactDuplicateMap.set(key, now);
+  return last !== undefined && (now - last) < CONTACT_DUPLICATE_WINDOW_MS;
+}
+const contactRateLimitMap = new Map(); // ip -> [timestamps of recent submissions]
+const CONTACT_RATE_LIMIT_MAX = 12; // רשת ביטחון בלבד - הרבה מעבר לכמות שלקוחה אמיתית תשלח
+const CONTACT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+function isContactRateLimited(ip) {
+  const now = Date.now();
+  const recent = (contactRateLimitMap.get(ip) || []).filter((t) => now - t < CONTACT_RATE_LIMIT_WINDOW_MS);
+  recent.push(now);
+  contactRateLimitMap.set(ip, recent);
+  return recent.length > CONTACT_RATE_LIMIT_MAX;
+}
+
 // ---------- push notifications (installable app) ----------
 // Zero-dependency Web Push (see webpush.js) - no npm package needed. Requires two env vars
 // set in Render, generated ONCE and never changed afterward (every stored subscription is
@@ -1924,7 +1974,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update113 - 2026-08-31 - התאמה למדיניות נטפרי: (א) תגובות להתייעצויות בזירה עוברות אישור ידני לפני פרסום, כמו שאר תוכן הזירה; (ב) פאנל ניהול חדש לצפייה (קריאה בלבד) בכל ההתכתבויות הפרטיות בין לקוחות לעצמאיות; (ג) שדה מגדר חובה בהרשמת לקוחה - חשבון של גבר ננעל אוטומטית, לא מקבל מייל ולא יכול להתחבר, עד אישור ידני בפאנל 'חשבונות שננעלו אוטומטית' בניהול. וגם (מ-update112): תיבת אישור חובה בהרשמה (גם ללקוחות וגם לעצמאיות) שהפרטים/התוכן הפומבי גלויים לכלל הציבור באתר - כולל גברים, ולא רק נשים. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI (כבוי כברירת מחדל, מתג הפעלה בניהול) - הכל מבוסס Anthropic API, דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update117 - 2026-08-31 - שיפור הגנת הספאם בטופס 'צרי קשר' (מ-update116): במקום חסימה גורפת לפי כמות בלבד, עכשיו חוסם לפי תוכן כפול - אותה הודעה מילה במילה מאותה IP תוך 10 דקות נחסמת מהפעם השנייה, בלי לפגוע בלקוחה אמיתית ששולחת כמה הודעות שונות ברצף; הגבלת הכמות הגולמית הועלתה ל-12/10 דק' ונשארת רק כרשת ביטחון להצפה אמיתית. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update115): מתג בניהול 'מספר צפיות ודירוג מדויק בפרופיל'. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -2486,6 +2536,14 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
 
   const profileReviewCount = reviewCountFor(d, f.id);
   const profileAvgRating = avgRatingFor(d, f.id);
+  // "כמה כוכבי דירוג" (הציון המספרי המדויק, למשל "4.7") ו"כמה צופות" (f.viewCount) - שתיהן
+  // מוצגות בפרופיל הפומבי רק אם d.settings.showProfileViewCount מופעל (ר' הפאנל בניהול), לפי
+  // בקשה מפורשת 2026-08-31. כשהטוגל כבוי, ההתנהגות הקודמת (רק כוכבים ויזואליים, ומספר
+  // הביקורות בסוגריים רק כשהוא מעל 5) נשארת בדיוק כמו שהייתה.
+  const profileRatingExtraHtml = [
+    d.settings.showProfileViewCount && profileAvgRating !== null ? esc(profileAvgRating.toFixed(1)) : "",
+    profileReviewCount > 5 ? `(${profileReviewCount})` : "",
+  ].filter(Boolean).join(" ");
   const profileLocation = locationLabel(d, f.cityId, f.offersOnline, f.offersHomeVisit);
   const profileLocationIcon = locationIcon(d, f.cityId, f.offersOnline, f.offersHomeVisit);
   // Redesigned profile header (per explicit request): horizontal layout, logo on the right,
@@ -2511,7 +2569,8 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
         <div class="profile-header-info">
           <h1 class="profile-header-name">${esc(f.businessName || f.name)}</h1>
           ${f.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(f.yearsInField))}</div>` : ""}
-          ${profileAvgRating !== null ? `<div class="profile-stars-row">${starRow(Math.round(profileAvgRating))}${profileReviewCount > 5 ? `<span class="profile-review-count-small">(${profileReviewCount})</span>` : ""}</div>` : ""}
+          ${profileAvgRating !== null ? `<div class="profile-stars-row">${starRow(Math.round(profileAvgRating))}${profileRatingExtraHtml ? `<span class="profile-review-count-small">${profileRatingExtraHtml}</span>` : ""}</div>` : ""}
+          ${d.settings.showProfileViewCount ? `<div class="profile-header-location">👁️ ${f.viewCount || 0} צפיות בפרופיל</div>` : ""}
           ${profileLocation ? `<div class="profile-header-location">${profileLocationIcon} ${esc(profileLocation)}</div>` : ""}
         </div>
       </div>
@@ -7519,6 +7578,16 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   const pendingDealsCount = (d.deals || []).filter((x) => x.status === "pending_customer").length;
   const dealsByFreelancer = {};
   (d.deals || []).forEach((x) => { if (x.status === "confirmed") dealsByFreelancer[x.freelancerId] = (dealsByFreelancer[x.freelancerId] || 0) + 1; });
+  // תצוגה מפורטת של כל עסקה בנפרד (לא רק ספירה) - מי דיווחה ראשונה (עצמאית או לקוחה), על איזה
+  // עסק ולקוחה, ומה הסטטוס הנוכחי - כדי לענות בדיוק על "אילו עסקאות נסגרו ומי דיווחה עליהן".
+  const allDealsDetailed = (d.deals || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map((x) => {
+    const f = d.freelancers.find((y) => y.id === x.freelancerId);
+    return {
+      ...x,
+      freelancerName: f ? (f.businessName || f.name) : "עצמאית שנמחקה",
+      reportedBy: x.initiatedBy === "customer" ? "לקוחה" : "עצמאית",
+    };
+  });
 
   const revealEvents = (d.couponRevealEvents || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
   const revealsByCategory = {};
@@ -8587,6 +8656,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
+  <div class="panel">
+    <h3>מספר צפיות ודירוג מדויק בפרופיל</h3>
+    <p class="muted">${d.settings.showProfileViewCount ? "מוצג עכשיו לכולם, בעמוד הפרופיל הפומבי של כל עצמאית: כמה צפיות היו בפרופיל שלה (👁️), והציון המספרי המדויק של הדירוג שלה (למשל \"4.7\") ליד הכוכבים." : "כרגע לא מוצג באף פרופיל - רק כוכבי הדירוג הוויזואליים מוצגים (בלי מספר מדויק), ובלי מספר צפיות. אפשר להדליק את זה מתי שתרצי."}</p>
+    <form method="post" action="/admin/toggle-profile-viewcount">
+      <button class="btn btn-small" type="submit">${d.settings.showProfileViewCount ? "הסתרה מהפרופילים" : "הצגה בכל הפרופילים"}</button>
+    </form>
+  </div>
+
   <div class="panel" data-badge="${(d.serviceRequests || []).length}">
     <h3>📣 בקשות שירות מלקוחות (${(d.serviceRequests || []).length})</h3>
     <p class="muted">${d.settings.serviceRequestsPremiumOnly ? "כרגע מוצגות לעצמאיות רק אם היא מסומנת 'מומלצת' (ר' עמודת 'רמה' בטבלת העצמאיות למטה)." : "כרגע פתוח לכל עצמאית מאושרת בתחום המתאים - אף אחת לא נדרשת להיות 'מומלצת' כדי לראות."}</p>
@@ -8657,6 +8734,19 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </table></div>` : ""}
   </div>
 
+  <div class="panel" id="deals-detail" style="scroll-margin-top:90px;" data-badge="${confirmedDealsCount}">
+    <h3>💰 עסקאות שדווחו - מי דיווחה ומה הסטטוס (${confirmedDealsCount} סגורות ומאושרות, ${pendingDealsCount} ממתינות)</h3>
+    <p class="muted">כל עסקה שדווחה באתר, בנפרד - מי דיווחה ראשונה (העצמאית, שממתינה לאישור הלקוחה; או הלקוחה עצמה, שנספרת מיד כ"אושרה"), עם מי, ומה הסטטוס הנוכחי. רק עסקאות עם הסטטוס "✅ אושרה ע&quot;י הלקוחה" נספרות בסטטיסטיקות (כאן ובכל מקום אחר באתר).</p>
+    ${allDealsDetailed.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>עסק</th><th>לקוחה</th><th>מי דיווחה</th><th>סטטוס</th><th>תאריך דיווח</th><th>תאריך אישור/דחיה</th></tr>
+      ${allDealsDetailed.map((x) => `<tr>
+        <td>${esc(x.freelancerName)}</td><td>${esc(x.customerName || "-")}</td><td>${esc(x.reportedBy)}</td>
+        <td>${esc(dealStatusLabel(x.status))}</td>
+        <td>${esc(new Date(x.createdAt).toLocaleString("he-IL"))}</td>
+        <td>${x.customerConfirmedAt ? esc(new Date(x.customerConfirmedAt).toLocaleString("he-IL")) : "-"}</td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">עדיין לא דווחה אף עסקה באתר.</p>`}
+  </div>
+
   <div class="panel" data-badge="${unreadMessages}">
     <h3>הודעות מ"צרי קשר" (${unreadMessages} חדשות)</h3>
     ${(d.contactMessages || []).length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>אימייל</th><th>הודעה</th><th>תאריך</th><th>פעולות</th></tr>
@@ -8665,6 +8755,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td>
           <a class="btn btn-small" href="mailto:${esc(m.email)}?subject=${encodeURIComponent("תגובה מ-SheCan")}">מענה במייל</a>
           ${!m.read ? `<form style="display:inline" method="post" action="/admin/message/${m.id}/read"><button class="btn btn-small btn-outline" type="submit">סימון כנקרא</button></form>` : ""}
+          <form style="display:inline" method="post" action="/admin/message/${m.id}/delete" onsubmit="return confirm('למחוק את ההודעה הזו?');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form>
         </td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין לא התקבלו הודעות.</p>`}
@@ -9123,6 +9214,17 @@ route("POST", "/admin/message/:id/read", async (req, res, params, query, ctx) =>
   const d = db.load();
   const m = (d.contactMessages || []).find((x) => x.id === params.id);
   if (m) m.read = true;
+  db.save();
+  redirect(res, "/admin");
+});
+
+// מחיקת הודעת "צרי קשר" בודדת - נוסף 2026-08-31 כדי לאפשר ניקוי הודעות ספאם (ר' ההגנה
+// החדשה על הטופס עצמו ב-POST /contact, וההערה המלאה ליד isContactRateLimited) בלי לגעת
+// בהודעות אמיתיות אחרות.
+route("POST", "/admin/message/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.contactMessages = (d.contactMessages || []).filter((x) => x.id !== params.id);
   db.save();
   redirect(res, "/admin");
 });
@@ -9723,6 +9825,14 @@ route("POST", "/admin/toggle-public-stats", async (req, res, params, query, ctx)
   d.settings.showPublicStats = !d.settings.showPublicStats;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showPublicStats ? "המספרים מוצגים עכשיו לכולן בעמוד הבית." : "המספרים הוסתרו מעמוד הבית.")}`);
+});
+
+route("POST", "/admin/toggle-profile-viewcount", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.showProfileViewCount = !d.settings.showProfileViewCount;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showProfileViewCount ? "מספר הצפיות והדירוג המדויק מוצגים עכשיו בכל הפרופילים." : "מספר הצפיות והדירוג המדויק הוסתרו מהפרופילים.")}`);
 });
 
 route("POST", "/admin/toggle-service-requests-premium", async (req, res, params, query, ctx) => {
@@ -10350,6 +10460,9 @@ route("GET", "/contact", async (req, res, params, query, ctx) => {
     <label>שם<input type="text" name="name" required /></label>
     <label>מייל לחזרה אלייך<input type="email" name="email" required /></label>
     <label>מה תרצי לספר לנו?<textarea name="message" required></textarea></label>
+    <div style="position:absolute;left:-9999px;top:-9999px;" aria-hidden="true">
+      <label>השאירי שדה זה ריק<input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+    </div>
     <button class="btn" style="margin-top:16px;width:100%;" type="submit">שליחה</button>
   </form>
   `;
@@ -10358,6 +10471,18 @@ route("GET", "/contact", async (req, res, params, query, ctx) => {
 
 route("POST", "/contact", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
+  const okRedirect = () => redirect(res, `/contact?ok=${encodeURIComponent("קיבלנו את ההודעה שלך - תודה! נחזור אלייך בהקדם ❤️")}`);
+  // honeypot: שדה מוסתר שבן/בת אדם אמיתיים אף פעם לא רואים ולכן אף פעם לא ממלאים - אם הוא לא
+  // ריק, זו כמעט בוודאות שליחה אוטומטית של בוט. "מצליחה" בשקט (אותה הודעת תודה) בלי להישמר.
+  if ((body.get("website") || "").trim()) return okRedirect();
+  const ip = getClientIp(req);
+  // חסימת תוכן כפול - אותה הודעה, מילה במילה, מאותה IP, בתוך זמן קצר (ר' ההערה המלאה למעלה,
+  // ליד isDuplicateContactMessage) - זה הדפוס המדויק של הספאם שספיר קיבלה בפועל, ולא פוגע
+  // בלקוחה אמיתית ששולחת כמה הודעות שונות ברצף.
+  if (isDuplicateContactMessage(ip, body.get("message"))) return okRedirect();
+  // הגבלת קצב לפי IP - רשת ביטחון נוספת, עם סף גבוה בכוונה (ר' ההערה המלאה למעלה, ליד
+  // isContactRateLimited) למקרה של בוט שמדלג גם על ה-honeypot וגם משנה את הטקסט כל פעם.
+  if (isContactRateLimited(ip)) return okRedirect();
   const d = db.load();
   const id = db.nextId("message");
   d.contactMessages = d.contactMessages || [];
@@ -10366,7 +10491,7 @@ route("POST", "/contact", async (req, res, params, query, ctx) => {
     message: (body.get("message") || "").trim(), createdAt: new Date().toISOString(), read: false,
   });
   db.save();
-  redirect(res, `/contact?ok=${encodeURIComponent("קיבלנו את ההודעה שלך - תודה! נחזור אלייך בהקדם ❤️")}`);
+  okRedirect();
 });
 
 // ----- "לתמיכה לחצי 💬" - כפתור צף שמופיע בכל עמוד (ר' layout.js), בנוסף לעמוד "צרי קשר"
