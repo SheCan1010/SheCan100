@@ -1924,7 +1924,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update112 - 2026-08-30 - תיבת אישור חובה בהרשמה (גם ללקוחות וגם לעצמאיות) שהפרטים/התוכן הפומבי גלויים לכלל הציבור באתר - כולל גברים, ולא רק נשים; האישור נבדק גם בצד השרת ונשמר עם תאריך לתיעוד. וגם: עוזרת AI לתמיכה + חיפוש חכם מבוסס AI (כבוי כברירת מחדל, מתג הפעלה בניהול) - הכל מבוסס Anthropic API, דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update113 - 2026-08-31 - התאמה למדיניות נטפרי: (א) תגובות להתייעצויות בזירה עוברות אישור ידני לפני פרסום, כמו שאר תוכן הזירה; (ב) פאנל ניהול חדש לצפייה (קריאה בלבד) בכל ההתכתבויות הפרטיות בין לקוחות לעצמאיות; (ג) שדה מגדר חובה בהרשמת לקוחה - חשבון של גבר ננעל אוטומטית, לא מקבל מייל ולא יכול להתחבר, עד אישור ידני בפאנל 'חשבונות שננעלו אוטומטית' בניהול. וגם (מ-update112): תיבת אישור חובה בהרשמה (גם ללקוחות וגם לעצמאיות) שהפרטים/התוכן הפומבי גלויים לכלל הציבור באתר - כולל גברים, ולא רק נשים. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI (כבוי כברירת מחדל, מתג הפעלה בניהול) - הכל מבוסס Anthropic API, דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -3248,8 +3248,11 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
 
   // ---- Section 2: פינת ההתייעצויות ----
   const approvedConsultations = (d.consultations || []).filter((c) => c.status === "approved").slice().reverse();
+  const isAdminHere = ctx.session && ctx.session.role === "admin";
   const consultationsHtml = approvedConsultations.length ? approvedConsultations.map((c) => {
-    const replies = c.replies || [];
+    // רק תגובות מאושרות מוצגות לציבור הרחב - מנהלת האתר, כשהיא מחוברת, ממשיכה לראות גם תגובות
+    // שממתינות לאישור כאן (בנוסף לפאנל הייעודי בניהול), כדי שיהיה לה עוד מקום נוח לתפוס אותן.
+    const replies = (c.replies || []).filter((r) => r.status === "approved" || isAdminHere);
     const askerName = reviewDisplayName({ authorName: c.customerName, isAnonymous: false });
     const isOwnConsultation = isCustomer && ctx.session.id === c.customerId;
     return `
@@ -3267,8 +3270,9 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
           : `<span class="arena-answer-author">${esc(replyName)}</span>`;
         return `
         <div class="arena-answer">
+          ${r.status === "pending" ? `<span class="badge badge-outline" style="margin-inline-end:6px;">⏳ ממתינה לאישור</span>` : ""}
           ${replyNameHtml} <span class="muted" style="font-size:12px;">(${roleLabel})</span><span class="arena-meta">${new Date(r.createdAt).toLocaleString("he-IL")}</span><p class="arena-answer-text">${esc(r.text)}</p>
-          ${ctx.session && ctx.session.role === "admin" ? `<form method="post" action="/admin/consultation/${c.id}/reply/${r.id}/delete" style="margin-top:6px;"><button type="submit" class="btn btn-small btn-outline">מחיקת התגובה הזו</button></form>` : ""}
+          ${isAdminHere ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">${r.status === "pending" ? `<form method="post" action="/admin/consultation/${c.id}/reply/${r.id}/approve"><button type="submit" class="btn btn-small">אישור ופרסום</button></form>` : ""}<form method="post" action="/admin/consultation/${c.id}/reply/${r.id}/delete"><button type="submit" class="btn btn-small btn-outline">מחיקת התגובה הזו</button></form></div>` : ""}
         </div>`;
       }).join("") : `<p class="muted" style="font-size:13px;">עוד אין תגובות - מוזמנות לענות ולעזור.</p>`}
       ${c.closed ? `<p class="muted" style="font-size:13px;margin-top:8px;">🔒 בעלת ההתייעצות סגרה אותה לתגובות נוספות.</p>` : (isCustomer || isFreelancer) ? `
@@ -3452,10 +3456,15 @@ route("POST", "/arena/consultation/:id/reply", async (req, res, params, query, c
   }
   if (c && author && text) {
     c.replies = c.replies || [];
-    c.replies.push({ id: db.nextId("consultationReply"), ...author, text, createdAt: new Date().toISOString() });
+    // status:"pending" - לפי בקשה מפורשת 2026-08-30, כל תגובה בפינת ההתייעצויות (הערוץ הפתוח
+    // ביותר באתר - גם לקוחות וגם עצמאיות מגיבות זו לזו) עוברת אישור ידני לפני שהיא מתפרסמת
+    // (ר' GET /arena, שמסנן להצגה ציבורית רק status==="approved", ו-POST
+    // /admin/consultation/:id/reply/:replyId/approve). זה שונה במכוון מתשובות זירה/חוות דעת,
+    // שהוחלט להשאיר בפרסום מיידי.
+    c.replies.push({ id: db.nextId("consultationReply"), ...author, text, status: "pending", createdAt: new Date().toISOString() });
     db.save();
   }
-  redirect(res, `/arena?tab=2&ok=${encodeURIComponent("התגובה שלך נוספה!")}#consultation-${params.id}`);
+  redirect(res, `/arena?tab=2&ok=${encodeURIComponent("התגובה שלך נשלחה לאישור - היא תתפרסם לאחר בדיקה.")}#consultation-${params.id}`);
 });
 
 // The link a freelancer gets by email when a question in her field is approved - if she isn't
@@ -5825,6 +5834,9 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
   if (role === "freelancer" && user.status !== "approved") {
     return rerenderLoginError("עוד רגע סבלנות - הפרופיל שלך ממתין לאישור, ונעדכן אותך ברגע שהוא יאושר.");
   }
+  if (role === "customer" && user.accountLocked) {
+    return rerenderLoginError("החשבון שלך עדיין ממתין לבדיקה ידנית ולא ניתן להתחבר איתו כרגע. אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.");
+  }
   const sid = auth.createSession(role, user.id);
   const loginCookies = role === "admin" ? sessionCookie(sid) : [sessionCookie(sid), identityCookie(role, user.id)];
   redirect(res, next || (role === "admin" ? "/admin" : role === "freelancer" ? "/freelancer-dashboard" : "/account"), loginCookies);
@@ -5955,6 +5967,12 @@ function signupFormBody(d, { refId, referrer, prefill }) {
     <label>שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
     <label>מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
     <label>בחרי סיסמה<input type="password" name="password" required /></label>
+    <label>מגדר
+    <select name="gender" required>
+      <option value="">בחרי...</option>
+      <option value="female" ${p.gender === "female" ? "selected" : ""}>אישה</option>
+      <option value="male" ${p.gender === "male" ? "selected" : ""}>גבר</option>
+    </select></label>
     ${prefill ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
     ${!referrer ? `<label>הוזמנת ע"י חברה? המייל שלה כאן יזכה אותה בהפניה (לא חובה)
     <input type="email" name="referrerEmail" value="${esc(p.referrerEmail || "")}" placeholder="למשל friend@example.com" /></label>` : ""}
@@ -5991,6 +6009,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     const referrer = refId ? d.customers.find((c) => c.id === refId) : null;
     const prefill = {
       name: body.get("name"), email: body.get("email"),
+      gender: body.get("gender") || "",
       wantsPushNotifications: body.get("wantsPushNotifications") === "1",
       publicVisibilityConsent: body.get("publicVisibilityConsent") === "1",
       referrerEmail: body.get("referrerEmail") || "",
@@ -6005,10 +6024,42 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
   if (body.get("publicVisibilityConsent") !== "1") {
     return rerenderSignupWithError("צריך לאשר את תיבת הסימון שהשם שלך עשוי להיות גלוי לכלל הציבור (כולל גברים) כדי להירשם.");
   }
+  const gender = body.get("gender");
+  if (gender !== "female" && gender !== "male") {
+    return rerenderSignupWithError("צריך לבחור מגדר כדי להירשם.");
+  }
   const id = db.nextId("customer");
   const emailVerifyToken = crypto.randomBytes(24).toString("hex");
   const email = body.get("email");
   const name = body.get("name");
+  // חשבון של גבר ננעל אוטומטית ולא נכנס לאתר בכלל - לפי בקשה מפורשת 2026-08-31 ("וגבר אל
+  // תאשר אל תשלח לו שום דבר ותחסום את המייל אוטומטית אלא אם כן אני פותחת אותו מאזור הניהול").
+  // לא נשלח מייל אימות, לא נפתחת סשן/התחברות, ומוצג לו מסך "ננעל" עם קישור לפנייה לתמיכה
+  // בלבד (ר' הפאנל "חשבונות שממתינים לאישור ידני" בניהול, ו-POST /admin/customer/:id/unlock).
+  if (gender === "male") {
+    db.load().customers.push({
+      id, name, email,
+      passwordHash: auth.hashPassword(body.get("password")), cityId: "",
+      favorites: [], favoriteNotes: {}, viewedDeals: [], revealedCoupons: [], pushSubscriptions: [], createdAt: new Date().toISOString(),
+      communityNotifyTags: {},
+      emailVerified: false, emailVerifyToken: crypto.randomBytes(24).toString("hex"),
+      wantsPushNotifications: false,
+      publicVisibilityConsentAt: new Date().toISOString(),
+      gender: "male", accountLocked: true, accountLockedAt: new Date().toISOString(),
+      referredByCustomerId: null,
+      referralPopupSeen: true,
+      siteVisitCount: 0,
+    });
+    db.save();
+    const lockedBody = `
+    <h1 class="section-title">ההרשמה התקבלה</h1>
+    <div class="panel" style="max-width:460px;margin:24px auto;text-align:center;">
+      <p>החשבון שלך נקלט, אבל עדיין לא פעיל - הוא ממתין לבדיקה ידנית של הנהלת האתר לפני שאפשר להתחבר איתו.</p>
+      <p class="muted">אם זה דחוף, אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.</p>
+      <p style="margin-top:16px;"><a href="/">חזרה לעמוד הבית</a></p>
+    </div>`;
+    return sendHtml(res, 200, page({ title: "ההרשמה התקבלה", session: ctx.session, body: lockedBody }));
+  }
   // Only credited if it actually resolves to a real, different customer - guards against a
   // stale/tampered ref value crediting a deleted account or, worse, someone referring herself.
   const refId = body.get("ref") || "";
@@ -6031,6 +6082,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     favorites: [], favoriteNotes: {}, viewedDeals: [], revealedCoupons: [], pushSubscriptions: [], createdAt: new Date().toISOString(),
     communityNotifyTags: {},
     emailVerified: false, emailVerifyToken,
+    gender: "female", accountLocked: false,
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
     // נשמר לתיעוד - חובה לאשר (ר' publicVisibilityConsent למעלה) שתוכן ציבורי שהיא עשויה
     // לכתוב (חוות דעת/זירה) גלוי לכלל הציבור, לא רק לנשים. התאריך נותן הוכחה בדיעבד שהאישור ניתן.
@@ -7393,6 +7445,19 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   });
   const pendingArenaQuestions = (d.arenaQuestions || []).filter((q) => q.status === "pending" && !isSnoozed(d, `arenaQuestion:${q.id}`));
   const pendingConsultations = (d.consultations || []).filter((c) => c.status === "pending" && !isSnoozed(d, `consultation:${c.id}`));
+  // תגובות ל"פינת ההתייעצויות" (בניגוד לתשובות ממוקדות בזירה, ובניגוד לחוות דעת) טעונות אישור
+  // ידני לפני שהן מתפרסמות - לפי בקשה מפורשת 2026-08-30, כחלק מהתאמת האתר למדיניות נטפרי: זה
+  // הערוץ ה"פתוח" ביותר באתר (גם לקוחות וגם עצמאיות יכולות להגיב שם זו לזו), ולכן דווקא הוא
+  // מקבל פיקוח מלא מראש - בניגוד לתשובות זירה/חוות דעת שנשארות בפרסום מיידי (הוחלט במפורש
+  // להשאיר אותן כך). ר' POST /arena/consultation/:id/reply (status:"pending" בפוש) ו-GET /arena
+  // (מסנן להצגה ציבורית רק status==="approved"). רשימה שטוחה של כל התגובות הממתינות מכל
+  // ההתייעצויות המאושרות (תגובה תמיד שייכת להתייעצות שכבר אושרה - ר' התנאי ב-route עצמו).
+  const pendingConsultationReplies = [];
+  (d.consultations || []).forEach((c) => {
+    (c.replies || []).forEach((r) => {
+      if (r.status === "pending") pendingConsultationReplies.push({ consultation: c, reply: r });
+    });
+  });
   // Live (already-approved) arena questions/consultations don't need re-approval, but admin
   // should always be able to delete anything in the arena, not just items still in the
   // moderation queue - these feed a permanent management panel below.
@@ -7484,6 +7549,33 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       }).sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
   })();
   const openSupportMessages = supportThreads.filter((t) => !t.closed && t.unread > 0).length;
+
+  // תצוגת ניהול לכל ההתכתבויות הפרטיות בין לקוחות לעצמאיות (d.chatMessages) - קבוצה לפי
+  // צמד (freelancerId, customerId), עם תצוגה מרוכזת בלבד (ר"מ, בלי אפשרות עריכה/מחיקה) -
+  // כדי לאפשר פיקוח על תוכן שהיום לא נראה לאף אחד חוץ מהצדדים עצמם.
+  const chatThreads = (() => {
+    const byPair = {};
+    (d.chatMessages || []).forEach((m) => {
+      const key = `${m.freelancerId}::${m.customerId}`;
+      (byPair[key] = byPair[key] || []).push(m);
+    });
+    return Object.keys(byPair).map((key) => {
+      const msgs = byPair[key].slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+      const last = msgs[msgs.length - 1];
+      const f = d.freelancers.find((x) => x.id === last.freelancerId);
+      const c = d.customers.find((x) => x.id === last.customerId);
+      return {
+        freelancerId: last.freelancerId, customerId: last.customerId,
+        freelancerName: f ? (f.businessName || f.name) : "עצמאית שנמחקה",
+        customerName: c ? c.name : "לקוחה שנמחקה",
+        count: msgs.length, lastText: last.text, lastFrom: last.fromRole, lastAt: last.date,
+      };
+    }).sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+  })();
+
+  // חשבונות לקוחות שננעלו אוטומטית בהרשמה כי סימנו "גבר" (ר' POST /signup) - לא מקבלים שום
+  // מייל/גישה עד שאת בוחרת לפתוח אותם ידנית כאן.
+  const lockedCustomers = d.customers.filter((c) => c.accountLocked);
 
   // Site-visit numbers for the "מספרים כלליים" panel - counted by trackSiteVisit() on every
   // real page load (see near the bottom of the file). Last-7-days breakdown built from
@@ -7986,6 +8078,21 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     `).join("") : `<p class="muted">אין כרגע התייעצויות שממתינות לאישור.</p>`}
   </div>
 
+  <div class="panel" data-badge="${pendingConsultationReplies.length}">
+    <h3>🥊 הזירה - תגובות להתייעצויות שממתינות לאישור (${pendingConsultationReplies.length})</h3>
+    <p class="muted">כל תגובה בפינת ההתייעצויות (מלקוחה או מעצמאית) עוברת אישור ידני לפני שהיא מתפרסמת - זה הערוץ הכי "פתוח" באתר, אז הוא היחיד שמקבל פיקוח מראש.</p>
+    ${pendingConsultationReplies.length ? pendingConsultationReplies.map(({ consultation: c, reply: r }) => `
+      <div class="panel" style="background:var(--cream);">
+        <p class="muted" style="margin:0 0 4px;">בתגובה להתייעצות: "${esc(clip(c.text, 80))}"</p>
+        <p style="margin:0;font-weight:700;">${esc(r.authorName)} <span class="muted" style="font-size:12px;font-weight:400;">(${r.authorRole === "freelancer" ? "עצמאית" : "לקוחה"})</span>: ${esc(r.text)}</p>
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
+          <form method="post" action="/admin/consultation/${c.id}/reply/${r.id}/approve"><button class="btn btn-small" type="submit">אישור ופרסום</button></form>
+          <form method="post" action="/admin/consultation/${c.id}/reply/${r.id}/delete"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+        </div>
+      </div>
+    `).join("") : `<p class="muted">אין כרגע תגובות שממתינות לאישור.</p>`}
+  </div>
+
   <div class="panel">
     <h3>🥊 הזירה - שאלות ותשובות שפורסמו (${liveArenaQuestions.length})</h3>
     <p class="muted">אפשר למחוק כל שאלה או תשובה בודדת בכל שלב, גם אחרי שהיא כבר פורסמה.</p>
@@ -8007,19 +8114,25 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   <div class="panel">
     <h3>🥊 הזירה - התייעצויות שפורסמו (${liveConsultations.length})</h3>
     <p class="muted">אפשר למחוק כל התייעצות או תגובה בודדת בכל שלב, גם אחרי שהיא כבר פורסמה.</p>
-    ${liveConsultations.length ? liveConsultations.map((c) => `
+    ${liveConsultations.length ? liveConsultations.map((c) => {
+      // רק תגובות מאושרות מוצגות כאן ("שפורסמו") - תגובות שממתינות לאישור מנוהלות בפאנל הייעודי
+      // "תגובות להתייעצויות שממתינות לאישור" למעלה, כדי לא לכפול תצוגה מבלבלת של אותה תגובה
+      // בשני מקומות עם כפתורים שונים.
+      const approvedReplies = (c.replies || []).filter((r) => r.status === "approved");
+      return `
       <div class="panel" style="background:var(--cream);">
         <p class="muted" style="margin:0 0 4px;">מאת ${esc(c.customerName)}</p>
         <p style="margin:0;font-weight:700;">${esc(c.text)}</p>
-        ${(c.replies || []).length ? (c.replies || []).map((r) => `
+        ${approvedReplies.length ? approvedReplies.map((r) => `
         <div style="background:var(--white);border-radius:8px;padding:8px 12px;margin-top:8px;">
           <p style="margin:0;"><strong>${esc(r.authorName)}</strong> <span class="muted" style="font-size:12px;">(${r.authorRole === "freelancer" ? "עצמאית" : "לקוחה"})</span>: ${esc(r.text)}</p>
           <form method="post" action="/admin/consultation/${c.id}/reply/${r.id}/delete" style="margin-top:6px;"><button type="submit" class="btn btn-small btn-outline">מחיקת התגובה הזו</button></form>
         </div>
-        `).join("") : `<p class="muted" style="margin-top:6px;">עוד אין תגובות.</p>`}
+        `).join("") : `<p class="muted" style="margin-top:6px;">עוד אין תגובות מאושרות.</p>`}
         <form method="post" action="/admin/consultation/${c.id}/delete" style="margin-top:10px;"><button class="btn btn-small btn-outline" type="submit">מחיקת ההתייעצות כולה</button></form>
       </div>
-    `).join("") : `<p class="muted">אין כרגע התייעצויות שפורסמו.</p>`}
+    `;
+    }).join("") : `<p class="muted">אין כרגע התייעצויות שפורסמו.</p>`}
   </div>
 
   <div class="panel">
@@ -8575,6 +8688,30 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </table></div>` : `<p class="muted">עדיין לא נפתחו שיחות.</p>`}
   </div>
 
+  <div class="panel" id="chat-monitoring" style="scroll-margin-top:90px;">
+    <h3>💬 התכתבויות פרטיות בין לקוחות לעצמאיות (${chatThreads.length} שיחות)</h3>
+    <p class="muted">תצוגת קריאה בלבד של כל ההודעות הפרטיות שנשלחות דרך כפתור "שליחת הודעה" בעמוד של עצמאית ודרך "האזור האישי" שלה - כדי שיהיה פיקוח מלא גם על הערוץ הזה, בדיוק כמו על שאר התוכן באתר.</p>
+    ${chatThreads.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>עצמאית</th><th>לקוחה</th><th>הודעות</th><th>הודעה אחרונה</th><th>תאריך</th><th></th></tr>
+      ${chatThreads.map((t) => `<tr>
+        <td>${esc(t.freelancerName)}</td><td>${esc(t.customerName)}</td><td>${t.count}</td>
+        <td>${t.lastFrom === "freelancer" ? "היא: " : "לקוחה: "}${esc((t.lastText || "").slice(0, 60))}${(t.lastText || "").length > 60 ? "…" : ""}</td>
+        <td>${esc(new Date(t.lastAt).toLocaleString("he-IL"))}</td>
+        <td><a class="btn btn-small" href="/admin/chat/${t.freelancerId}/${t.customerId}">צפייה בשיחה המלאה</a></td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">עדיין לא נשלחו הודעות פרטיות באתר.</p>`}
+  </div>
+
+  <div class="panel" id="locked-accounts" style="scroll-margin-top:90px;" data-badge="${lockedCustomers.length}">
+    <h3>🔒 חשבונות שננעלו אוטומטית (${lockedCustomers.length})</h3>
+    <p class="muted">חשבון לקוח נחסם אוטומטית בהרשמה אם סומן "גבר" - הוא לא קיבל שום מייל ולא יכול להתחבר, עד שתאשרי ותפתחי אותו כאן ידנית.</p>
+    ${lockedCustomers.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>מייל</th><th>תאריך הרשמה</th><th>פעולה</th></tr>
+      ${lockedCustomers.map((c) => `<tr>
+        <td>${esc(c.name)}</td><td>${esc(c.email)}</td><td>${esc(new Date(c.createdAt).toLocaleDateString("he-IL"))}</td>
+        <td><form method="post" action="/admin/customer/${c.id}/unlock"><button class="btn btn-small" type="submit">אישור ופתיחה</button></form></td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">אין כרגע חשבונות נעולים.</p>`}
+  </div>
+
   <div class="panel">
     <h3>מחיר מודעה</h3>
     <p class="muted">מחיר ייחוס למודעה בצד העמוד (לשימוש שלך כשאת סוגרת עם עצמאית על פרסום - אין כרגע גבייה אוטומטית באתר, את מסמנת ידנית בטבלה למעלה מתי מודעה שולמה).</p>
@@ -9091,6 +9228,17 @@ route("POST", "/admin/customer/fix-referral", async (req, res, params, query, ct
   redirect(res, `/admin?ok=${encodeURIComponent(`${customer.name} שויכה כהפניה של ${referrer.name}.`)}#customer-referral-race`);
 });
 
+route("POST", "/admin/customer/:id/unlock", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === params.id);
+  if (!customer) return redirect(res, "/admin#locked-accounts");
+  customer.accountLocked = false;
+  customer.accountUnlockedAt = new Date().toISOString();
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`החשבון של ${customer.name} נפתח - היא יכולה להתחבר עכשיו.`)}#locked-accounts`);
+});
+
 route("POST", "/admin/freelancer/fix-referral", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -9289,6 +9437,16 @@ route("POST", "/admin/consultation/:id/delete", async (req, res, params, query, 
   d.consultations = (d.consultations || []).filter((x) => x.id !== params.id);
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("ההתייעצות הוסרה.")}`);
+});
+
+route("POST", "/admin/consultation/:id/reply/:replyId/approve", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const c = (d.consultations || []).find((x) => x.id === params.id);
+  const r = c ? (c.replies || []).find((x) => x.id === params.replyId) : null;
+  if (r) r.status = "approved";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("התגובה אושרה ופורסמה!")}`);
 });
 
 route("POST", "/admin/consultation/:id/reply/:replyId/delete", async (req, res, params, query, ctx) => {
@@ -10422,6 +10580,28 @@ route("POST", "/admin/support/toggle", async (req, res, params, query, ctx) => {
   if (on) d.settings.adminSupportActiveAt = new Date().toISOString();
   db.save();
   sendHtml(res, 200, JSON.stringify({ ok: true, online: isAdminOnline(d) }), { "Content-Type": "application/json; charset=utf-8" });
+});
+
+route("GET", "/admin/chat/:freelancerId/:customerId", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.freelancerId);
+  const c = d.customers.find((x) => x.id === params.customerId);
+  const messages = (d.chatMessages || [])
+    .filter((m) => m.freelancerId === params.freelancerId && m.customerId === params.customerId)
+    .slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (!messages.length) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את השיחה הזו.</p>` }));
+  const body = `
+  <h1 class="section-title">💬 שיחה בין ${esc(f ? (f.businessName || f.name) : "עצמאית שנמחקה")} ל${esc(c ? c.name : "לקוחה שנמחקה")}</h1>
+  <p class="muted" style="text-align:center;">תצוגת קריאה בלבד - ${messages.length} הודעות.</p>
+  <div class="panel" style="max-width:560px;margin:0 auto;">
+    <div class="chat-thread" style="text-align:right;">
+      ${messages.map((m) => `<div class="chat-msg from-${m.fromRole}">${esc(m.text)}<span class="chat-meta">${m.fromRole === "freelancer" ? esc(f ? (f.businessName || f.name) : "עצמאית") : esc(c ? c.name : "לקוחה")} · ${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}
+    </div>
+  </div>
+  <p class="muted" style="text-align:center;margin-top:16px;"><a href="/admin#chat-monitoring">חזרה לפאנל הניהול</a></p>
+  `;
+  sendHtml(res, 200, page({ title: "שיחה פרטית", session: ctx.session, body }));
 });
 
 route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) => {
