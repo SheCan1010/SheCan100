@@ -221,6 +221,123 @@ async function notify(user, { pushTitle, pushBody, url, emailSubject, emailHtml 
   }
 }
 
+// ---------- shared AI integration (Anthropic API) ----------
+// Powers TWO features that both call Anthropic's Messages API (https://docs.claude.com/en/api/messages)
+// using the built-in fetch (no npm dependency), same zero-dependency-with-graceful-degradation
+// pattern as sendEmail/push above:
+//   1. suggestSupportReply - the "💡 הצע לי תשובה" button on GET /admin/support/thread/:key.
+//   2. aiSearchInterpret - the "🤖 חיפוש חכם" box on /search (see POST /search/ai below), which
+//      used to run ONLY on a free local heuristic (smartSearchHeuristic) - now it tries real AI
+//      first and falls back to that same heuristic if the AI isn't configured or a call fails,
+//      so the search box never breaks even without a key or during an Anthropic outage.
+// Requires ONE environment variable set in Render, NOT committed to code:
+//   ANTHROPIC_API_KEY - get one at https://console.anthropic.com (Settings -> API Keys)
+// If it isn't set yet, both functions return { ok:false, reason:"not_configured" } instead of
+// crashing - the support button shows a setup hint, and search silently falls back to the
+// heuristic. suggestSupportReply NEVER sends anything on its own - it only returns a suggested
+// draft that pre-fills the existing reply textarea; the admin still has to review, (optionally)
+// edit, and press "שליחה" herself, exactly as she asked for.
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const AI_CONFIGURED = !!ANTHROPIC_API_KEY;
+if (!AI_CONFIGURED) {
+  console.warn("[ai] ANTHROPIC_API_KEY not set - 'suggest a reply' button will show a setup hint, and smart search will use the free local heuristic instead of real AI.");
+}
+
+async function suggestSupportReply(d, messages) {
+  if (!AI_CONFIGURED) return { ok: false, reason: "not_configured" };
+  const knowledgeBase = (d.settings.supportKnowledgeBase || "").trim();
+  const convoText = messages.map((m) => (m.from === "admin" ? "נציגת SheCan" : (m.name || "הפונה")) + ": " + m.text).join("\n");
+  const systemPrompt = "את עוזרת שכותבת טיוטות תשובה עבור נציגת התמיכה של SheCan, אתר קהילתי לעצמאיות ישראליות וללקוחות שלהן. " +
+    "כתבי תמיד בעברית, בטון חם, אישי וממוקד, כמו נציגה אנושית שכותבת הודעה קצרה - לא מייל רשמי וארוך. " +
+    "התבססי אך ורק על מסמך המדיניות/השאלות-הנפוצות שמופיע למטה. אם המסמך לא מכיל תשובה ברורה לשאלה שנשאלה, אמרי בכנות בטיוטה עצמה שאת לא בטוחה ושכדאי לבדוק את זה לפני שליחה - לעולם אל תמציאי מדיניות או פרטים שלא מופיעים במסמך.\n\n" +
+    "מסמך המדיניות/FAQ של SheCan:\n" + (knowledgeBase || "(לא הוזן עדיין מסמך מדיניות/FAQ באתר - עדיף לציין בטיוטה שאין עדיין מידע רשמי בנושא)");
+  try {
+    const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-5",
+        max_tokens: 500,
+        system: systemPrompt,
+        messages: [{ role: "user", content: "זו שיחת התמיכה עד כה (מהישנה לחדשה):\n\n" + convoText + "\n\nכתבי טיוטת תשובה קצרה, חמה וממוקדת להודעה האחרונה של הפונה - טיוטה שאפשר כמעט לשלוח כמו שהיא." }],
+      }),
+    });
+    if (!apiRes.ok) {
+      console.warn("[ai-support] Anthropic API error", apiRes.status, await apiRes.text().catch(() => ""));
+      return { ok: false, reason: "api_error" };
+    }
+    const json = await apiRes.json();
+    const text = (json.content || []).map((block) => block.text || "").join("").trim();
+    if (!text) return { ok: false, reason: "empty" };
+    return { ok: true, text };
+  } catch (e) {
+    console.warn("[ai-support] call threw", e.message);
+    return { ok: false, reason: "call_failed" };
+  }
+}
+
+// Powers the real-AI version of "🤖 חיפוש חכם" (see POST /search/ai below). Sends the customer's
+// free-text request PLUS the site's actual list of category/subcategory/city ids+names, and forces
+// the model to answer via a tool call (tool_choice) instead of free-form text - much more reliable
+// than asking it to "reply with JSON", since the API itself enforces the shape of the answer. The
+// caller (POST /search/ai) still re-validates every id against the real data before using it -
+// never trusts the model blindly, same defensive posture as everywhere else in this codebase that
+// handles ids coming from outside.
+async function aiSearchInterpret(freeText, d) {
+  if (!AI_CONFIGURED) return { ok: false, reason: "not_configured" };
+  const categoriesDesc = d.categories.map((c) => {
+    const subs = (c.subcategories || []).map((s) => `      - תת-תחום: id="${s.id}" שם="${s.name}"`).join("\n");
+    return `    תחום: id="${c.id}" שם="${c.name}"` + (subs ? `\n${subs}` : "");
+  }).join("\n");
+  const citiesDesc = d.cities.map((c) => `id="${c.id}" שם="${c.name}"`).join(", ");
+  const systemPrompt = "את מנוע חיפוש חכם באתר SheCan, אתר קהילתי לעצמאיות ישראליות. לקוחה מתארת במילים שלה מה היא מחפשת, " +
+    "והתפקיד שלך הוא להמיר את זה לפרמטרי סינון מובנים באתר, בעזרת הכלי shecan_search_filters.\n\n" +
+    "רשימת התחומים ותתי-התחומים הקיימים באתר כרגע (חובה לבחור רק id שמופיע ממש ברשימה הזו, ואסור בשום אופן להמציא id שלא ברשימה):\n" + categoriesDesc + "\n\n" +
+    "רשימת הערים הקיימות באתר כרגע (חובה לבחור רק id שמופיע ממש ברשימה הזו):\n" + citiesDesc + "\n\n" +
+    "אם הבקשה לא מזכירה בבירור תחום/תת-תחום/עיר מסוימים - עדיף להשאיר את השדה ריק מאשר לנחש משהו לא קשור.";
+  const tool = {
+    name: "shecan_search_filters",
+    description: "ממיר בקשת חיפוש חופשית של לקוחה לפרמטרי סינון מובנים באתר SheCan",
+    input_schema: {
+      type: "object",
+      properties: {
+        categoryId: { type: "string", description: "ה-id המדויק של התחום המתאים ביותר מהרשימה שסופקה, או מחרוזת ריקה אם אין תחום ברור" },
+        subcategoryId: { type: "string", description: "ה-id המדויק של תת-התחום, רק אם הוא שייך בדיוק לאותו categoryId שנבחר, אחרת מחרוזת ריקה" },
+        cityId: { type: "string", description: "ה-id המדויק של העיר מהרשימה שסופקה, או מחרוזת ריקה אם לא צוינה עיר" },
+        wantsHighQuality: { type: "boolean", description: "true אם היא ציינה שהיא מחפשת רמה גבוהה/איכות/מקצועיות/עצמאית מומלצת ומנוסה" },
+        wantsGoodPrice: { type: "boolean", description: "true אם היא ציינה שהיא מחפשת מחיר טוב/זול/משתלם/תקציב" },
+        keywords: { type: "string", description: "מילות חיפוש חופשיות נוספות שלא נתפסות ע\"י תחום/תת-תחום/עיר שנבחרו - למשל שם עסק ספציפי או תיאור סגנון/שירות מדויק - מחרוזת ריקה אם אין" },
+      },
+      required: ["categoryId", "subcategoryId", "cityId", "wantsHighQuality", "wantsGoodPrice", "keywords"],
+    },
+  };
+  try {
+    const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-5",
+        max_tokens: 400,
+        system: systemPrompt,
+        tools: [tool],
+        tool_choice: { type: "tool", name: "shecan_search_filters" },
+        messages: [{ role: "user", content: freeText }],
+      }),
+    });
+    if (!apiRes.ok) {
+      console.warn("[ai-search] Anthropic API error", apiRes.status, await apiRes.text().catch(() => ""));
+      return { ok: false, reason: "api_error" };
+    }
+    const json = await apiRes.json();
+    const toolUse = (json.content || []).find((block) => block.type === "tool_use");
+    if (!toolUse || !toolUse.input) return { ok: false, reason: "empty" };
+    return { ok: true, filters: toolUse.input };
+  } catch (e) {
+    console.warn("[ai-search] call threw", e.message);
+    return { ok: false, reason: "call_failed" };
+  }
+}
+
 // ---------- seed admin password once ----------
 (function ensureAdminPassword() {
   const d = db.load();
@@ -1807,7 +1924,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update108 - 2026-08-30 - וידג'ט שיחות תמיכה ממתינות + תזכורת חצי שעה + סגירה/המשך טיפול + כפתורי הדבקה מהירה, ניהול מלא של תחומים ותתי-תחומים (שינוי שם/מחיקה עם חסימת שימוש/שיוך מחדש), הערה מהירה למבצע ההפניות, הכרזת מנצחת אמיתית עם פרסום בדף הבית עד תאריך שנבחר, וגיבוי ידני להפניית לקוחות/עצמאיות (בהרשמה + תיקון רטרואקטיבי בניהול)";
+const DEPLOY_MARKER = "update111 - 2026-08-30 - עוזרת AI לתמיכה: מסמך מדיניות/FAQ בהגדרות + כפתור \"הצע לי תשובה\" בשיחת תמיכה, וחיפוש חכם מבוסס AI אמיתי בעמוד החיפוש - כבוי כברירת מחדל (כדי לא לצבור עלות לא צפויה), עם מתג הפעלה/כיבוי ידני בפאנל \"עוזרת AI באתר\" בניהול; כשכבוי, נופל אוטומטית לחיפוש החכם המקומי והחינמי - הכל מבוסס Anthropic API, דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -1995,16 +2112,19 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   }));
 });
 
-// ----- חיפוש חכם (נוסף 2026-08-26, הוחלף לגרסה חינמית ללא AI חיצוני ב-2026-08-27) -----
-// לקוחה מקלידה משפט חופשי (למשל "מאפרת באזור ירושלים ברמה גבוהה ומחיר טוב") והפונקציה
-// למטה סורקת אותו בעצמה (בלי לקרוא לשום שירות AI חיצוני בתשלום) מול הרשימות האמיתיות של
-// האתר - קטגוריות/תת-קטגוריות/ערים - ומול כמה ביטויי מפתח נפוצים ("רמה גבוהה"/"מחיר טוב"
-// וכו') כדי לבנות סינון מובנה. הפלט המובנה מוזן חזרה לתוך GET /search הרגיל (כפרמטרי
-// query) - כל מנגנון הסינון/המיון הקיים מנוצל מחדש בלי כפילות קוד. אין שום קריאת רשת, אין
-// עלות לכל חיפוש, ואין תלות במפתח API של אף שירות חיצוני - זו האופציה החינמית (לעומת
-// חלופה מבוססת Claude API אמיתי, שנבדקה בעבר ונדחתה לטובת הגרסה הזו). המחיר: פחות "חכם"
-// מ-AI אמיתי - לא מבינה ניסוחים יצירתיים, שגיאות כתיב, או משפטים עקיפים - אבל עובדת תמיד
-// ומיידית, בלי שום הגדרה נדרשת מספיר.
+// ----- חיפוש חכם (נוסף 2026-08-26, הוחלף לגרסה חינמית ללא AI חיצוני ב-2026-08-27, קיבלה אופציה
+// למעבר ל-AI אמיתי ב-2026-08-30, ומיד אחר כך - לאחר שהוסבר שכל חיפוש AI עולה כסף בפועל, בניגוד
+// לכפתור "הצע לי תשובה" הידני בתמיכה - הוגדרה כברירת מחדל ל"כבוי" עם מתג הפעלה/כיבוי ידני
+// בניהול, ר' d.settings.aiSearchEnabled ו-POST /admin/ai-search-toggle) -----
+// לקוחה מקלידה משפט חופשי (למשל "מאפרת באזור ירושלים ברמה גבוהה ומחיר טוב"). POST /search/ai
+// מנסה AI אמיתי (aiSearchInterpret) רק אם d.settings.aiSearchEnabled === true (וגם אז, רק אם יש
+// מפתח מוגדר) - אחרת, ואם הקריאה נכשלה מכל סיבה שהיא, נופל לפונקציה למטה - שסורקת את הטקסט
+// בעצמה (בלי לקרוא לשום שירות חיצוני, בלי שום עלות) מול הרשימות האמיתיות של האתר - קטגוריות/
+// תת-קטגוריות/ערים - ומול כמה ביטויי מפתח נפוצים ("רמה גבוהה"/"מחיר טוב" וכו') כדי לבנות סינון
+// מובנה. שתי הגרסאות מחזירות בדיוק אותה צורת "filters", כך שהפלט המובנה מוזן חזרה לתוך GET
+// /search הרגיל (כפרמטרי query) בלי כפילות קוד משנֵי המסלולים. זו גם רשת הביטחון האוטומטית אם
+// המפתח לא מוגדר, נגמר, או שיש תקלה זמנית אצל Anthropic. המחיר: פחות "חכמה" מ-AI אמיתי - לא
+// מבינה ניסוחים יצירתיים, שגיאות כתיב, או משפטים עקיפים כמו שה-AI מבין - אבל בחינם ותמיד עובד.
 // מילות-חיבור נפוצות שאין להתייחס אליהן כאילו הן "מזהות תחום/עיר" בפני עצמן (למשל תת-הקטגוריה
 // "עיצוב גבות וריסים" לא אמורה "לתפוס" כל משפט שמכיל את המילה "וכן"/"של" סתם כי שתיהן קצרות).
 const HEB_STOPWORDS = new Set(["של", "עם", "אל", "זה", "זו", "גם", "רק", "כל", "הוא", "היא", "הם", "הן", "או", "אם", "כי", "על", "עד", "בין", "כמו", "וגם", "וכן"]);
@@ -2259,15 +2379,24 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   }));
 });
 
-// מקבל את הטקסט החופשי מתיבת "חיפוש חכם", מפרש אותו בעצמנו (ר' smartSearchHeuristic למעלה -
-// בלי שום AI חיצוני, בלי עלות), ומפנה בחזרה ל-/search עם פרמטרים מובנים. result.ok נשאר
-// false רק במקרה קצה תיאורטי (למשל טקסט ריק, שכבר נבדק למעלה) - נשמר לצורך עקביות/עמידות.
+// מקבל את הטקסט החופשי מתיבת "חיפוש חכם" ומפנה בחזרה ל-/search עם פרמטרים מובנים. מנסה קודם
+// AI אמיתי (aiSearchInterpret למעלה - מבין ניסוחים יצירתיים, שגיאות כתיב ומשפטים עקיפים הרבה
+// יותר טוב), ורק אם אין מפתח AI מוגדר, או שהקריאה נכשלה מכל סיבה שהיא (כולל תקלה זמנית אצל
+// Anthropic), נופל בחזרה אל smartSearchHeuristic המקומי והחינמי (ר' למעלה) - כך שהחיפוש החכם
+// תמיד עובד, גם בלי מפתח וגם אם ה-AI זמנית לא זמין. בשני המקרים ה-id-ים שחוזרים נבדקים מול
+// הנתונים האמיתיים (d.categories/d.cities) לפני שהם נכנסים ל-URL - לעולם לא סומכים על קלט
+// חיצוני (גם לא כזה שמגיע מ-AI) בלי אימות.
 route("POST", "/search/ai", async (req, res, params, query, ctx) => {
   const d = db.load();
   const body = await readBody(req);
   const freeText = clip((body.get("q") || "").trim(), 300);
   if (!freeText) return redirect(res, "/search");
-  const result = smartSearchHeuristic(freeText, d);
+  // חיפוש ה-AI האמיתי כבוי כברירת מחדל (לפי בקשה מפורשת 2026-08-30, אחרי שהוסבר שבניגוד לכפתור
+  // "הצע לי תשובה" הידני בתמיכה, כל חיפוש בודד כאן היה עולה כסף בפועל) - נבדק כאן, לפני
+  // aiSearchInterpret, כדי שכל עוד d.settings.aiSearchEnabled לא true, לא יוצאת בכלל שום קריאת
+  // רשת ל-Anthropic ולא נגבה שום עלות. ר' פאנל "🤖 עוזרת AI באתר" בניהול למתג ההפעלה/כיבוי.
+  let result = d.settings.aiSearchEnabled ? await aiSearchInterpret(freeText, d) : { ok: false, reason: "disabled" };
+  if (!result.ok) result = smartSearchHeuristic(freeText, d);
   if (!result.ok) {
     return redirect(res, `/search?q=${encodeURIComponent(freeText)}`);
   }
@@ -8006,6 +8135,30 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
+  <div class="panel" id="ai-support-assistant">
+    <h3>🤖 עוזרת AI באתר</h3>
+    <p class="muted">
+      ${AI_CONFIGURED
+        ? "מפתח ה-AI מוגדר. כפתור \"הצע לי תשובה\" בשיחות תמיכה פעיל תמיד כשיש מפתח - זו פעולה ידנית שאת לוחצת עליה רק כשרוצים, ולא עולה הרבה. חיפוש ה-AI בעמוד החיפוש הוא סיפור אחר - כל חיפוש עולה כסף בפועל, אז הוא כבוי כברירת מחדל ומופעל רק דרך המתג למטה."
+        : "כדי שהכפתור \"הצע לי תשובה\" בשיחות התמיכה וחיפוש ה-AI בעמוד החיפוש (כשתדליקי אותו) יתחילו לעבוד, צריך להגדיר ב-Render משתנה סביבה בשם ANTHROPIC_API_KEY (בדיוק כמו RESEND_API_KEY ו-VAPID_PUBLIC_KEY/PRIVATE_KEY שכבר מוגדרים אצלך). אפשר לקבל מפתח כזה בקישור <a href=\"https://console.anthropic.com\" target=\"_blank\" rel=\"noopener\">console.anthropic.com</a> - נרשמים, נכנסים ל-Settings ← API Keys, יוצרים מפתח חדש ומעתיקים אותו ל-Render (Environment ← Add Environment Variable)."}
+    </p>
+    <div style="margin:14px 0;padding:10px 12px;background:#f7f2ee;border-radius:8px;">
+      <p style="margin:0 0 8px;font-weight:700;">חיפוש חכם מבוסס AI בעמוד החיפוש: ${d.settings.aiSearchEnabled ? "🟢 פעיל" : "🔴 כבוי"}</p>
+      <p class="muted" style="margin:0 0 8px;font-size:13px;">${d.settings.aiSearchEnabled
+        ? "כרגע דלוק - כל חיפוש בתיבת \"חיפוש חכם\" שולח קריאה בתשלום ל-AI. אם תכבי, החיפוש חוזר מיד לגרסה החכמה-אבל-חינמית שעבדה עד עכשיו, בלי שום עלות."
+        : "כרגע כבוי לפי בקשתך, כדי לא להצטבר עלות לא צפויה - עמוד החיפוש ממשיך לעבוד רגיל עם הגרסה החכמה-אבל-חינמית (בלי קריאות AI ובלי עלות). אפשר להדליק בכל רגע בכפתור הזה."}</p>
+      <form method="post" action="/admin/ai-search-toggle">
+        <input type="hidden" name="enable" value="${d.settings.aiSearchEnabled ? "0" : "1"}" />
+        <button class="btn btn-small ${d.settings.aiSearchEnabled ? "btn-outline" : ""}" type="submit">${d.settings.aiSearchEnabled ? "כיבוי חיפוש ה-AI" : "הפעלת חיפוש ה-AI"}</button>
+      </form>
+    </div>
+    <form method="post" action="/admin/support-knowledge-base">
+      <label>מסמך מדיניות / שאלות נפוצות (זה מה שה-AI יסתמך עליו כדי להציע תשובות)
+      <textarea name="supportKnowledgeBase" maxlength="12000" style="min-height:220px;" placeholder="לדוגמה: איך נרשמים לאתר, מה זה 'עצמאית מומלצת', מדיניות ביטולים, איך מדווחים על תוכן פוגעני, פרטי יצירת קשר...">${esc(d.settings.supportKnowledgeBase || "")}</textarea></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שמירת המסמך</button>
+    </form>
+  </div>
+
   <div class="panel">
     <h3>טיפ שבועי מהמומחית</h3>
     <p class="muted">הטיפ מתחלף אוטומטית כל יום ראשון בשעה 08:00, לפי סדר ההרשמה של העצמאיות שמילאו משפט השראה משלהן.</p>
@@ -8749,6 +8902,24 @@ route("POST", "/admin/about-text", async (req, res, params, query, ctx) => {
   d.settings.aboutText = body.get("aboutText") || "";
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent('עמוד "מי אנחנו" עודכן!')}`);
+});
+
+route("POST", "/admin/support-knowledge-base", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  d.settings.supportKnowledgeBase = clip((body.get("supportKnowledgeBase") || "").trim(), 12000);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("מסמך המדיניות/FAQ עודכן!")}#ai-support-assistant`);
+});
+
+route("POST", "/admin/ai-search-toggle", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  d.settings.aiSearchEnabled = body.get("enable") === "1";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.aiSearchEnabled ? "חיפוש ה-AI בעמוד החיפוש הופעל!" : "חיפוש ה-AI בעמוד החיפוש כובה - עובר לגרסה החינמית.")}#ai-support-assistant`);
 });
 
 route("POST", "/admin/terms-text", async (req, res, params, query, ctx) => {
@@ -10251,6 +10422,9 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
       <button type="button" class="btn btn-small btn-outline" onclick="scInsertIntoSupportReply('shecan.office@gmail.com')">📧 shecan.office@gmail.com</button>
       <button type="button" class="btn btn-small btn-outline" onclick="scInsertIntoSupportReply('SheCan')">SheCan</button>
+      ${AI_CONFIGURED
+        ? `<button type="button" class="btn btn-small" id="scSuggestReplyBtn" onclick="scSuggestSupportReply()">💡 הצע לי תשובה</button>`
+        : `<button type="button" class="btn btn-small btn-outline" disabled title="צריך להגדיר מפתח AI קודם - ראי הסבר בפאנל הגדרות האתר">💡 הצע לי תשובה (לא מוגדר עדיין)</button>`}
     </div>
     <form id="scSupportSendForm" method="post" action="/admin/support/thread/${esc(params.key)}/send">
       <textarea name="text" id="scSupportInput" required maxlength="800" placeholder="כתבי תשובה..." style="min-height:60px;"></textarea>
@@ -10268,6 +10442,27 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
     var pos = start + text.length;
     ta.focus();
     try { ta.setSelectionRange(pos, pos); } catch (e) {}
+  }
+  function scSuggestSupportReply(){
+    var btn = document.getElementById('scSuggestReplyBtn');
+    var ta = document.getElementById('scSupportInput');
+    if (!btn || !ta) return;
+    var originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'חושבת...';
+    fetch('/admin/support/thread/${esc(params.key)}/suggest', { method: 'POST', headers: { 'Accept': 'application/json' } })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        if (!data.ok) { alert(data.error || 'לא הצלחנו להביא הצעה כרגע, נסי שוב.'); return; }
+        ta.value = (ta.value && ta.value.trim()) ? (ta.value + '\\n\\n' + data.text) : data.text;
+        ta.focus();
+      }).catch(function(){
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        alert('לא הצלחנו להביא הצעה כרגע, נסי שוב.');
+      });
   }
   (function(){
     var lastTs = ${JSON.stringify(lastTs)};
@@ -10333,6 +10528,22 @@ route("GET", "/admin/support/thread/:key/poll", async (req, res, params, query, 
   messages.forEach((m) => { if (m.from === "asker" && !m.read) { m.read = true; anyMarkedRead = true; } });
   if (anyMarkedRead) db.save();
   sendHtml(res, 200, JSON.stringify({ messages }), { "Content-Type": "application/json; charset=utf-8" });
+});
+
+route("POST", "/admin/support/thread/:key/suggest", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return sendHtml(res, 401, JSON.stringify({ ok: false }), { "Content-Type": "application/json; charset=utf-8" });
+  const d = db.load();
+  const voterKey = decodeSupportKey(params.key);
+  const messages = (d.supportMessages || []).filter((m) => m.voterKey === voterKey).slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  if (!messages.length) return sendHtml(res, 404, JSON.stringify({ ok: false, error: "השיחה לא נמצאה." }), { "Content-Type": "application/json; charset=utf-8" });
+  const result = await suggestSupportReply(d, messages.slice(-12));
+  if (!result.ok) {
+    const errorMsg = result.reason === "not_configured"
+      ? "עוד לא הוגדר מפתח AI באתר - אפשר להגדיר אותו בהגדרות האתר (מפתח ANTHROPIC_API_KEY ב-Render) ואז הכפתור הזה יתחיל לעבוד."
+      : "משהו השתבש בקבלת ההצעה מה-AI, אפשר לנסות שוב בעוד רגע.";
+    return sendHtml(res, 200, JSON.stringify({ ok: false, error: errorMsg }), { "Content-Type": "application/json; charset=utf-8" });
+  }
+  sendHtml(res, 200, JSON.stringify({ ok: true, text: result.text }), { "Content-Type": "application/json; charset=utf-8" });
 });
 
 route("POST", "/admin/support/thread/:key/send", async (req, res, params, query, ctx) => {
