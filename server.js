@@ -730,6 +730,12 @@ function avgRatingFor(d, freelancerId, listingId) {
   const sum = revs.reduce((s, r) => s + (Number(r.rating) || 0), 0);
   return sum / revs.length;
 }
+// הציון המספרי המדויק של הדירוג לתצוגה (למשל ליד כוכבי הדירוג בפרופיל) - עד ספרה אחת אחרי
+// הנקודה, אבל בלי ".0" מיותר כשהציון הוא בעצם מספר שלם (5 ולא 5.0) - לפי בקשה מפורשת 2026-08-31.
+function formatRatingNumber(n) {
+  const oneDecimal = Number(n).toFixed(1);
+  return oneDecimal.endsWith(".0") ? oneDecimal.slice(0, -2) : oneDecimal;
+}
 // The location line shown on a card/profile: her city if she set one, otherwise whichever
 // delivery option she picked instead (online / comes to the customer) - so the line is never
 // just blank for a freelancer who works online-only or only does home visits.
@@ -1476,6 +1482,7 @@ function freelancerCard(f, d, opts = {}) {
       </div>
       ${badges.length ? `<div class="card-badges">${badges.join(" ")}</div>` : ""}
       <div class="card-info">
+        ${d.settings.showProfileViewCount ? `<p class="card-reviewcount">👁️ ${f.viewCount || 0} צפיות</p>` : ""}
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${f.description ? `<div class="card-desc">${detailLine("📝", esc(f.description), "justify-content:center;")}</div>` : ""}
         ${dealBadgeHtml(d, f.dealText)}
@@ -1974,7 +1981,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update117 - 2026-08-31 - שיפור הגנת הספאם בטופס 'צרי קשר' (מ-update116): במקום חסימה גורפת לפי כמות בלבד, עכשיו חוסם לפי תוכן כפול - אותה הודעה מילה במילה מאותה IP תוך 10 דקות נחסמת מהפעם השנייה, בלי לפגוע בלקוחה אמיתית ששולחת כמה הודעות שונות ברצף; הגבלת הכמות הגולמית הועלתה ל-12/10 דק' ונשארת רק כרשת ביטחון להצפה אמיתית. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update115): מתג בניהול 'מספר צפיות ודירוג מדויק בפרופיל'. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update118 - 2026-08-31 - שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -2541,7 +2548,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   // בקשה מפורשת 2026-08-31. כשהטוגל כבוי, ההתנהגות הקודמת (רק כוכבים ויזואליים, ומספר
   // הביקורות בסוגריים רק כשהוא מעל 5) נשארת בדיוק כמו שהייתה.
   const profileRatingExtraHtml = [
-    d.settings.showProfileViewCount && profileAvgRating !== null ? esc(profileAvgRating.toFixed(1)) : "",
+    d.settings.showProfileViewCount && profileAvgRating !== null ? esc(formatRatingNumber(profileAvgRating)) : "",
     profileReviewCount > 5 ? `(${profileReviewCount})` : "",
   ].filter(Boolean).join(" ");
   const profileLocation = locationLabel(d, f.cityId, f.offersOnline, f.offersHomeVisit);
