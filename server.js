@@ -2072,7 +2072,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update122 - 2026-09-02 - השלמות למועדון YouCan: (1) באזור האישי של הלקוחה (/account) נוסף פאנל 'מועדון YouCan' שמראה את הסטטוס שלה בזמן אמת - חברה פעילה (ועם תאריך הצטרפות), ממתינה לאישור, או לא חברה (עם כפתור הצטרפות) - מוצג רק כשהמועדון פעיל בניהול. (2) נוספה אפשרות ביטול עצמית ללקוחה (בעמוד /youcan/join, גם מקושר מהפאנל באזור האישי) - הביטול נכנס לתוקף מיידית. (3) נוספה מדיניות מועדון מפורשת: ביטול הוא סופי ולא מתחדש אוטומטית - כדי לחזור לחברות צריך להצטרף מחדש ולשלם מחדש. הטקסט הזה מוצג גם בטופס ההצטרפות עם צ'קבוקס אישור חובה (נשמר בתאריך על הלקוחה, youCanPolicyAgreedAt) וגם ליד כפתור הביטול לחברה פעילה. נבדק קצה-לקצה: בקשת הצטרפות בלי לסמן את הצ'קבוקס לא עוברת; עם הסימון - נשמר תאריך האישור, אישור ידני בניהול הופך לחברות פעילה, מופיע נכון בפאנל באזור האישי, וביטול עצמי מאפס את הסטטוס בחזרה למצב 'לא חברה' (מחייב תהליך הצטרפות ותשלום חדשים לחידוש). וגם (מ-update121) - (1) מועדון YouCan: אפשר להגביל את פעולת 'לצפייה בקוד קופון' בלבד (שאר האתר פתוח כרגיל) לחברות מועדון בתשלום (13 ש\"ח לחודש, ניתן לעריכה) - מתג הפעלה/כיבוי בניהול, כרגע (בלי סליקה מחוברת) זה תהליך ידני: לקוחה רואה הסבר קצר + הוראות תשלום (ביט/העברה, ממלאים בניהול) ושולחת בקשת הצטרפות שאת מאשרת ידנית; ברגע שיהיה חיבור סליקה אמיתי, מספיק להדביק קישור בניהול והכפתור יוביל ישר לשם. (2) סטטוסים 24 שעות לעצמאיות 'מומלצות': תמונה/סרטון שנעלם אוטומטית אחרי 24 שעות, עד 3 בו-זמנית, מוצג בעיגולים בפס קבוע באתר (תחתית או צד ימין - ניתן לבחירה/שינוי בניהול), עם לב, שיתוף, וכפתור מעבר לפרופיל; מתג הפעלה/כיבוי + פאנל פיקוח על כל הסטטוסים הפעילים בניהול. וגם (מ-update120): (1) פינת ההתייעצויות בזירה: נוסף מתג ניהול (פאנל 'פינת ההתייעצויות בזירה') להצגה/הסתרה שלה בכלל מהאתר הציבורי, בלי למחוק שום תוכן קיים - שימושי כדי להוריד אותה זמנית בזמן שמחכים לתשובת נטפרי. (2) חיבור אוטומטי בין חשבון עצמאית לחשבון לקוחה: מעכשיו כל עצמאית שנרשמת מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל/סיסמה), וגם כל העצמאיות הקיימות קיבלו את זה רטרואקטיבית - כדי שכפתור 'מעבר למצב לקוחה' תמיד יעבוד. בנוסף, בכל מקום באתר שבו רק לקוחה יכולה לפעול (כתיבת המלצה, שליחת הודעה, תגובה בזירה/בסיפורים/בקהילה) ועצמאית מחוברת מנסה - היא רואה עכשיו כפתור 'מעבר למצב לקוחה' שמעביר אותה בלחיצה אחת (בלי סיסמה) וחוזר אותה בדיוק לאותו מקום, במקום לשלוח אותה להתחבר מחדש מהתחלה. וגם (מ-update119): תיקון שני באגים בסיפור השראה השבועי: (1) תור הרוטציה האוטומטי עכשיו ממויין לפי מתי כל סיפור עצמו אושר (approvedAt), לא לפי מתי העצמאית שמאחוריו נרשמה לאתר - זה היה גורם לסיפורים להיראות 'לא לפי סדר'. (2) התאריך של 'הסיפור הבא יתעדכן ב-' עכשיו מציג גם שעה מדויקת (20:00) וגם מחושב באזור זמן ישראל במפורש, ולא רק תאריך לפי אזור הזמן של השרת (UTC ב-Render) - זה מה שגרם לתחושה שהסיפור 'לא התחלף' למרות שהתאריך המוצג כבר הגיע, כשבפועל השעה המדויקת פשוט עוד לא הגיעה. שימו לב: יום ההחלפה עצמו עדיין יכול לנחות בכל יום בשבוע אם משך הרוטציה בניהול (storyRotationDays) אינו כפולה של 7 - זה נשאר מכוון, לפי אישור מפורש. וגם (מ-update118): שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update123 - 2026-09-02 - (1) מעבר בין מצב לקוחה/עצמאית: כשעצמאית מחוברת כרגע כמצב לקוחה וממשיכה לקבל הודעות כעצמאית (הודעות צ'אט מלקוחות, הודעות מהנהלה) - עכשיו מופיע לה בתפריט העליון כפתור 'הודעות כעצמאית' עם מספר, שמעביר אותה בלחיצה אחת ישר לדשבורד שלה כדי לענות. בנוסף, בזירה - אם יש שאלה בתחום שלה שהיא עדיין לא ענתה עליה והיא כרגע מחוברת כלקוחה, מוצג לה 'זו שאלה בתחום שלך' עם כפתור מעבר מיידי למצב עצמאית שמחזיר אותה בדיוק לאותו עמוד כדי לענות (בלי לאבד את המקום). (2) שדרוג עצמי לרמת 'מומלצת': עצמאית ברמת 'בסיסית' יכולה עכשיו ללחוץ על כפתור באזור האישי שלה כדי לבקש שדרוג - הבקשה מופיעה בפאנל ייעודי חדש בניהול ('בקשות שדרוג לרמת מומלצת') שם מאשרים אחרי שסידרתן תשלום מולה (עדיין תהליך ידני, כמו כל תשלום אחר באתר כרגע). (3) תיקון עיצוב בעמוד המודליסטיות: כפתורי 'לצפייה בפרופיל' בכרטיסיות עכשיו תמיד מיושרים באותו גובה בשורה (לא קופצים למעלה/למטה לפי אורך הטקסט מעליהם), והטקסט ההסברי מעל הכרטיסיות קוצר וצומצם. וגם (מ-update122) - השלמות למועדון YouCan: (1) באזור האישי של הלקוחה (/account) נוסף פאנל 'מועדון YouCan' שמראה את הסטטוס שלה בזמן אמת - חברה פעילה (ועם תאריך הצטרפות), ממתינה לאישור, או לא חברה (עם כפתור הצטרפות) - מוצג רק כשהמועדון פעיל בניהול. (2) נוספה אפשרות ביטול עצמית ללקוחה (בעמוד /youcan/join, גם מקושר מהפאנל באזור האישי) - הביטול נכנס לתוקף מיידית. (3) נוספה מדיניות מועדון מפורשת: ביטול הוא סופי ולא מתחדש אוטומטית - כדי לחזור לחברות צריך להצטרף מחדש ולשלם מחדש. הטקסט הזה מוצג גם בטופס ההצטרפות עם צ'קבוקס אישור חובה (נשמר בתאריך על הלקוחה, youCanPolicyAgreedAt) וגם ליד כפתור הביטול לחברה פעילה. נבדק קצה-לקצה: בקשת הצטרפות בלי לסמן את הצ'קבוקס לא עוברת; עם הסימון - נשמר תאריך האישור, אישור ידני בניהול הופך לחברות פעילה, מופיע נכון בפאנל באזור האישי, וביטול עצמי מאפס את הסטטוס בחזרה למצב 'לא חברה' (מחייב תהליך הצטרפות ותשלום חדשים לחידוש). וגם (מ-update121) - (1) מועדון YouCan: אפשר להגביל את פעולת 'לצפייה בקוד קופון' בלבד (שאר האתר פתוח כרגיל) לחברות מועדון בתשלום (13 ש\"ח לחודש, ניתן לעריכה) - מתג הפעלה/כיבוי בניהול, כרגע (בלי סליקה מחוברת) זה תהליך ידני: לקוחה רואה הסבר קצר + הוראות תשלום (ביט/העברה, ממלאים בניהול) ושולחת בקשת הצטרפות שאת מאשרת ידנית; ברגע שיהיה חיבור סליקה אמיתי, מספיק להדביק קישור בניהול והכפתור יוביל ישר לשם. (2) סטטוסים 24 שעות לעצמאיות 'מומלצות': תמונה/סרטון שנעלם אוטומטית אחרי 24 שעות, עד 3 בו-זמנית, מוצג בעיגולים בפס קבוע באתר (תחתית או צד ימין - ניתן לבחירה/שינוי בניהול), עם לב, שיתוף, וכפתור מעבר לפרופיל; מתג הפעלה/כיבוי + פאנל פיקוח על כל הסטטוסים הפעילים בניהול. וגם (מ-update120): (1) פינת ההתייעצויות בזירה: נוסף מתג ניהול (פאנל 'פינת ההתייעצויות בזירה') להצגה/הסתרה שלה בכלל מהאתר הציבורי, בלי למחוק שום תוכן קיים - שימושי כדי להוריד אותה זמנית בזמן שמחכים לתשובת נטפרי. (2) חיבור אוטומטי בין חשבון עצמאית לחשבון לקוחה: מעכשיו כל עצמאית שנרשמת מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל/סיסמה), וגם כל העצמאיות הקיימות קיבלו את זה רטרואקטיבית - כדי שכפתור 'מעבר למצב לקוחה' תמיד יעבוד. בנוסף, בכל מקום באתר שבו רק לקוחה יכולה לפעול (כתיבת המלצה, שליחת הודעה, תגובה בזירה/בסיפורים/בקהילה) ועצמאית מחוברת מנסה - היא רואה עכשיו כפתור 'מעבר למצב לקוחה' שמעביר אותה בלחיצה אחת (בלי סיסמה) וחוזר אותה בדיוק לאותו מקום, במקום לשלוח אותה להתחבר מחדש מהתחלה. וגם (מ-update119): תיקון שני באגים בסיפור השראה השבועי: (1) תור הרוטציה האוטומטי עכשיו ממויין לפי מתי כל סיפור עצמו אושר (approvedAt), לא לפי מתי העצמאית שמאחוריו נרשמה לאתר - זה היה גורם לסיפורים להיראות 'לא לפי סדר'. (2) התאריך של 'הסיפור הבא יתעדכן ב-' עכשיו מציג גם שעה מדויקת (20:00) וגם מחושב באזור זמן ישראל במפורש, ולא רק תאריך לפי אזור הזמן של השרת (UTC ב-Render) - זה מה שגרם לתחושה שהסיפור 'לא התחלף' למרות שהתאריך המוצג כבר הגיע, כשבפועל השעה המדויקת פשוט עוד לא הגיעה. שימו לב: יום ההחלפה עצמו עדיין יכול לנחות בכל יום בשבוע אם משך הרוטציה בניהול (storyRotationDays) אינו כפולה של 7 - זה נשאר מכוון, לפי אישור מפורש. וגם (מ-update118): שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -3349,6 +3349,11 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
   const isCustomer = requireRole(ctx.session, "customer");
   const isFreelancer = requireRole(ctx.session, "freelancer");
   const currentFreelancer = isFreelancer ? d.freelancers.find((f) => f.id === ctx.session.id) : null;
+  // עצמאית שנכנסת לזירה במצב לקוחה (2026-09-02, לפי בקשה מפורשת) - כשיש שאלה בתחום שלה שהיא
+  // עדיין לא ענתה עליה, במקום לא להראות לה שום דבר (currentFreelancer==null כי היא מחוברת
+  // כלקוחה), מציגים לה הזמנה לענות + כפתור "מעבר למצב עצמאית" שמחזיר אותה בדיוק לכאן (next).
+  const currentCustomer = isCustomer ? d.customers.find((c) => c.id === ctx.session.id) : null;
+  const myFreelancerAccount = currentCustomer ? d.freelancers.find((f) => f.email === currentCustomer.email && f.status === "approved") : null;
   const origin = getOrigin(req);
 
   // הוסר מכאן 2026-08-27 לפי בקשה מפורשת - עד עכשיו רק הכניסה לעמוד /arena (בלי קשר לאיזו
@@ -3378,6 +3383,13 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
       currentFreelancer.categoryId === q.categoryId ||
       (currentFreelancer.additionalListings || []).some((l) => l.status === "approved" && l.categoryId === q.categoryId)
     );
+    // אותה בדיקת התאמה, רק כשהיא מחוברת כרגע כלקוחה אבל יש לה גם חשבון עצמאית מאושר בתחום
+    // הזה - ר' myFreelancerAccount למעלה.
+    const myAnsweredAsFreelancer = myFreelancerAccount ? answers.some((a) => a.freelancerId === myFreelancerAccount.id) : false;
+    const isMatchAsCustomer = myFreelancerAccount && !myAnsweredAsFreelancer && !q.closed && (
+      myFreelancerAccount.categoryId === q.categoryId ||
+      (myFreelancerAccount.additionalListings || []).some((l) => l.status === "approved" && l.categoryId === q.categoryId)
+    );
     const isOwnQuestion = isCustomer && ctx.session.id === q.customerId;
     return `
     <div class="arena-card">
@@ -3399,6 +3411,12 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
             <button type="submit" class="btn-arena" style="margin-top:8px;">שליחת התשובה</button>
           </form>
         </div>
+      ` : isMatchAsCustomer ? `
+        <form method="post" action="/account/switch-to-freelancer" style="margin-top:8px;">
+          <input type="hidden" name="next" value="/arena" />
+          <p class="muted" style="font-size:13px;margin:0 0 6px;">זו שאלה בתחום שלך - את מחוברת כרגע כלקוחה, עברי למצב עצמאית כדי לענות.</p>
+          <button type="submit" class="btn-arena">מעבר למצב עצמאית לעניית השאלה</button>
+        </form>
       ` : ""}
       ${isOwnQuestion ? `
       <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
@@ -3892,6 +3910,11 @@ function patternmakerCard(r, d) {
     `💰 ${esc(r.price || "ללא תשלום")}`,
     `🗓 ${esc(r.when)}`,
   ];
+  // הכרטיסייה משתמשת ב-.card/.card-body המשותפים (flex column), אבל התוכן שמעל הכפתור
+  // (תחום/פרטים/תיאור/שם) הוא באורך משתנה מכרטיסייה לכרטיסייה - בלי margin-top:auto על
+  // הבלוק התחתון, הכפתור "נוחת" בגובה שונה בכל כרטיסייה, וזה נראה מבולגן בשורה (2026-09-02,
+  // לפי בקשה מפורשת לסדר את זה). margin-top:auto דוחף אותו תמיד לתחתית הכרטיסייה, כך שכל
+  // הכפתורים בשורה מיושרים באותו גובה בדיוק, ללא קשר לכמות הטקסט שמעליהם.
   return `
   <div class="card">
     <div class="card-body" style="padding:18px;">
@@ -3899,9 +3922,11 @@ function patternmakerCard(r, d) {
       ${detailLines.map((line) => `<p style="margin:0 0 4px;font-size:14px;font-weight:700;">${line}</p>`).join("")}
       <p style="margin:8px 0 12px;font-size:14px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${esc(r.details)}</p>
       <p style="margin:0 0 10px;font-size:16px;font-weight:800;">מאת: ${name}</p>
-      ${f && f.status === "approved" && f.active !== false
-        ? `<a class="btn btn-small" style="text-align:center;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
-        : `<p class="muted" style="font-size:12px;">הפרופיל שפרסם/ה את הבקשה כרגע לא זמין.</p>`}
+      <div style="margin-top:auto;">
+        ${f && f.status === "approved" && f.active !== false
+          ? `<a class="btn btn-small" style="text-align:center;display:block;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
+          : `<p class="muted" style="font-size:12px;margin:0;">הפרופיל שפרסם/ה את הבקשה כרגע לא זמין.</p>`}
+      </div>
     </div>
   </div>`;
 }
@@ -3914,7 +3939,7 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
   const myRequests = me ? requests.filter((r) => r.freelancerId === me.id) : [];
   const body = `
   <h1 class="section-title">✂️ מודליסטיות</h1>
-  <p class="muted" style="text-align:center;">עצמאית שצריכה עזרה ממודליסטית או תופרת? כאן המקום לפרסם בקשה - וכל לקוחה שרואה יכולה לפנות אלייך ישירות דרך הפרופיל שלך.</p>
+  <p class="muted" style="text-align:center;font-size:12.5px;line-height:1.35;max-width:560px;margin:2px auto 12px;">עצמאית שצריכה עזרה ממודליסטית או תופרת? כאן המקום לפרסם בקשה - וכל לקוחה שרואה יכולה לפנות אלייך ישירות דרך הפרופיל שלך.</p>
   ${me ? `
     <div class="panel" style="max-width:560px;margin:0 auto 24px;">
       <h3>פרסום בקשה חדשה</h3>
@@ -3941,7 +3966,7 @@ route("GET", "/patternmakers", async (req, res, params, query, ctx) => {
         </div>
       `).join("")}
     </div>` : ""}
-  ` : `<p class="muted" style="text-align:center;"><a href="/login?role=freelancer&next=${encodeURIComponent("/patternmakers")}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כעצמאית</a> כדי לפרסם בקשה משלך.</p>`}
+  ` : `<p class="muted" style="text-align:center;font-size:12.5px;"><a href="/login?role=freelancer&next=${encodeURIComponent("/patternmakers")}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי כעצמאית</a> כדי לפרסם בקשה משלך.</p>`}
 
   <div class="grid">
     ${requests.length ? requests.map((r) => patternmakerCard(r, d)).join("") : `<p class="muted" style="text-align:center;">עדיין אין בקשות פעילות - היי הראשונה לפרסם.</p>`}
@@ -5915,6 +5940,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     // ויכול להופיע בסבב "הטיפ השבועי" בדף הבית - בדיוק כמו המלצת תת-התחום למעלה.
     inspirationQuotePending: clip((body.get("inspirationQuote") || "").trim(), 300),
     tier: body.get("tier") === "premium" ? "premium" : "basic",
+    tierUpgradeRequestedAt: null,
     joinType: charging ? "regular" : "founding",
     paymentStatus: charging ? "pending_payment" : "free",
     isLeadingBusiness: false, isAdvertised: false, adPaymentStatus: "none",
@@ -6757,6 +6783,13 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ${f.isLeadingBusiness ? `<span class="badge badge-leading">👑 נותנת חסות</span> ` : ""}
     ${f.isAdvertised ? `<span class="badge badge-ad">📣 מודעה פעילה</span> ` : ""}
     <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"} · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}</span>
+    ${f.tier !== "premium" ? (
+      f.tierUpgradeRequestedAt
+        ? `<p class="muted" style="margin-top:8px;font-size:13px;">🔔 בקשת השדרוג שלך לרמת "מומלצת" נשלחה - ניצור איתך קשר לגבי התשלום.</p>`
+        : `<form method="post" action="/freelancer-dashboard/request-tier-upgrade" style="margin-top:8px;">
+             <button class="btn btn-small btn-outline" type="submit">⭐ שדרוג לרמת "מומלצת"</button>
+           </form>`
+    ) : ""}
   </div>
 
   ${myAdminMessages.length ? `
@@ -7000,6 +7033,22 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   sendHtml(res, 200, page({ title: "האזור שלי", session: ctx.session, body, query, noSidebars: true }));
 });
 
+// בקשת שדרוג עצמית לרמת "מומלצת" (2026-09-02, לפי בקשה מפורשת) - לא שדרוג אוטומטי (אין
+// עדיין סליקה מחוברת לתשלומי עצמאיות, בדיוק כמו מועדון YouCan), רק סימון תאריך בקשה שמופיע
+// לניהול בתור המתנה (ר' tierUpgradePending ב-GET /admin) - מנהלת מאשרת ידנית אחרי שסידרה
+// תשלום מולה, דרך אותו כפתור "הפכי למומלצת" שכבר קיים בטבלת העצמאיות בניהול.
+route("POST", "/freelancer-dashboard/request-tier-upgrade", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (f && f.tier !== "premium" && !f.tierUpgradeRequestedAt) {
+    f.tierUpgradeRequestedAt = new Date().toISOString();
+    db.save();
+    return redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("בקשת השדרוג נשלחה - ניצור איתך קשר לגבי התשלום.")}`);
+  }
+  redirect(res, "/freelancer-dashboard");
+});
+
 route("POST", "/freelancer-dashboard/switch-to-customer", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
   const d = db.load();
@@ -7044,7 +7093,14 @@ route("POST", "/account/switch-to-freelancer", async (req, res, params, query, c
   const f = customer && d.freelancers.find((x) => x.email === customer.email && x.status === "approved");
   if (!f) return redirect(res, `/account?err=${encodeURIComponent("עדיין אין לך חשבון עצמאית מאושר עם המייל הזה.")}`);
   const sid = auth.createSession("freelancer", f.id);
-  redirect(res, "/freelancer-dashboard", [sessionCookie(sid), identityCookie("freelancer", f.id)]);
+  // תמיכה ב-`next` (2026-09-02, מראה ל-switch-to-customer למעלה) - כשהמעבר יזום מתוך פעולה
+  // שדורשת חשבון עצמאית (למשל מענה לשאלה בזירה, ר' GET /arena) היא חוזרת ישר לאותו עמוד כדי
+  // לסיים את הפעולה, במקום תמיד לנחות ב-/freelancer-dashboard. בלי `next` (הכפתור הרגיל
+  // "מעבר למצב עצמאית" ב-/account, או הכפתור שמופיע בתפריט העליון כשיש לה הודעות ממתינות
+  // כעצמאית) ההתנהגות הקודמת נשארת אותו דבר - היא נוחתת בדשבורד שלה.
+  const body = await readBody(req);
+  const next = safeNextUrl(body.get("next"));
+  redirect(res, next || "/freelancer-dashboard", [sessionCookie(sid), identityCookie("freelancer", f.id)]);
 });
 
 // ----- מועדון YouCan (2026-09-02) -----
@@ -8016,6 +8072,10 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   const youCanPending = d.customers.filter((c) => c.youCanRequestedAt && !c.youCanMember)
     .slice().sort((a, b) => new Date(a.youCanRequestedAt) - new Date(b.youCanRequestedAt));
   const youCanMembers = d.customers.filter((c) => c.youCanMember);
+
+  // בקשות שדרוג לרמת "מומלצת" (2026-09-02) - ר' POST /freelancer-dashboard/request-tier-upgrade.
+  const tierUpgradeRequests = d.freelancers.filter((f) => f.tierUpgradeRequestedAt && f.tier !== "premium")
+    .slice().sort((a, b) => new Date(a.tierUpgradeRequestedAt) - new Date(b.tierUpgradeRequestedAt));
 
   // סטטוסים 24 שעות (2026-09-02) - מנקה קודם כל סטטוס שכבר פג באתר כולו, ורק אז בונה את
   // רשימת הפעילים לתצוגת הפיקוח בניהול.
@@ -9207,6 +9267,18 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td><form method="post" action="/admin/customer/${c.id}/revoke-youcan" onsubmit="return confirm('לבטל את החברות של ${esc(c.name)} במועדון?');"><button class="btn btn-small btn-outline" type="submit">ביטול חברות</button></form></td>
       </tr>`).join("")}
     </table></div>` : ""}
+  </div>
+
+  <div class="panel" id="tier-upgrade-requests" style="scroll-margin-top:90px;" data-badge="${tierUpgradeRequests.length}">
+    <h3>⭐ בקשות שדרוג לרמת "מומלצת" (${tierUpgradeRequests.length})</h3>
+    <p class="muted">עצמאיות ברמת "בסיסית" שלחו בקשה לשדרג מהאזור האישי שלהן - סדרי איתן תשלום, ואז אשרי כאן (זה גם מסמן את הבקשה כטופלה).</p>
+    ${tierUpgradeRequests.length ? `
+    <div class="table-scroll"><table class="table-simple"><tr><th>עסק</th><th>מייל</th><th>תאריך בקשה</th><th>פעולה</th></tr>
+      ${tierUpgradeRequests.map((f) => `<tr>
+        <td>${esc(f.businessName || f.name)}</td><td>${esc(f.email)}</td><td>${esc(new Date(f.tierUpgradeRequestedAt).toLocaleDateString("he-IL"))}</td>
+        <td><form method="post" action="/admin/freelancer/${f.id}/toggle-tier"><button class="btn btn-small" type="submit">אישור שדרוג ל"מומלצת"</button></form></td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">אין בקשות ממתינות כרגע.</p>`}
   </div>
 
   <div class="panel" id="freelancer-statuses" style="scroll-margin-top:90px;" data-badge="${allActiveStatuses.length}">
@@ -10697,9 +10769,15 @@ route("POST", "/admin/freelancer/:id/toggle-tier", async (req, res, params, quer
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
-  if (f) f.tier = f.tier === "premium" ? "basic" : "premium";
+  if (f) {
+    f.tier = f.tier === "premium" ? "basic" : "premium";
+    // כל שינוי (לכל כיוון) סוגר בקשת שדרוג ממתינה אם הייתה כזו - ר' POST
+    // /freelancer-dashboard/request-tier-upgrade: אם היא ביקשה ואת אישרת (הפכת למומלצת), הבקשה
+    // טופלה; אם החזרת אותה לבסיסית, הבקשה כבר לא רלוונטית.
+    f.tierUpgradeRequestedAt = null;
+  }
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent(f && f.tier === "premium" ? "היא מסומנת עכשיו כ'מומלצת'." : "היא סומנה בחזרה כ'בסיסית'.")}`);
+  redirect(res, `/admin?ok=${encodeURIComponent(f && f.tier === "premium" ? "היא מסומנת עכשיו כ'מומלצת'." : "היא סומנה בחזרה כ'בסיסית'.")}#tier-upgrade-requests`);
 });
 
 route("POST", "/admin/freelancer/:id/toggle-ad", async (req, res, params, query, ctx) => {

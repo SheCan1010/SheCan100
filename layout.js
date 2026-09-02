@@ -69,6 +69,23 @@ function badge(count) {
   return count > 0 ? `<span class="unread-badge">${count > 9 ? "9+" : count}</span>` : "";
 }
 
+// כשעצמאית מחוברת כרגע כלקוחה (ר' "מעבר למצב לקוחה") היא ממשיכה לקבל הודעות/פניות כעצמאית
+// (הודעות צ'אט מלקוחות, הודעות מהנהלת SheCan) - אבל כדי לענות להן היא צריכה לעבור בחזרה למצב
+// עצמאית (2026-09-02, לפי בקשה מפורשת). זה סופר כמה כאלה ממתינות לה, כדי שהתפריט העליון יוכל
+// להראות לה תזכורת + כפתור מעבר מהיר, בלי שהיא תצטרך לגלות את זה בעצמה. מחזיר 0 גם אם אין לה
+// בכלל חשבון עצמאית מקושר, וגם אם יש לה אחד אבל הוא עדיין לא אושר.
+function linkedFreelancerUnreadCount(session) {
+  if (!session || session.role !== "customer") return 0;
+  const d = db.load();
+  const customer = (d.customers || []).find((c) => c.id === session.id);
+  if (!customer) return 0;
+  const f = (d.freelancers || []).find((x) => x.email === customer.email && x.status === "approved");
+  if (!f) return 0;
+  const unreadChats = (d.chatMessages || []).filter((m) => m.freelancerId === f.id && m.fromRole === "customer" && !m.read).length;
+  const unreadAdminMessages = (d.adminMessages || []).filter((m) => m.freelancerId === f.id && !m.read).length;
+  return unreadChats + unreadAdminMessages;
+}
+
 // How many admin-published "system surveys" (d.polls with source:"admin") are new for this
 // account since she last visited the arena - i.e. published after her arenaLastSeen timestamp
 // (see GET /arena and GET /arena/poll/:id in server.js, which stamp that timestamp) AND
@@ -157,7 +174,15 @@ function nav(session) {
   if (session && session.role === "customer") {
     const customer = d.customers.find((c) => c.id === session.id);
     const label = customer ? esc(customer.name) : "האזור שלי";
-    right = `<a class="nav-link" href="/account" title="אזור אישי">${label}${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
+    const freelancerUnread = linkedFreelancerUnreadCount(session);
+    // "מעבר למצב עצמאית" מוצג בתפריט רק כשיש הודעות ממתינות כעצמאית (2026-09-02, לפי בקשה
+    // מפורשת) - כפתור עם badge, לא קישור רגיל, כי המעבר הוא POST (יוצר session חדש). הכפתור
+    // "מעבר למצב לקוחה" בעל המשמעות ההפוכה כבר קיים כל הזמן בפאנל /freelancer-dashboard עצמו.
+    const switchToFreelancerBtn = freelancerUnread > 0 ? `
+      <form method="post" action="/account/switch-to-freelancer" style="display:inline;">
+        <button type="submit" class="nav-link" style="background:none;border:1px solid transparent;cursor:pointer;font:inherit;" title="יש לך הודעות ממתינות כעצמאית">🧵 הודעות כעצמאית${badge(freelancerUnread)}</button>
+      </form>` : "";
+    right = `${switchToFreelancerBtn}<a class="nav-link" href="/account" title="אזור אישי">${label}${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "freelancer") {
     right = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "admin") {
@@ -265,6 +290,23 @@ a{color:inherit;text-decoration:none;}
 .sc-lightbox-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.85);border:none;border-radius:50%;width:44px;height:44px;font-size:22px;cursor:pointer;color:var(--dark);z-index:201;}
 .sc-lightbox-nav.sc-lightbox-prev{right:24px;}
 .sc-lightbox-nav.sc-lightbox-next{left:24px;}
+
+/* ---- סטטוסים 24 שעות (2026-09-02) - פס עיגולים קבוע (bottom/side, ר' statusRailHtml) +
+   מציג/viewer מסך מלא, בדיוק כמו lightbox אבל עם תמונה/וידאו + לב + שיתוף + קישור לפרופיל. ---- */
+.sc-status-rail{position:fixed;z-index:150;display:flex;gap:10px;background:rgba(255,255,255,.94);backdrop-filter:blur(6px);}
+.sc-status-rail.sc-status-bottom{left:0;right:0;bottom:0;overflow-x:auto;align-items:center;padding:10px 14px;box-shadow:0 -2px 14px rgba(0,0,0,.08);}
+.sc-status-rail.sc-status-side{top:110px;right:0;bottom:auto;flex-direction:column;overflow-y:auto;max-height:70vh;padding:14px 10px;border-radius:12px 0 0 12px;box-shadow:-2px 2px 14px rgba(0,0,0,.08);}
+.sc-status-circle{flex-shrink:0;width:56px;height:56px;border-radius:50%;padding:2px;background:linear-gradient(135deg,var(--rose),#e8b4a0);cursor:pointer;}
+.sc-status-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;border:2px solid #fff;display:block;}
+.sc-status-circle-fallback{width:100%;height:100%;border-radius:50%;border:2px solid #fff;background:var(--rose-dark);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;}
+.sc-status-viewer-overlay{position:fixed;inset:0;background:rgba(20,16,14,.95);display:none;align-items:center;justify-content:center;z-index:300;flex-direction:column;padding:20px;}
+.sc-status-viewer-media{max-width:92vw;max-height:70vh;border-radius:10px;}
+.sc-status-viewer-actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;justify-content:center;align-items:center;}
+.sc-status-viewer-name{color:#fff;font-weight:800;}
+.sc-status-viewer-close{position:absolute;top:16px;left:16px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:50%;width:40px;height:40px;font-size:20px;cursor:pointer;}
+.sc-status-viewer-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:22px;cursor:pointer;z-index:301;}
+.sc-status-viewer-nav.sc-status-viewer-prev{right:16px;}
+.sc-status-viewer-nav.sc-status-viewer-next{left:16px;}
 .card, .panel, .price-card, .search-box, .weekly-tip, .review, .table-simple, .site-footer{background:var(--white);}
 /* Nav links pulled close together (not spread across the full header width) - only the
    account-area links (nav-side, below) stay pinned to the far left, per explicit request. */
@@ -978,6 +1020,35 @@ function sidebarColumnsHtml(d) {
   return col(right, "side-col-right") + col(left, "side-col-left");
 }
 
+// פס הסטטוסים הקבוע (2026-09-02) - מוצג בכל עמוד באתר (מוזרק ב-page() למטה, אחרי </footer>,
+// כי הוא position:fixed ולא אמור להשפיע על הפריסה/הגלילה של שום עמוד). מקבץ סטטוסים פעילים
+// (עדיין לא פגים) לפי עצמאית - עיגול אחד לכל עצמאית, לא לכל קובץ, כדי שזה יתנהג כמו "סטורי"
+// אמיתי (עד 3 קבצים שלה מוצגים ברצף אחרי לחיצה על העיגול שלה, ר' scOpenStatusViewer). לא
+// נוגעת בדיסק ולא שומרת - זה רק סינון תצוגה טהור; הניקוי בפועל (מחיקת קבצים שפגו) קורה בצד
+// שרת ב-pruneFreelancerStatuses (server.js), לא כאן.
+function statusRailHtml(d) {
+  if (!d.settings.freelancerStatusesEnabled) return "";
+  const now = Date.now();
+  const active = (d.freelancerStatuses || []).filter((s) => new Date(s.expiresAt).getTime() > now);
+  if (!active.length) return "";
+  const byFreelancer = {};
+  active.forEach((s) => { (byFreelancer[s.freelancerId] = byFreelancer[s.freelancerId] || []).push(s); });
+  const positionClass = d.settings.freelancerStatusesPosition === "side" ? "sc-status-side" : "sc-status-bottom";
+  const circles = Object.keys(byFreelancer).map((fid) => {
+    const f = d.freelancers.find((x) => x.id === fid);
+    if (!f || f.status !== "approved" || f.active === false) return "";
+    const items = byFreelancer[fid].slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .map((it) => ({ id: it.id, type: it.type, url: it.url, heartCount: it.heartCount || 0 }));
+    const name = f.businessName || f.name || "";
+    const avatar = f.logoDataUri || f.photoDataUri;
+    return `<div class="sc-status-circle" data-items="${esc(JSON.stringify(items))}" data-name="${esc(name)}" data-freelancer-id="${esc(f.id)}" onclick="scOpenStatusViewer(this)" title="${esc(name)}" role="button" tabindex="0">
+      ${avatar ? `<img src="${esc(avatar)}" alt="${esc(name)}" />` : `<div class="sc-status-circle-fallback">${esc(name.trim().charAt(0) || "?")}</div>`}
+    </div>`;
+  }).filter(Boolean).join("");
+  if (!circles) return "";
+  return `<div class="sc-status-rail ${positionClass}" id="scStatusRail">${circles}</div>`;
+}
+
 // תיאור ברירת מחדל (meta description) לכל עמוד שלא מעביר description משלו - נבחר עמודים
 // חשובים (בית, חיפוש, פרופיל עצמאית) מעבירים תיאור ממוקד יותר, ר' קריאות ל-page() ב-server.js.
 const SITE_DEFAULT_DESCRIPTION = "SheCan - קהילת העצמאיות בישראל. כל העסקים, כל התחומים, במקום אחד. מצאי בעלת עסק עצמאית לפי תחום ועיר, קבלי הטבה בלעדית וסגרי איתה עסקה ישירות באתר.";
@@ -1070,6 +1141,19 @@ ${footer()}
   <button type="button" class="sc-lightbox-nav sc-lightbox-prev" id="scLightboxPrev" onclick="scLightboxStep(event,1)" style="display:none;" aria-label="התמונה הקודמת">›</button>
   <img id="scLightboxImg" src="" alt="" />
   <button type="button" class="sc-lightbox-nav sc-lightbox-next" id="scLightboxNext" onclick="scLightboxStep(event,-1)" style="display:none;" aria-label="התמונה הבאה">‹</button>
+</div>
+${statusRailHtml(d)}
+<div class="sc-status-viewer-overlay" id="scStatusViewer" onclick="scCloseStatusViewer(event)" role="dialog" aria-label="צפייה בסטטוס" aria-modal="true">
+  <button type="button" class="sc-status-viewer-close" onclick="event.stopPropagation();scCloseStatusViewerBtn();" aria-label="סגירה">✕</button>
+  <button type="button" class="sc-status-viewer-nav sc-status-viewer-prev" id="scStatusViewerPrev" onclick="event.stopPropagation();scStatusViewerStep(1);" style="display:none;" aria-label="הקודם">›</button>
+  <div id="scStatusViewerMedia" onclick="event.stopPropagation();"></div>
+  <button type="button" class="sc-status-viewer-nav sc-status-viewer-next" id="scStatusViewerNext" onclick="event.stopPropagation();scStatusViewerStep(-1);" style="display:none;" aria-label="הבא">‹</button>
+  <div class="sc-status-viewer-actions" onclick="event.stopPropagation();">
+    <span class="sc-status-viewer-name" id="scStatusViewerName"></span>
+    <button type="button" id="scStatusViewerHeartBtn" class="btn btn-small" onclick="scHeartStatus(this)">🤍 <span id="scStatusViewerHeartCount">0</span></button>
+    <button type="button" id="scStatusViewerShareBtn" class="btn btn-small btn-outline" onclick="scShareCommunityItem(this)">שיתוף</button>
+    <a id="scStatusViewerProfileLink" href="#" class="btn btn-small">למעבר לפרופיל שלה</a>
+  </div>
 </div>
 <script>
 // ---- Make error messages impossible to miss: scroll straight to the error banner and give
@@ -1994,6 +2078,84 @@ function scShareCommunityItem(btn){
   } else {
     window.prompt("העתיקי את הקישור:", url);
   }
+}
+// ---- סטטוסים 24 שעות (2026-09-02) - הצגה במסך מלא, מעבר בין עד 3 קבצים של אותה עצמאית, לב
+// (מנוע מקומי ב-localStorage, בדיוק כמו scLikeWeeklyQuote), ושיתוף (מריץ מחדש את
+// scShareCommunityItem הקיימת ממש למעלה - אין צורך בלוגיקת שיתוף נפרדת). ----
+var scStatusItems = [];
+var scStatusIndex = 0;
+var scStatusFreelancerName = "";
+var scStatusFreelancerId = "";
+function scOpenStatusViewer(el){
+  try { scStatusItems = JSON.parse(el.getAttribute("data-items") || "[]"); } catch (e) { scStatusItems = []; }
+  if (!scStatusItems.length) return;
+  scStatusFreelancerName = el.getAttribute("data-name") || "";
+  scStatusFreelancerId = el.getAttribute("data-freelancer-id") || "";
+  scStatusIndex = 0;
+  scRenderStatusViewer();
+  var overlay = document.getElementById("scStatusViewer");
+  if (overlay) overlay.style.display = "flex";
+}
+function scRenderStatusViewer(){
+  var item = scStatusItems[scStatusIndex];
+  if (!item) return;
+  var mediaWrap = document.getElementById("scStatusViewerMedia");
+  if (mediaWrap) {
+    mediaWrap.innerHTML = item.type === "video"
+      ? '<video class="sc-status-viewer-media" src="' + item.url + '" autoplay muted playsinline controls></video>'
+      : '<img class="sc-status-viewer-media" src="' + item.url + '" alt="" />';
+  }
+  var nameEl = document.getElementById("scStatusViewerName");
+  if (nameEl) nameEl.textContent = scStatusFreelancerName;
+  var countEl = document.getElementById("scStatusViewerHeartCount");
+  if (countEl) countEl.textContent = item.heartCount || 0;
+  var heartBtn = document.getElementById("scStatusViewerHeartBtn");
+  if (heartBtn) {
+    heartBtn.setAttribute("data-status-id", item.id);
+    var liked = false;
+    try { liked = localStorage.getItem("scStatusLiked::" + item.id) === "1"; } catch (e) {}
+    heartBtn.firstChild && (heartBtn.firstChild.nodeValue = liked ? "💗 " : "🤍 ");
+  }
+  var shareBtn = document.getElementById("scStatusViewerShareBtn");
+  if (shareBtn) {
+    shareBtn.setAttribute("data-share-title", scStatusFreelancerName);
+    shareBtn.setAttribute("data-share-url", window.location.origin + "/freelancer/" + scStatusFreelancerId);
+    shareBtn.textContent = "שיתוף";
+  }
+  var profileLink = document.getElementById("scStatusViewerProfileLink");
+  if (profileLink) profileLink.href = "/freelancer/" + scStatusFreelancerId;
+  var prevBtn = document.getElementById("scStatusViewerPrev");
+  var nextBtn = document.getElementById("scStatusViewerNext");
+  if (prevBtn) prevBtn.style.display = scStatusItems.length > 1 ? "block" : "none";
+  if (nextBtn) nextBtn.style.display = scStatusItems.length > 1 ? "block" : "none";
+}
+function scStatusViewerStep(dir){
+  if (!scStatusItems.length) return;
+  scStatusIndex = (scStatusIndex + dir + scStatusItems.length) % scStatusItems.length;
+  scRenderStatusViewer();
+}
+function scCloseStatusViewerBtn(){
+  var overlay = document.getElementById("scStatusViewer");
+  if (overlay) overlay.style.display = "none";
+  var mediaWrap = document.getElementById("scStatusViewerMedia");
+  if (mediaWrap) mediaWrap.innerHTML = ""; // עוצר וידאו שמתנגן
+}
+function scCloseStatusViewer(evt){
+  if (evt && evt.target && evt.target.id !== "scStatusViewer") return;
+  scCloseStatusViewerBtn();
+}
+function scHeartStatus(btn){
+  var id = btn.getAttribute("data-status-id");
+  if (!id) return;
+  var key = "scStatusLiked::" + id;
+  var already = false;
+  try { already = localStorage.getItem(key) === "1"; } catch (e) {}
+  if (already) return;
+  if (btn.firstChild) btn.firstChild.nodeValue = "💗 ";
+  try { localStorage.setItem(key, "1"); } catch (e) {}
+  var countEl = document.getElementById("scStatusViewerHeartCount");
+  if (countEl) countEl.textContent = (parseInt(countEl.textContent || "0", 10) || 0) + 1;
+  fetch("/status/" + id + "/heart", { method: "POST" }).catch(function(){});
 }
 // Free, automatic live-filtering of the currently-loaded results grid as she types or
 // toggles the "reaches your home" checkbox - no page reload, no need to click a button.

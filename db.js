@@ -557,6 +557,12 @@ function migrate(data) {
       referralPopupSeen: true,
       siteVisitCount: 0,
       autoLinkedFromFreelancerId: f.id,
+      // מועדון YouCan (2026-09-02) - נוסף כאן ישירות (ולא רק דרך בלוק ה-backfill של
+      // customers.youCanMember למעלה) כי הבלוק ההוא כבר רץ על data.customers לפני שהרשומה
+      // הזו בכלל נוצרה באותו migrate() run; בלי זה היא הייתה נשארת בלי השדות עד ה-restart
+      // הבא. ר' גם youCanPolicyAgreedAt/youCanCancelledAt למעלה.
+      youCanMember: false, youCanRequestedAt: null, youCanActivatedAt: null,
+      youCanPolicyAgreedAt: null, youCanCancelledAt: null,
     });
     changed = true;
   });
@@ -668,6 +674,11 @@ function migrate(data) {
     // reject) לפני שהוא הופך לחי - כדי שרק משפטי השראה איכותיים יתפרסמו ולא פרסומות, בדיוק
     // כמו "המלצה על תת-תחום חדש" למעלה.
     if (!("inspirationQuotePending" in f)) { f.inspirationQuotePending = ""; changed = true; }
+    // בקשת שדרוג עצמאית מרמת "בסיסית" ל"מומלצת" (2026-09-02, לפי בקשה מפורשת) - עצמאית לוחצת
+    // על כפתור באזור האישי שלה (ר' POST /freelancer-dashboard/request-tier-upgrade ב-
+    // server.js), וזה רק מסמן תאריך בקשה שמופיע בתור המתנה בפאנל הניהול - השדרוג בפועל עדיין
+    // ידני (מנהלת מאשרת לאחר שסידרה תשלום מולה), בדיוק כמו כל שאר תהליכי התשלום הידניים באתר.
+    if (!("tierUpgradeRequestedAt" in f)) { f.tierUpgradeRequestedAt = null; changed = true; }
     // An additional listing can be advertised independently of her main profile - e.g. she
     // may only want to pay to promote her balloon business, not her main makeup business -
     // so each listing gets its own isAdvertised/adPaymentStatus, same shape as the
