@@ -294,8 +294,16 @@ a{color:inherit;text-decoration:none;}
 /* ---- סטטוסים 24 שעות (2026-09-02) - פס עיגולים קבוע (bottom/side, ר' statusRailHtml) +
    מציג/viewer מסך מלא, בדיוק כמו lightbox אבל עם תמונה/וידאו + לב + שיתוף + קישור לפרופיל. ---- */
 .sc-status-rail{position:fixed;z-index:150;display:flex;gap:10px;background:rgba(255,255,255,.94);backdrop-filter:blur(6px);}
-.sc-status-rail.sc-status-bottom{left:0;right:0;bottom:0;overflow-x:auto;align-items:center;padding:10px 14px;box-shadow:0 -2px 14px rgba(0,0,0,.08);}
-.sc-status-rail.sc-status-side{top:110px;right:0;bottom:auto;flex-direction:column;overflow-y:auto;max-height:70vh;padding:14px 10px;border-radius:12px 0 0 12px;box-shadow:-2px 2px 14px rgba(0,0,0,.08);}
+/* padding-right (פיזי, לא inline-end, בכוונה - בלי קשר לכיווניות RTL) שומר מקום פנוי בקצה
+   הימני של הפס לפני העיגול הראשון, כדי שהוא לא ייכנס לשטח הקבוע של כפתור "לתמיכה לחצי"
+   (position:fixed;bottom:20px;right:20px;z-index:500 - גבוה מה-z-index של הפס עצמו, ולכן
+   הכפתור תמיד "מנצח" ומכסה כל מה שמצטלב איתו) - נוסף 2026-09-02 לפי דיווח מפורש שהכפתור מסתיר
+   סטטוסים. */
+.sc-status-rail.sc-status-bottom{left:0;right:0;bottom:0;overflow-x:auto;align-items:center;padding:10px 14px;padding-right:190px;padding-left:80px;box-shadow:0 -2px 14px rgba(0,0,0,.08);}
+/* bottom:100px (במקום max-height:70vh בלבד) - עוגן קבוע גם למטה, לא רק למעלה, כדי שהפס לעולם
+   לא יגיע לשטח הכפתור הקבוע בפינה הימנית-תחתונה (אותה הערה כמו למעלה). overflow-y:auto נשאר
+   כדי שרשימה ארוכה של סטטוסים תגלול בתוך הפס במקום לדחוף אותו מעבר לעוגן התחתון. */
+.sc-status-rail.sc-status-side{top:110px;right:0;bottom:100px;flex-direction:column;overflow-y:auto;padding:14px 10px;border-radius:12px 0 0 12px;box-shadow:-2px 2px 14px rgba(0,0,0,.08);}
 .sc-status-circle{flex-shrink:0;width:56px;height:56px;border-radius:50%;padding:2px;background:linear-gradient(135deg,var(--rose),#e8b4a0);cursor:pointer;}
 .sc-status-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;border:2px solid #fff;display:block;}
 .sc-status-circle-fallback{width:100%;height:100%;border-radius:50%;border:2px solid #fff;background:var(--rose-dark);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;}
