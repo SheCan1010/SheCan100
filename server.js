@@ -585,6 +585,52 @@ function migrateEmbeddedPhotosToFiles(d) {
   if (migrateEmbeddedPhotosToFiles(d)) db.save();
 })();
 
+// ----- "סטטוסים" (24 שעות, נוסף 2026-09-02) - תמונה/סרטון שעצמאית פרימיום מעלה, נשמר בדיסק
+// (בדיוק כמו fileToDataUri, לא כ-base64 ב-DB - ר' ההערה שם) - לא באמצעות fileToDataUri עצמו כי
+// הוא מקבל רק image/*; זה כמעט זהה, רק תומך גם בסוגי וידאו נפוצים ובתקרת גודל גדולה יותר. -----
+const MAX_STATUS_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_STATUS_VIDEO_BYTES = 30 * 1024 * 1024;
+function saveStatusFile(file) {
+  if (!file || !file.data || !file.data.length) return null;
+  const ct = (file.contentType || "").toLowerCase();
+  const extMap = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+    "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+  };
+  const ext = extMap[ct];
+  if (!ext) return null;
+  const isVideo = ct.startsWith("video/");
+  const maxBytes = isVideo ? MAX_STATUS_VIDEO_BYTES : MAX_STATUS_IMAGE_BYTES;
+  if (file.data.length > maxBytes) return null;
+  const filename = `status-${Date.now().toString(36)}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+  try {
+    fs.writeFileSync(path.join(UPLOADS_DIR, filename), file.data);
+  } catch (e) {
+    console.warn("[saveStatusFile] failed to write uploaded status file to disk:", e.message);
+    return null;
+  }
+  return { url: `/uploads/${filename}`, type: isVideo ? "video" : "image" };
+}
+
+// מסננת החוצה כל סטטוס שכבר פג (expiresAt עבר) ומוחקת גם את הקובץ שלו מהדיסק, כדי שקבצים
+// ישנים לא יצטברו שם לנצח - קריאה זולה, בטוחה להריץ בכל פעם שנוגעים ברשימת הסטטוסים (לפני
+// בדיקת מגבלת 3 הפעילים בהעלאה חדשה, ובכניסה לאזור האישי/לוח הניהול). לא רצה אוטומטית על כל
+// בקשה באתר (זה היה קורה ב-layout.js/page(), שרץ על כל עמוד) כי מחיקת קבצים היא פעולת דיסק לא
+// קריטית לתצוגה עצמה - שם, page() רק מסנן מה להציג (ר' statusRailHtml), בלי לגעת בדיסק או לשמור.
+function pruneFreelancerStatuses(d) {
+  const now = Date.now();
+  const kept = [];
+  let removed = false;
+  (d.freelancerStatuses || []).forEach((s) => {
+    if (new Date(s.expiresAt).getTime() > now) { kept.push(s); return; }
+    removed = true;
+    const filename = (s.url || "").split("/").pop();
+    if (filename) { try { fs.unlinkSync(path.join(UPLOADS_DIR, filename)); } catch (e) {} }
+  });
+  if (removed) d.freelancerStatuses = kept;
+  return removed;
+}
+
 // Combines a cookie already set earlier in the request (via res.setHeader("Set-Cookie", ...) -
 // e.g. the scVisit visit-tracking cookie set by trackSiteVisit() before the route handler even
 // runs, near the bottom of this file) with whatever cookie THIS response also wants to set (e.g.
@@ -1318,17 +1364,18 @@ function getWeeklyFeature(d) {
 // Picks which approved story is "currently featured" on the /stories page - same one-cycle
 // admin pin + auto-advancing queue mechanic as getWeeklyFeature, turning over every
 // `storyRotationDays` days (default 7, admin-editable in the panel) at 20:00 Israel time,
-// ordered by when the linked freelancer registered.
+// ordered by when each story itself was APPROVED (not by when the linked freelancer
+// registered - that was the original behavior, but per explicit request 2026-09-01 it made
+// the rotation feel "out of order": a freelancer who joined the site early could jump ahead
+// of someone whose story was actually approved earlier, just because her own account was
+// older. Falls back to createdAt for the rare case approvedAt is somehow missing. Note: this
+// changes the sort order of an existing queue, so right after this ships, whichever story was
+// "current"/"next" can shift once as everything re-settles into approval order - that's a
+// one-time side effect of fixing the ordering, not a bug.
 function getCurrentStory(d) {
   const approved = (d.stories || []).filter((s) => s.status === "approved");
   if (!approved.length) return null;
-  const sorted = approved.slice().sort((a, b) => {
-    const fa = d.freelancers.find((x) => x.id === a.freelancerId);
-    const fb = d.freelancers.find((x) => x.id === b.freelancerId);
-    const ta = fa ? new Date(fa.createdAt) : new Date(a.createdAt);
-    const tb = fb ? new Date(fb.createdAt) : new Date(b.createdAt);
-    return ta - tb;
-  });
+  const sorted = approved.slice().sort((a, b) => new Date(a.approvedAt || a.createdAt) - new Date(b.approvedAt || b.createdAt));
   // NOTE (2026-08-23): this used to pass a 4th "onAdvance" callback to tickRotation that
   // stamped featuredAt on EVERY story the automatic pointer passed through during a catch-up
   // (e.g. nobody visiting the site for more than one full rotation window, or the rotation
@@ -1359,20 +1406,32 @@ function getCurrentStory(d) {
   return result;
 }
 
-// The date the story rotation will next turn over (whether that lands on the automatic queue
-// advancing, or on a manual admin pin's one cycle expiring - tickRotation treats both the same
-// way, so this is correct either way). Calls getCurrentStory(d) first purely for its side
-// effect of running tickRotation, which lazily initializes/advances settings.storyLastBoundary
-// the first time it's ever needed - so this stays correct even before any story has ever been
-// picked yet. Used to show a small "next update" hint at the bottom of a story page. Always
-// reflects the CURRENT value of settings.storyRotationDays, so changing it in the admin panel
-// updates this label immediately (going forward only - it never moves backward in time).
+// The exact date+time the story rotation will next turn over (whether that lands on the
+// automatic queue advancing, or on a manual admin pin's one cycle expiring - tickRotation
+// treats both the same way, so this is correct either way). Calls getCurrentStory(d) first
+// purely for its side effect of running tickRotation, which lazily initializes/advances
+// settings.storyLastBoundary the first time it's ever needed - so this stays correct even
+// before any story has ever been picked yet. Used to show a small "next update" hint at the
+// bottom of a story page. Always reflects the CURRENT value of settings.storyRotationDays, so
+// changing it in the admin panel updates this label immediately (going forward only - it never
+// moves backward in time).
+// Per explicit request 2026-09-01 (after "אמור היה להתחלף ב-1.9 ולא התחלף" turned out to
+// simply mean "not before 20:00 Israel time yet", since the label used to show only the date)
+// - this now ALWAYS shows the exact date AND time, formatted explicitly in Israel time (not
+// the server's own timezone, which on Render is UTC - a bare toLocaleDateString/toLocaleString
+// call with no timeZone option would silently use that instead and could even show the wrong
+// calendar day). The switch day itself can land on any weekday when storyRotationDays isn't a
+// multiple of 7 (explicitly confirmed as fine, "רק תציגו לי תמיד תאריך+שעה מדויקים") - so no
+// attempt is made to keep it anchored to a fixed weekday.
+const STORY_ROTATION_LABEL_FMT = new Intl.DateTimeFormat("he-IL", {
+  timeZone: "Asia/Jerusalem", day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
+});
 function nextStoryRotationLabel(d) {
   getCurrentStory(d);
   if (!d.settings.storyLastBoundary) return null;
   const days = d.settings.storyRotationDays || 7;
   const next = nextIsraelBoundary(d.settings.storyLastBoundary, STORY_BOUNDARY.weekday, STORY_BOUNDARY.hour, days);
-  return new Date(next).toLocaleDateString("he-IL");
+  return STORY_ROTATION_LABEL_FMT.format(next);
 }
 
 function initials(name) { return (name || "?").trim().charAt(0).toUpperCase(); }
@@ -1946,14 +2005,46 @@ function requireRole(session, role) {
 // the original plain "log in" prompt, unchanged. actionText is the Hebrew infinitive phrase
 // that completes "כדי ..." (e.g. "לכתוב המלצה", "לשלוח הודעה") - shared between both branches
 // so they read as one consistent sentence. Per explicit request.
+//
+// UPDATED 2026-09-02: the freelancer branch used to send her to a full /login form to log back
+// in as a customer - per explicit follow-up ("קצת מסרבל... תעשה את זה אוטומטית... פשוט עברי
+// למצב לקוחה"), that's now a genuine one-click switch instead: a tiny form posts straight to
+// the existing /freelancer-dashboard/switch-to-customer route (no password re-entry - she's
+// already authenticated), carrying the current page as `next` so it lands her right back where
+// she was and she can immediately finish the action she started. Every call site already builds
+// loginUrl as "/login?next=<currentPage>", so the current page is simply read back out of that
+// URL's own `next` param instead of changing every call site's signature. Every freelancer now
+// has a linked customer account by this point (see ensureLinkedCustomerAccount + the db.js
+// backfill), so the switch essentially never fails - but the route itself still has its own
+// "no linked account" fallback message just in case.
 function customerOnlyPrompt(ctx, loginUrl, actionText) {
   if (ctx.session && ctx.session.role === "freelancer") {
-    const switchUrl = loginUrl.includes("role=")
-      ? loginUrl.replace(/role=[^&]*/, "role=customer")
-      : (loginUrl.includes("?") ? `${loginUrl}&role=customer` : `${loginUrl}?role=customer`);
-    return `<p class="muted">שימי לב: את מחוברת כרגע כעצמאית - כדי ${actionText} צריך להתחבר עם חשבון לקוחה. <a href="${switchUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">מעבר להתחברות כלקוחה</a></p>`;
+    let nextPath = "";
+    try { nextPath = new URL(loginUrl, "https://x.invalid").searchParams.get("next") || ""; } catch (e) {}
+    return `
+    <form method="post" action="/freelancer-dashboard/switch-to-customer">
+      ${nextPath ? `<input type="hidden" name="next" value="${esc(nextPath)}" />` : ""}
+      <p class="muted">שימי לב: את מחוברת כרגע כעצמאית - כדי ${actionText} צריך חשבון לקוחה.
+        <button type="submit" style="background:none;border:none;padding:0;margin:0;font:inherit;color:var(--rose-dark);font-weight:800;text-decoration:underline;cursor:pointer;">מעבר למצב לקוחה</button>
+      </p>
+    </form>`;
   }
   return `<p class="muted"><a href="${loginUrl}" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">התחברי</a> כדי ${actionText}.</p>`;
+}
+
+// מוצג במקום כפתור "לצפייה בקוד קופון" הרגיל, כשמועדון YouCan מופעל ולקוחה מחוברת אינה חברה בו
+// (ר' couponGated ב-GET /freelancer/:id) - קוד הקופון עצמו לא מוטמע ב-HTML בכלל במקרה הזה (לא
+// רק מוסתר ב-CSS כמו scRevealCoupon הרגיל), כך שאין שום דרך לחלץ אותו מקוד המקור. gateId מבדיל
+// בין הכרטיסייה הראשית לכל אחת מהרשימות הנוספות שלה, כדי שכמה תיבות כאלה יוכלו לדור בעמוד אחד.
+function youCanGateBoxHtml(gateId, returnPath, d) {
+  const price = d.settings.youCanMonthlyPrice || 13;
+  return `
+  <button type="button" class="btn btn-small" style="margin-top:8px;" onclick="document.getElementById('${gateId}').style.display='block';this.style.display='none';">לצפייה בקוד קופון</button>
+  <div id="${gateId}" style="display:none;margin-top:8px;padding:10px;border-radius:8px;background:#f3ede8;">
+    <p style="font-weight:800;margin:0 0 6px;">🎟️ קוד הקופון פתוח לחברות מועדון YouCan</p>
+    <p class="muted" style="margin:0 0 8px;">ב-${esc(String(price))} ש"ח לחודש בלבד את יכולה לממש כמה קודי קופון שתרצי, בכל העסקים באתר, בלי הגבלה.</p>
+    <a class="btn btn-small" href="/youcan/join?next=${encodeURIComponent(returnPath)}">להצטרפות למועדון</a>
+  </div>`;
 }
 
 function paymentStatusLabel(status) {
@@ -1981,7 +2072,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update118 - 2026-08-31 - שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update122 - 2026-09-02 - השלמות למועדון YouCan: (1) באזור האישי של הלקוחה (/account) נוסף פאנל 'מועדון YouCan' שמראה את הסטטוס שלה בזמן אמת - חברה פעילה (ועם תאריך הצטרפות), ממתינה לאישור, או לא חברה (עם כפתור הצטרפות) - מוצג רק כשהמועדון פעיל בניהול. (2) נוספה אפשרות ביטול עצמית ללקוחה (בעמוד /youcan/join, גם מקושר מהפאנל באזור האישי) - הביטול נכנס לתוקף מיידית. (3) נוספה מדיניות מועדון מפורשת: ביטול הוא סופי ולא מתחדש אוטומטית - כדי לחזור לחברות צריך להצטרף מחדש ולשלם מחדש. הטקסט הזה מוצג גם בטופס ההצטרפות עם צ'קבוקס אישור חובה (נשמר בתאריך על הלקוחה, youCanPolicyAgreedAt) וגם ליד כפתור הביטול לחברה פעילה. נבדק קצה-לקצה: בקשת הצטרפות בלי לסמן את הצ'קבוקס לא עוברת; עם הסימון - נשמר תאריך האישור, אישור ידני בניהול הופך לחברות פעילה, מופיע נכון בפאנל באזור האישי, וביטול עצמי מאפס את הסטטוס בחזרה למצב 'לא חברה' (מחייב תהליך הצטרפות ותשלום חדשים לחידוש). וגם (מ-update121) - (1) מועדון YouCan: אפשר להגביל את פעולת 'לצפייה בקוד קופון' בלבד (שאר האתר פתוח כרגיל) לחברות מועדון בתשלום (13 ש\"ח לחודש, ניתן לעריכה) - מתג הפעלה/כיבוי בניהול, כרגע (בלי סליקה מחוברת) זה תהליך ידני: לקוחה רואה הסבר קצר + הוראות תשלום (ביט/העברה, ממלאים בניהול) ושולחת בקשת הצטרפות שאת מאשרת ידנית; ברגע שיהיה חיבור סליקה אמיתי, מספיק להדביק קישור בניהול והכפתור יוביל ישר לשם. (2) סטטוסים 24 שעות לעצמאיות 'מומלצות': תמונה/סרטון שנעלם אוטומטית אחרי 24 שעות, עד 3 בו-זמנית, מוצג בעיגולים בפס קבוע באתר (תחתית או צד ימין - ניתן לבחירה/שינוי בניהול), עם לב, שיתוף, וכפתור מעבר לפרופיל; מתג הפעלה/כיבוי + פאנל פיקוח על כל הסטטוסים הפעילים בניהול. וגם (מ-update120): (1) פינת ההתייעצויות בזירה: נוסף מתג ניהול (פאנל 'פינת ההתייעצויות בזירה') להצגה/הסתרה שלה בכלל מהאתר הציבורי, בלי למחוק שום תוכן קיים - שימושי כדי להוריד אותה זמנית בזמן שמחכים לתשובת נטפרי. (2) חיבור אוטומטי בין חשבון עצמאית לחשבון לקוחה: מעכשיו כל עצמאית שנרשמת מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל/סיסמה), וגם כל העצמאיות הקיימות קיבלו את זה רטרואקטיבית - כדי שכפתור 'מעבר למצב לקוחה' תמיד יעבוד. בנוסף, בכל מקום באתר שבו רק לקוחה יכולה לפעול (כתיבת המלצה, שליחת הודעה, תגובה בזירה/בסיפורים/בקהילה) ועצמאית מחוברת מנסה - היא רואה עכשיו כפתור 'מעבר למצב לקוחה' שמעביר אותה בלחיצה אחת (בלי סיסמה) וחוזר אותה בדיוק לאותו מקום, במקום לשלוח אותה להתחבר מחדש מהתחלה. וגם (מ-update119): תיקון שני באגים בסיפור השראה השבועי: (1) תור הרוטציה האוטומטי עכשיו ממויין לפי מתי כל סיפור עצמו אושר (approvedAt), לא לפי מתי העצמאית שמאחוריו נרשמה לאתר - זה היה גורם לסיפורים להיראות 'לא לפי סדר'. (2) התאריך של 'הסיפור הבא יתעדכן ב-' עכשיו מציג גם שעה מדויקת (20:00) וגם מחושב באזור זמן ישראל במפורש, ולא רק תאריך לפי אזור הזמן של השרת (UTC ב-Render) - זה מה שגרם לתחושה שהסיפור 'לא התחלף' למרות שהתאריך המוצג כבר הגיע, כשבפועל השעה המדויקת פשוט עוד לא הגיעה. שימו לב: יום ההחלפה עצמו עדיין יכול לנחות בכל יום בשבוע אם משך הרוטציה בניהול (storyRotationDays) אינו כפולה של 7 - זה נשאר מכוון, לפי אישור מפורש. וגם (מ-update118): שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -2489,6 +2580,11 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   if (isCustomer) customer = d.customers.find((c) => c.id === ctx.session.id);
   const isFav = customer && customer.favorites.includes(favKey(f.id, null));
   const myExistingReview = customer ? d.reviews.find((r) => r.type === "freelancer" && r.targetId === f.id && r.authorCustomerId === customer.id && !r.listingId) : null;
+  // מועדון YouCan (2026-09-02) - כל עוד d.settings.youCanEnabled==false (ברירת המחדל) זה תמיד
+  // false ושום דבר לא משתנה בתצוגה, בדיוק לפי הבקשה ("שאר הפעולות פתוחות כמו שזה עכשיו"). כשהוא
+  // מופעל, לקוחה מחוברת שאינה חברה רואה במקום קוד הקופון עצמו (שלא מוטמע לה כלל ב-HTML - לא רק
+  // מוסתר ב-CSS, כמו שכבר קורה לכל מי שלא לקוחה בכלל) הסבר קצר + קישור להצטרפות.
+  const couponGated = Boolean(d.settings.youCanEnabled && isCustomer && !(customer && customer.youCanMember));
 
   if (isCustomer) {
     customer.viewedDeals = customer.viewedDeals || [];
@@ -2591,9 +2687,11 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(f.dealText || ""))}
       ${f.dealCode ? (
-        isCustomer
-          ? `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this)">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(f.dealCode)}</div>`
-          : `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
+        !isCustomer
+          ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
+          : couponGated
+          ? youCanGateBoxHtml(`scYouCanGate-${f.id}`, `/freelancer/${f.id}`, d)
+          : `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this)">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(f.dealCode)}</div>`
       ) : ""}
     </div>
   </div>
@@ -2685,6 +2783,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   const loginUrl = `/login?next=${encodeURIComponent(`/freelancer/${f.id}/listing/${l.id}`)}`;
   const loginUrlToMessage = `/login?next=${encodeURIComponent(`/freelancer/${f.id}/listing/${l.id}#scMessageBox`)}`;
   const myExistingReview = customer ? d.reviews.find((r) => r.type === "freelancer" && r.targetId === f.id && r.authorCustomerId === customer.id && String(r.listingId || "") === String(l.id)) : null;
+  const couponGated = Boolean(d.settings.youCanEnabled && isCustomer && !(customer && customer.youCanMember));
 
   let myThread = [];
   if (isCustomer) {
@@ -2732,9 +2831,11 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(l.dealText || ""))}
       ${l.dealCode ? (
-        isCustomer
-          ? `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this, '${l.id}')">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}-${l.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(l.dealCode)}</div>`
-          : `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
+        !isCustomer
+          ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
+          : couponGated
+          ? youCanGateBoxHtml(`scYouCanGate-${f.id}-${l.id}`, `/freelancer/${f.id}/listing/${l.id}`, d)
+          : `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this, '${l.id}')">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}-${l.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(l.dealCode)}</div>`
       ) : ""}
     </div>
   </div>
@@ -2812,6 +2913,13 @@ route("POST", "/freelancer/:id/reveal-coupon", async (req, res, params, query, c
   const listingId = body.get("listingId") || "";
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
+  // הגנת שרת נוספת (מעבר לכך שהקוד עצמו כבר לא מוטמע ב-HTML כשהיא חסומה - ר' couponGated
+  // ב-GET /freelancer/:id) - מונעת רישום "צפייה" מזויפת בהיסטוריה שלה/בסטטיסטיקות אם מישהי
+  // פונה ל-route הזה ישירות כשמועדון YouCan מופעל והיא לא חברה בו.
+  if (d.settings.youCanEnabled) {
+    const cust = requireRole(ctx.session, "customer") ? d.customers.find((c) => c.id === ctx.session.id) : null;
+    if (!cust || !cust.youCanMember) { res.writeHead(204); return res.end(); }
+  }
   if (f) {
     // A reveal can be for the main profile's coupon or for one of her additional listings'
     // own coupon - either way it's still gated behind the same login-required check below,
@@ -3416,11 +3524,12 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
       <span class="arena-tab-title">אתן שואלות, המומחיות עונות</span>
       <span class="arena-tab-sub">לקוחות מחפשות תשובות? הציגי שאלה מקצועית וקבלי מענה ישירות מהעצמאיות המובחרות שלנו</span>
     </button>
+    ${d.settings.arenaConsultationsEnabled ? `
     <button type="button" class="arena-tab-btn" onclick="scArenaShowTab(2,this)">
       <span class="arena-tab-icon" aria-hidden="true">🤝💬</span>
       <span class="arena-tab-title">פינת ההתייעצויות</span>
       <span class="arena-tab-sub">דילמות עסקיות מהשטח – מקום שבו לקוחות ועצמאיות פותחות שולחן ומדברות על הכל</span>
-    </button>
+    </button>` : ""}
     <button type="button" class="arena-tab-btn" onclick="scArenaShowTab(3,this)">
       <span class="arena-tab-icon" aria-hidden="true">📊💡</span>
       <span class="arena-tab-title">מה דעתך?</span>
@@ -3435,12 +3544,13 @@ route("GET", "/arena", async (req, res, params, query, ctx) => {
     ${questionsHtml}
   </div>
 
+  ${d.settings.arenaConsultationsEnabled ? `
   <div class="arena-section" id="arenaTab2" style="display:none;">
     <h2>פינת ההתייעצויות</h2>
     <p class="arena-disclaimer">* SheCan אינה אחראית על תוכן התשובות שנכתבות כאן</p>
     ${consultFormHtml}
     ${consultationsHtml}
-  </div>
+  </div>` : ""}
 
   <div class="arena-section" id="arenaTab3" style="display:none;">
     <h2>מה דעתך?</h2>
@@ -3490,8 +3600,11 @@ route("POST", "/arena/ask", async (req, res, params, query, ctx) => {
 
 route("POST", "/arena/consult", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "customer")) return redirect(res, `/login?next=${encodeURIComponent("/arena")}`);
-  const body = await readBody(req);
   const d = db.load();
+  // הגנת שרת נוספת (מעבר להסתרת הטופס עצמו ב-GET /arena) - במקרה שהפינה כבויה כרגע דרך הטוגל
+  // בניהול (ר' d.settings.arenaConsultationsEnabled) אבל מישהי בכל זאת פונה ישירות ל-route הזה.
+  if (!d.settings.arenaConsultationsEnabled) return redirect(res, "/arena");
+  const body = await readBody(req);
   const customer = d.customers.find((c) => c.id === ctx.session.id);
   const text = clip((body.get("consultText") || "").trim(), 500);
   if (!customer || !text) return redirect(res, `/arena?tab=2&err=${encodeURIComponent("נא לכתוב במה תרצי להתייעץ.")}`);
@@ -3508,8 +3621,9 @@ route("POST", "/arena/consultation/:id/reply", async (req, res, params, query, c
   const isCustomer = requireRole(ctx.session, "customer");
   const isFreelancer = requireRole(ctx.session, "freelancer");
   if (!isCustomer && !isFreelancer) return redirect(res, `/login?next=${encodeURIComponent("/arena")}`);
-  const body = await readBody(req);
   const d = db.load();
+  if (!d.settings.arenaConsultationsEnabled) return redirect(res, "/arena");
+  const body = await readBody(req);
   const c = (d.consultations || []).find((x) => x.id === params.id && x.status === "approved" && !x.closed);
   const text = clip((body.get("text") || "").trim(), 500);
   let author = null;
@@ -5651,6 +5765,41 @@ function joinFormRenderContext(d, body, req) {
   return { charging: d.settings.chargingEnabled, refId, referrerFreelancer, businessNameDatalist, storyQuestionsJoin };
 }
 
+// Auto-links a matching CUSTOMER account to a freshly-created freelancer, so the "מעבר למצב
+// לקוחה" switch button in her dashboard (and the one-click switch offered by customerOnlyPrompt
+// below) always has somewhere to switch to right away - per explicit request 2026-09-02
+// ("קצת מסרבל... תעשה את זה אוטומטית שעצמאית נפתח לה חשבון אוטומטי גם כלקוחה"), after she
+// pointed out that juggling two separate logins meant she'd often be stuck mid-action (wanting
+// to comment/reply) with no customer account handy. Mirrors the customer record shape from
+// POST /signup as closely as possible. Skipped entirely if a customer with this email already
+// exists (e.g. she registered as a customer first, then later joined as a freelancer - the
+// existing switch-to-freelancer flow on /account already covers that direction). See the
+// matching one-time backfill block in db.js's migrate() for every freelancer who joined BEFORE
+// this existed.
+function ensureLinkedCustomerAccount(d, f) {
+  if (!f || !f.email) return;
+  if (d.customers.find((c) => c.email === f.email)) return;
+  const id = db.nextId("customer");
+  d.customers.push({
+    id, name: f.name, email: f.email,
+    passwordHash: f.passwordHash, cityId: f.cityId || "",
+    favorites: [], favoriteNotes: {}, viewedDeals: [], revealedCoupons: [], pushSubscriptions: [],
+    createdAt: new Date().toISOString(),
+    communityNotifyTags: {},
+    // אין צורך בסבב אימות מייל נפרד - היא כבר מוכיחה בעלות על המייל הזה דרך ההרשמה כעצמאית.
+    emailVerified: true, emailVerifyToken: null,
+    gender: "female", accountLocked: false,
+    wantsPushNotifications: false,
+    publicVisibilityConsentAt: f.publicListingConsentAt || new Date().toISOString(),
+    referredByCustomerId: null,
+    referralPopupSeen: true,
+    siteVisitCount: 0,
+    autoLinkedFromFreelancerId: f.id,
+    youCanMember: false, youCanRequestedAt: null, youCanActivatedAt: null,
+    youCanPolicyAgreedAt: null, youCanCancelledAt: null,
+  });
+}
+
 route("GET", "/join", async (req, res, params, query, ctx) => {
   const d = db.load();
   // A visit via another business's referral link (/join?ref=<freelancerId>) is only trusted
@@ -5774,6 +5923,9 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     status: "pending", createdAt: new Date().toISOString(),
     siteVisitCount: 0,
   });
+  // מקשר לה מיד גם חשבון לקוחה תואם (ר' ensureLinkedCustomerAccount למעלה) - לפני ה-save היחיד
+  // כאן, כדי לא להוסיף כתיבה נפרדת לדיסק.
+  ensureLinkedCustomerAccount(d, d.freelancers.find((x) => x.id === id));
   db.save();
 
   // Send her the QR code + coupon code for her new profile right away, so she has them
@@ -6115,6 +6267,8 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
       referredByCustomerId: null,
       referralPopupSeen: true,
       siteVisitCount: 0,
+      youCanMember: false, youCanRequestedAt: null, youCanActivatedAt: null,
+      youCanPolicyAgreedAt: null, youCanCancelledAt: null,
     });
     db.save();
     const lockedBody = `
@@ -6156,6 +6310,8 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     referredByCustomerId: referrer ? referrer.id : null,
     referralPopupSeen: false,
     siteVisitCount: 0,
+    youCanMember: false, youCanRequestedAt: null, youCanActivatedAt: null,
+    youCanPolicyAgreedAt: null, youCanCancelledAt: null,
   });
   db.save();
   const sid = auth.createSession("customer", id);
@@ -6410,6 +6566,18 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
       </div>`).join("") : `<p class="muted">עוד לא פרסמת חפץ למכירה - <a href="/community/sale/add" style="color:var(--rose-dark);font-weight:700;">אפשר להוסיף כאן</a>.</p>`}
   </div>
 
+  ${d.settings.youCanEnabled ? `
+  <div class="panel" style="text-align:center;">
+    <h3>🎟️ מועדון YouCan</h3>
+    ${customer.youCanMember
+      ? `<p class="muted">את חברה פעילה${customer.youCanActivatedAt ? ` מ-${esc(new Date(customer.youCanActivatedAt).toLocaleDateString("he-IL"))}` : ""} - אפשר לממש כמה קודי קופון שתרצי, בלי הגבלה.</p>
+         <a class="btn btn-small" style="margin-top:8px;" href="/youcan/join">ניהול החברות שלי</a>`
+      : customer.youCanRequestedAt
+      ? `<p class="muted">בקשת ההצטרפות שלך ממתינה לאישור ידני.</p>`
+      : `<p class="muted">מעבר ל-${esc(String(d.settings.youCanMonthlyPrice || 13))} ש"ח לחודש אפשר לממש כמה קודי קופון שרוצים, בכל העסקים באתר.</p>
+         <a class="btn btn-small" style="margin-top:8px;" href="/youcan/join">להצטרפות למועדון</a>`}
+  </div>` : ""}
+
   <div class="panel">
     <h3>הקופונים שכבר צפית בהם 🎁</h3>
     ${revealedCoupons.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>עסק</th><th>קוד קופון</th><th>תאריך</th></tr>
@@ -6492,6 +6660,12 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   const myStory = (d.stories || []).find((s) => s.freelancerId === f.id && s.status !== "rejected");
   const storyQuestions = d.settings.storyQuestions || [];
   const storyUrl = myStory ? `${getOrigin(req)}/stories/${myStory.id}` : "";
+
+  // סטטוסים 24 שעות (2026-09-02) - מנקה קודם כל סטטוס שלה שכבר פג (ר' pruneFreelancerStatuses),
+  // ורק אז סופרת/מציגה את מה שבאמת עדיין פעיל.
+  if (pruneFreelancerStatuses(d)) db.save();
+  const myActiveStatuses = (d.freelancerStatuses || []).filter((s) => s.freelancerId === f.id)
+    .slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
   // Customers she can start a "deal closed" confirmation with - anyone who's ever revealed her
   // coupon while logged in (the only place we reliably link a real customer identity to this
@@ -6667,6 +6841,34 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     `}
   </div>
 
+  ${d.settings.freelancerStatusesEnabled ? `
+  <div class="panel" style="text-align:center;">
+    <h3>הסטטוסים שלך (${myActiveStatuses.length}/3)</h3>
+    ${f.tier !== "premium" ? `
+      <p class="muted">התכונה הזו פתוחה לעצמאיות ברמת "מומלצת" בלבד - אפשר לפנות אלינו דרך כפתור התמיכה 💬 אם תרצי לשדרג.</p>
+    ` : `
+      <p class="muted">תמונה או סרטון שנעלמים אוטומטית אחרי 24 שעות - מוצגים בעיגול ללקוחות באתר, עד 3 סטטוסים פעילים בו-זמנית.</p>
+      ${myActiveStatuses.length ? `
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:14px 0;">
+        ${myActiveStatuses.map((s) => `
+        <div style="text-align:center;">
+          ${s.type === "video"
+            ? `<video src="${esc(s.url)}" style="width:80px;height:80px;object-fit:cover;border-radius:50%;" muted></video>`
+            : `<img src="${esc(s.url)}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:50%;" />`}
+          <div class="muted" style="font-size:11px;margin-top:4px;">💗 ${s.heartCount || 0}</div>
+          <form method="post" action="/freelancer-dashboard/status/${s.id}/delete" onsubmit="return confirm('למחוק את הסטטוס הזה?');" style="margin-top:4px;">
+            <button type="submit" class="btn btn-small btn-outline" style="padding:2px 8px;font-size:11px;">מחיקה</button>
+          </form>
+        </div>`).join("")}
+      </div>` : ""}
+      ${myActiveStatuses.length < 3 ? `
+      <form method="post" action="/freelancer-dashboard/status" enctype="multipart/form-data" style="max-width:360px;margin:0 auto;">
+        <label>העלאת תמונה או סרטון חדש<input type="file" name="media" accept="image/*,video/mp4,video/webm,video/quicktime" required /></label>
+        <button class="btn btn-small" style="margin-top:10px;" type="submit">העלאה</button>
+      </form>` : `<p class="muted">הגעת למגבלה של 3 סטטוסים פעילים - אפשר למחוק אחד כדי לפנות מקום, או לחכות שאחד יפוג.</p>`}
+    `}
+  </div>` : ""}
+
   <form class="panel" method="post" action="/freelancer-dashboard" enctype="multipart/form-data">
     <h3>הפרופיל שלך</h3>
     ${avatarUri(f) ? `<div style="margin-bottom:10px;">${photoOrInitials(avatarUri(f), f.businessName, "profile-photo")}</div>` : ""}
@@ -6805,7 +7007,13 @@ route("POST", "/freelancer-dashboard/switch-to-customer", async (req, res, param
   const customer = f && d.customers.find((c) => c.email === f.email);
   if (!customer) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("עדיין אין לך חשבון לקוחה עם המייל הזה.")}`);
   const sid = auth.createSession("customer", customer.id);
-  redirect(res, "/account", [sessionCookie(sid), identityCookie("customer", customer.id)]);
+  // תמיכה ב-`next` (נוסף 2026-09-02, ר' customerOnlyPrompt) - כשהמעבר יזום מתוך פעולה שנחסמה
+  // (כתיבת המלצה, שליחת הודעה, תגובה וכו') היא חוזרת ישר לאותו עמוד/עוגן כדי לסיים את הפעולה,
+  // במקום תמיד לנחות ב-/account. כשאין `next` (המעבר הרגיל מכפתור "מעבר למצב לקוחה" באזור
+  // האישי) ההתנהגות הקודמת נשארת בדיוק אותו דבר.
+  const body = await readBody(req);
+  const next = safeNextUrl(body.get("next"));
+  redirect(res, next || "/account", [sessionCookie(sid), identityCookie("customer", customer.id)]);
 });
 
 // Lets a customer rename herself (see the "הפרטים שלך" panel in /account, added per explicit
@@ -6837,6 +7045,99 @@ route("POST", "/account/switch-to-freelancer", async (req, res, params, query, c
   if (!f) return redirect(res, `/account?err=${encodeURIComponent("עדיין אין לך חשבון עצמאית מאושר עם המייל הזה.")}`);
   const sid = auth.createSession("freelancer", f.id);
   redirect(res, "/freelancer-dashboard", [sessionCookie(sid), identityCookie("freelancer", f.id)]);
+});
+
+// ----- מועדון YouCan (2026-09-02) -----
+// דף ההצטרפות/תשלום. כרגע (בלי סליקה מחוברת - youCanPaymentUrl ריק) זה תהליך ידני: היא רואה
+// הוראות תשלום (youCanPaymentInstructions, טקסט חופשי שממלאים בפאנל הניהול) ושולחת "בקשת
+// הצטרפות" שממתינה לאישור ידני שלה בניהול, ברגע שהתשלום מגיע בפועל - בדיוק כמו pending_payment
+// → active שכבר קיים היום אצל עצמאיות שמשלמות דמי הצטרפות. ברגע שיהיה חיבור סליקה אמיתי, מספיק
+// למלא את youCanPaymentUrl בפאנל הניהול - הכפתור יוביל ישר לשם במקום לעמוד הפנימי הזה, בלי שום
+// שינוי קוד נוסף.
+route("GET", "/youcan/join", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) {
+    return redirect(res, `/login?next=${encodeURIComponent(`/youcan/join${query.get("next") ? `?next=${encodeURIComponent(query.get("next"))}` : ""}`)}`);
+  }
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (!customer) return redirect(res, "/login");
+  const next = safeNextUrl(query.get("next"));
+  const price = d.settings.youCanMonthlyPrice || 13;
+  // מדיניות ביטול/חידוש (2026-09-02, לפי בקשה מפורשת): ביטול נכנס לתוקף מיידית, וחידוש בעתיד
+  // דורש הצטרפות ותשלום מחדש - אין חידוש אוטומטי. הטקסט מוצג גם בטופס ההצטרפות (עם אישור
+  // בצ'קבוקס חובה, נשמר ב-customer.youCanPolicyAgreedAt) וגם כאן לחברה פעילה, ליד כפתור הביטול.
+  const policyText = "ביטול חברות במועדון נכנס לתוקף באופן מיידי. כדי לחדש את החברות בעתיד יהיה צורך להצטרף מחדש ולשלם מחדש - החברות אינה מתחדשת אוטומטית לאחר ביטול.";
+  let innerHtml;
+  if (customer.youCanMember) {
+    innerHtml = `
+      <p>את כבר חברה במועדון YouCan${customer.youCanActivatedAt ? ` מ-${esc(new Date(customer.youCanActivatedAt).toLocaleDateString("he-IL"))}` : ""} - אפשר לממש כמה קודי קופון שתרצי, בלי הגבלה. 🎉</p>
+      ${next ? `<p style="margin-top:14px;"><a class="btn btn-small" href="${esc(next)}">חזרה לעמוד שהיית בו</a></p>` : ""}
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #ddd3c4;">
+        <p class="muted" style="font-size:13px;">${esc(policyText)}</p>
+        <form method="post" action="/youcan/cancel" onsubmit="return confirm('לבטל את החברות במועדון YouCan? הביטול מיידי, ולחידוש בעתיד יהיה צורך להצטרף ולשלם מחדש.');">
+          <button class="btn btn-small btn-outline" type="submit">ביטול חברות</button>
+        </form>
+      </div>`;
+  } else if (customer.youCanRequestedAt) {
+    innerHtml = `<p>קיבלנו את בקשת ההצטרפות שלך והיא ממתינה לאישור ידני - נעדכן אותך ברגע שהמועדון יופעל אצלך. תודה! 💛</p>`;
+  } else if (d.settings.youCanPaymentUrl) {
+    innerHtml = `
+      <p class="muted">${esc(price)} ש"ח לחודש, ומימוש בלתי מוגבל של קודי קופון בכל העסקים באתר.</p>
+      <p class="muted" style="font-size:13px;margin-top:10px;">${esc(policyText)}</p>
+      <p style="margin-top:14px;"><a class="btn" href="${esc(d.settings.youCanPaymentUrl)}" target="_blank" rel="noopener">מעבר לתשלום מאובטח</a></p>`;
+  } else {
+    innerHtml = `
+      <p class="muted">${esc(price)} ש"ח לחודש, ומימוש בלתי מוגבל של קודי קופון בכל העסקים באתר.</p>
+      ${d.settings.youCanPaymentInstructions ? `<div class="panel" style="margin-top:12px;white-space:pre-wrap;">${esc(d.settings.youCanPaymentInstructions)}</div>` : `<p class="muted" style="margin-top:12px;">פרטי התשלום עוד לא הוגדרו - אפשר לפנות אלינו דרך כפתור התמיכה 💬.</p>`}
+      <form method="post" action="/youcan/join/request" style="margin-top:14px;text-align:right;">
+        ${next ? `<input type="hidden" name="next" value="${esc(next)}" />` : ""}
+        <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;font-size:13.5px;"><input type="checkbox" name="agreePolicy" value="1" required style="width:auto;margin-top:3px;flex-shrink:0;" /><span>קראתי ואני מאשרת את מדיניות המועדון: ${esc(policyText)}</span></label>
+        <button class="btn" style="margin-top:12px;" type="submit">שילמתי - שליחת בקשת הצטרפות</button>
+      </form>`;
+  }
+  const body = `
+  <h1 class="section-title">מועדון YouCan 🎟️</h1>
+  <div class="panel" style="max-width:520px;margin:0 auto;text-align:center;">
+    ${innerHtml}
+  </div>`;
+  sendHtml(res, 200, page({ title: "מועדון YouCan", session: ctx.session, body, query }));
+});
+
+route("POST", "/youcan/join/request", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const next = safeNextUrl(body.get("next"));
+  // אישור מדיניות הביטול/חידוש חובה (ר' policyText ב-GET /youcan/join למעלה) - בלי הצ'קבוקס
+  // מסומן, לא שולחים בקשה בכלל וחוזרים לאותו עמוד כדי שהיא תסמן ותשלח שוב.
+  if (body.get("agreePolicy") !== "1") {
+    return redirect(res, `/youcan/join${next ? `?next=${encodeURIComponent(next)}` : ""}`);
+  }
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (customer && !customer.youCanMember && !customer.youCanRequestedAt) {
+    customer.youCanRequestedAt = new Date().toISOString();
+    customer.youCanPolicyAgreedAt = new Date().toISOString();
+    db.save();
+  }
+  redirect(res, `/youcan/join${next ? `?next=${encodeURIComponent(next)}` : ""}`);
+});
+
+// ביטול עצמי של הלקוחה למועדון (2026-09-02, לפי בקשה מפורשת) - נכנס לתוקף מיידית ובלי אישור
+// נוסף מהניהול, בדיוק כמו POST /admin/customer/:id/revoke-youcan, רק ביוזמת הלקוחה עצמה על
+// חשבונה שלה. youCanRequestedAt מתאפס כדי שאם תרצה להצטרף מחדש בעתיד היא תעבור שוב את כל
+// התהליך (כולל תשלום מחדש) ולא "תישאר ממתינה" ממה שכבר בוטל.
+route("POST", "/youcan/cancel", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (customer && customer.youCanMember) {
+    customer.youCanMember = false;
+    customer.youCanRequestedAt = null;
+    customer.youCanCancelledAt = new Date().toISOString();
+    db.save();
+    return redirect(res, `/account?ok=${encodeURIComponent("חברות המועדון בוטלה. לחידוש בעתיד יהיה צורך להצטרף ולשלם מחדש.")}`);
+  }
+  redirect(res, "/account");
 });
 
 route("POST", "/account/resend-verification", async (req, res, params, query, ctx) => {
@@ -6884,6 +7185,63 @@ route("POST", "/account/deal/close", async (req, res, params, query, ctx) => {
     emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(freelancer.name || "")},</p><p><strong>${esc(customer.name || "לקוחה")}</strong> סימנה ב-SheCan שסגרתן עסקה יחד. איזה כיף! 🎉</p></div>`,
   }).catch(() => {});
   redirect(res, `/account?ok=${encodeURIComponent("תודה שעדכנת אותנו! 💛")}#account-deal-close-section`);
+});
+
+route("POST", "/freelancer-dashboard/status", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (!d.settings.freelancerStatusesEnabled) return redirect(res, "/freelancer-dashboard");
+  if (!f || f.tier !== "premium") {
+    return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("התכונה הזו פתוחה לעצמאיות ברמת \"מומלצת\" בלבד.")}`);
+  }
+  if (pruneFreelancerStatuses(d)) db.save();
+  const activeCount = (d.freelancerStatuses || []).filter((s) => s.freelancerId === f.id).length;
+  if (activeCount >= 3) {
+    return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("הגעת למגבלה של 3 סטטוסים פעילים - מחקי אחד או חכי שיפוג.")}`);
+  }
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("הקובץ גדול מדי.")}`);
+  const saved = saveStatusFile(body.files.media);
+  if (!saved) {
+    return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("לא הצלחנו להעלות את הקובץ - צריך תמונה או סרטון (mp4/webm/mov), עד 8MB לתמונה ו-30MB לסרטון.")}`);
+  }
+  const now = new Date();
+  d.freelancerStatuses = d.freelancerStatuses || [];
+  d.freelancerStatuses.push({
+    id: db.nextId("freelancerStatus"), freelancerId: f.id, type: saved.type, url: saved.url,
+    createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    heartCount: 0,
+  });
+  db.save();
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("הסטטוס עלה לאוויר! הוא ייעלם אוטומטית בעוד 24 שעות.")}`);
+});
+
+route("POST", "/freelancer-dashboard/status/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const s = (d.freelancerStatuses || []).find((x) => x.id === params.id && x.freelancerId === ctx.session.id);
+  if (s) {
+    const filename = (s.url || "").split("/").pop();
+    if (filename) { try { fs.unlinkSync(path.join(UPLOADS_DIR, filename)); } catch (e) {} }
+    d.freelancerStatuses = d.freelancerStatuses.filter((x) => x.id !== s.id);
+    db.save();
+  }
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("הסטטוס נמחק.")}`);
+});
+
+// פתוח לכל מבקרת באתר (בדיוק כמו "לייק" למשפט השבועי) - הספירה בצד שרת, מניעת לייק כפול
+// נעשית בצד לקוח בלבד (localStorage, ר' scHeartStatus ב-layout.js) - fire-and-forget, לא צריך
+// להחזיר כלום מעבר ל-204.
+route("POST", "/status/:id/heart", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const s = (d.freelancerStatuses || []).find((x) => x.id === params.id);
+  if (s) {
+    s.heartCount = (s.heartCount || 0) + 1;
+    db.save();
+  }
+  res.writeHead(204);
+  res.end();
 });
 
 route("POST", "/freelancer-dashboard/story", async (req, res, params, query, ctx) => {
@@ -7652,6 +8010,17 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // חשבונות לקוחות שננעלו אוטומטית בהרשמה כי סימנו "גבר" (ר' POST /signup) - לא מקבלים שום
   // מייל/גישה עד שאת בוחרת לפתוח אותם ידנית כאן.
   const lockedCustomers = d.customers.filter((c) => c.accountLocked);
+
+  // מועדון YouCan (2026-09-02) - בקשות הצטרפות שממתינות לאישור ידני (שילמה ידנית, ר' GET
+  // /youcan/join) וחברות פעילות כרגע.
+  const youCanPending = d.customers.filter((c) => c.youCanRequestedAt && !c.youCanMember)
+    .slice().sort((a, b) => new Date(a.youCanRequestedAt) - new Date(b.youCanRequestedAt));
+  const youCanMembers = d.customers.filter((c) => c.youCanMember);
+
+  // סטטוסים 24 שעות (2026-09-02) - מנקה קודם כל סטטוס שכבר פג באתר כולו, ורק אז בונה את
+  // רשימת הפעילים לתצוגת הפיקוח בניהול.
+  if (pruneFreelancerStatuses(d)) db.save();
+  const allActiveStatuses = (d.freelancerStatuses || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   // Site-visit numbers for the "מספרים כלליים" panel - counted by trackSiteVisit() on every
   // real page load (see near the bottom of the file). Last-7-days breakdown built from
@@ -8663,6 +9032,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
 
+  <div class="panel" id="arena-consultations">
+    <h3>פינת ההתייעצויות בזירה</h3>
+    <p class="muted">${d.settings.arenaConsultationsEnabled ? "פינת ההתייעצויות מוצגת עכשיו בזירה - לקוחות ועצמאיות יכולות לפתוח ולהגיב להתייעצויות חופשיות (כל תגובה עדיין עוברת אישור ידני לפני פרסום, כרגיל)." : "פינת ההתייעצויות מוסתרת כרגע מהזירה - הלשונית לא מופיעה, ואי אפשר לפתוח או להגיב להתייעצויות. שום תוכן קיים לא נמחק - הכל יחזור לאיתנו ברגע שתדליקי את זה מחדש."}</p>
+    <form method="post" action="/admin/toggle-arena-consultations">
+      <button class="btn btn-small" type="submit">${d.settings.arenaConsultationsEnabled ? "הסתרה מהזירה" : "הצגה מחדש בזירה"}</button>
+    </form>
+  </div>
+
   <div class="panel">
     <h3>מספר צפיות ודירוג מדויק בפרופיל</h3>
     <p class="muted">${d.settings.showProfileViewCount ? "מוצג עכשיו לכולם, בעמוד הפרופיל הפומבי של כל עצמאית: כמה צפיות היו בפרופיל שלה (👁️), והציון המספרי המדויק של הדירוג שלה (למשל \"4.7\") ליד הכוכבים." : "כרגע לא מוצג באף פרופיל - רק כוכבי הדירוג הוויזואליים מוצגים (בלי מספר מדויק), ובלי מספר צפיות. אפשר להדליק את זה מתי שתרצי."}</p>
@@ -8797,6 +9174,70 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td><a class="btn btn-small" href="/admin/chat/${t.freelancerId}/${t.customerId}">צפייה בשיחה המלאה</a></td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין לא נשלחו הודעות פרטיות באתר.</p>`}
+  </div>
+
+  <div class="panel" id="youcan-club" style="scroll-margin-top:90px;" data-badge="${youCanPending.length}">
+    <h3>🎟️ מועדון YouCan (${youCanMembers.length} חברות פעילות)</h3>
+    <p class="muted">${d.settings.youCanEnabled ? "המועדון פעיל - לקוחה שאינה חברה רואה הסבר וקישור הצטרפות במקום קוד הקופון עצמו. שאר האתר נשאר פתוח בדיוק כמו תמיד." : "המועדון כבוי כרגע - כל לקוחה רואה ולוחצת על קוד הקופון בדיוק כמו היום, בלי שום הגבלה."}</p>
+    <form method="post" action="/admin/toggle-youcan">
+      <button class="btn btn-small" type="submit">${d.settings.youCanEnabled ? "כיבוי המועדון" : "הפעלת המועדון"}</button>
+    </form>
+    <form method="post" action="/admin/youcan/settings" style="margin-top:14px;">
+      <label>מחיר חודשי (ש"ח)
+      <input type="number" name="youCanMonthlyPrice" min="0" step="1" value="${esc(String(d.settings.youCanMonthlyPrice || 13))}" /></label>
+      <label>קישור לדף סליקה חיצוני (רק ברגע שיש - השאירי ריק בינתיים, זה עובר אוטומטית לתשלום ידני)
+      <input type="text" name="youCanPaymentUrl" value="${esc(d.settings.youCanPaymentUrl || "")}" placeholder="https://..." /></label>
+      <label>הוראות תשלום ידניות (ביט/העברה בנקאית - מוצג בדף ההצטרפות כל עוד אין קישור סליקה)
+      <textarea name="youCanPaymentInstructions" placeholder="לדוגמה: ביט למספר 05X-XXXXXXX, ואז ללחוץ על 'שילמתי'.">${esc(d.settings.youCanPaymentInstructions || "")}</textarea></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שמירה</button>
+    </form>
+    ${youCanPending.length ? `
+    <h4 style="margin-top:18px;">ממתינות לאישור תשלום (${youCanPending.length})</h4>
+    <div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>מייל</th><th>תאריך בקשה</th><th>פעולה</th></tr>
+      ${youCanPending.map((c) => `<tr>
+        <td>${esc(c.name)}</td><td>${esc(c.email)}</td><td>${esc(new Date(c.youCanRequestedAt).toLocaleDateString("he-IL"))}</td>
+        <td><form method="post" action="/admin/customer/${c.id}/approve-youcan"><button class="btn btn-small" type="submit">אישור והפעלה</button></form></td>
+      </tr>`).join("")}
+    </table></div>` : ""}
+    ${youCanMembers.length ? `
+    <h4 style="margin-top:18px;">חברות פעילות (${youCanMembers.length})</h4>
+    <div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>מייל</th><th>הופעלה ב-</th><th>פעולה</th></tr>
+      ${youCanMembers.map((c) => `<tr>
+        <td>${esc(c.name)}</td><td>${esc(c.email)}</td><td>${c.youCanActivatedAt ? esc(new Date(c.youCanActivatedAt).toLocaleDateString("he-IL")) : "-"}</td>
+        <td><form method="post" action="/admin/customer/${c.id}/revoke-youcan" onsubmit="return confirm('לבטל את החברות של ${esc(c.name)} במועדון?');"><button class="btn btn-small btn-outline" type="submit">ביטול חברות</button></form></td>
+      </tr>`).join("")}
+    </table></div>` : ""}
+  </div>
+
+  <div class="panel" id="freelancer-statuses" style="scroll-margin-top:90px;" data-badge="${allActiveStatuses.length}">
+    <h3>📸 סטטוסים 24 שעות (${allActiveStatuses.length} פעילים עכשיו)</h3>
+    <p class="muted">${d.settings.freelancerStatusesEnabled ? "פעיל - עצמאיות ברמת \"מומלצת\" יכולות להעלות סטטוס (עד 3 בו-זמנית, נעלם אוטומטית אחרי 24 שעות), ולקוחות רואות אותו בעיגולים בפס הקבוע באתר." : "כבוי כרגע - שום עיגול לא מוצג באתר, ואי אפשר להעלות סטטוס חדש."}</p>
+    <form method="post" action="/admin/toggle-freelancer-statuses">
+      <button class="btn btn-small" type="submit">${d.settings.freelancerStatusesEnabled ? "כיבוי הפיצ'ר" : "הפעלת הפיצ'ר"}</button>
+    </form>
+    <form method="post" action="/admin/freelancer-statuses-position" style="margin-top:14px;">
+      <label>מיקום פס הסטטוסים באתר
+      <select name="position">
+        <option value="bottom" ${d.settings.freelancerStatusesPosition !== "side" ? "selected" : ""}>פס קבוע בתחתית</option>
+        <option value="side" ${d.settings.freelancerStatusesPosition === "side" ? "selected" : ""}>עמודה קבועה בצד ימין</option>
+      </select></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שמירה</button>
+    </form>
+    ${allActiveStatuses.length ? `
+    <h4 style="margin-top:18px;">כל הסטטוסים הפעילים כרגע</h4>
+    <div class="table-scroll"><table class="table-simple"><tr><th>תצוגה</th><th>עסק</th><th>סוג</th><th>הועלה</th><th>💗</th><th>פעולה</th></tr>
+      ${allActiveStatuses.map((s) => {
+        const owner = d.freelancers.find((x) => x.id === s.freelancerId);
+        return `<tr>
+        <td>${s.type === "video" ? `<video src="${esc(s.url)}" style="width:40px;height:40px;object-fit:cover;border-radius:6px;" muted></video>` : `<img src="${esc(s.url)}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;" />`}</td>
+        <td>${esc(owner ? (owner.businessName || owner.name) : "עצמאית שנמחקה")}</td>
+        <td>${s.type === "video" ? "סרטון" : "תמונה"}</td>
+        <td>${esc(new Date(s.createdAt).toLocaleString("he-IL"))}</td>
+        <td>${s.heartCount || 0}</td>
+        <td><form method="post" action="/admin/status/${s.id}/delete"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
+      </tr>`;
+      }).join("")}
+    </table></div>` : ""}
   </div>
 
   <div class="panel" id="locked-accounts" style="scroll-margin-top:90px;" data-badge="${lockedCustomers.length}">
@@ -9348,6 +9789,78 @@ route("POST", "/admin/customer/:id/unlock", async (req, res, params, query, ctx)
   redirect(res, `/admin?ok=${encodeURIComponent(`החשבון של ${customer.name} נפתח - היא יכולה להתחבר עכשיו.`)}#locked-accounts`);
 });
 
+route("POST", "/admin/toggle-youcan", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.youCanEnabled = !d.settings.youCanEnabled;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.youCanEnabled ? "מועדון YouCan הופעל." : "מועדון YouCan כובה - קוד הקופון פתוח שוב לכולן.")}#youcan-club`);
+});
+
+route("POST", "/admin/youcan/settings", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const price = Number(body.get("youCanMonthlyPrice"));
+  d.settings.youCanMonthlyPrice = Number.isFinite(price) && price >= 0 ? price : (d.settings.youCanMonthlyPrice || 13);
+  d.settings.youCanPaymentUrl = (body.get("youCanPaymentUrl") || "").trim();
+  d.settings.youCanPaymentInstructions = (body.get("youCanPaymentInstructions") || "").trim();
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("עודכן!")}#youcan-club`);
+});
+
+route("POST", "/admin/customer/:id/approve-youcan", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === params.id);
+  if (!customer) return redirect(res, "/admin#youcan-club");
+  customer.youCanMember = true;
+  customer.youCanActivatedAt = new Date().toISOString();
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`מועדון YouCan הופעל אצל ${customer.name}.`)}#youcan-club`);
+});
+
+route("POST", "/admin/customer/:id/revoke-youcan", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === params.id);
+  if (!customer) return redirect(res, "/admin#youcan-club");
+  customer.youCanMember = false;
+  customer.youCanRequestedAt = null;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`חברות המועדון של ${customer.name} בוטלה.`)}#youcan-club`);
+});
+
+route("POST", "/admin/toggle-freelancer-statuses", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.freelancerStatusesEnabled = !d.settings.freelancerStatusesEnabled;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.freelancerStatusesEnabled ? "סטטוסים 24 שעות הופעלו." : "סטטוסים 24 שעות כובו.")}#freelancer-statuses`);
+});
+
+route("POST", "/admin/freelancer-statuses-position", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  d.settings.freelancerStatusesPosition = body.get("position") === "side" ? "side" : "bottom";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("עודכן!")}#freelancer-statuses`);
+});
+
+route("POST", "/admin/status/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const s = (d.freelancerStatuses || []).find((x) => x.id === params.id);
+  if (s) {
+    const filename = (s.url || "").split("/").pop();
+    if (filename) { try { fs.unlinkSync(path.join(UPLOADS_DIR, filename)); } catch (e) {} }
+    d.freelancerStatuses = d.freelancerStatuses.filter((x) => x.id !== s.id);
+    db.save();
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("הסטטוס נמחק.")}#freelancer-statuses`);
+});
+
 route("POST", "/admin/freelancer/fix-referral", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -9840,6 +10353,14 @@ route("POST", "/admin/toggle-profile-viewcount", async (req, res, params, query,
   d.settings.showProfileViewCount = !d.settings.showProfileViewCount;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showProfileViewCount ? "מספר הצפיות והדירוג המדויק מוצגים עכשיו בכל הפרופילים." : "מספר הצפיות והדירוג המדויק הוסתרו מהפרופילים.")}`);
+});
+
+route("POST", "/admin/toggle-arena-consultations", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.arenaConsultationsEnabled = !d.settings.arenaConsultationsEnabled;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.arenaConsultationsEnabled ? "פינת ההתייעצויות מוצגת עכשיו בזירה." : "פינת ההתייעצויות הוסתרה מהזירה.")}#arena-consultations`);
 });
 
 route("POST", "/admin/toggle-service-requests-premium", async (req, res, params, query, ctx) => {
@@ -11061,6 +11582,8 @@ route("GET", "/uploads/:filename", async (req, res, params, query, ctx) => {
       jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
       gif: "image/gif", heic: "image/heic", heif: "image/heif", avif: "image/avif",
       bmp: "image/bmp", svg: "image/svg+xml",
+      // וידאו - נוסף 2026-09-02 עבור סטטוסים (ר' saveStatusFile) שנשמרים באותה תיקייה בדיוק.
+      mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime",
     }[ext] || "application/octet-stream";
     // Filenames are random and never reused for different content, so this is safe to cache
     // "forever" on the client/CDN side - a changed photo always gets a brand-new filename.

@@ -59,6 +59,33 @@ function defaultData() {
       // בעמוד הפרופיל הפומבי של כל עצמאית - כבוי כברירת מחדל, מופעל/מכובה בפאנל הניהול
       // (ר' POST /admin/toggle-profile-viewcount, נוסף לפי בקשה מפורשת 2026-08-31).
       showProfileViewCount: false,
+      // האם "פינת ההתייעצויות" (הערוץ הפתוח ביותר בזירה - דילמות עסקיות חופשיות בין לקוחות
+      // לעצמאיות, לעומת "אתן שואלות" הממוקד יותר) מוצגת בכלל בזירה - true כברירת מחדל (השארת
+      // ההתנהגות הקיימת). נוסף לפי בקשה מפורשת 2026-09-02, כדי שיהיה אפשר להוריד את הפינה הזו
+      // זמנית מהאתר הציבורי (בלי למחוק שום תוכן קיים - הוא רק מוסתר) בזמן שמחכים לתשובת נטפרי
+      // על אישור האתר, ולהחזיר אותה באותה קלות כשהתשובה תתקבל. ר' POST
+      // /admin/toggle-arena-consultations, ואת השימוש בטוגל הזה סביב הלשונית/הטופס/ה-routes
+      // הרלוונטיים ב-server.js.
+      arenaConsultationsEnabled: true,
+      // מועדון "YouCan" (נוסף 2026-09-02, לפי בקשה מפורשת) - מגביל את פעולת "לצפייה בקוד קופון"
+      // בלבד (שאר האתר פתוח בדיוק כמו היום) לחברות מועדון בתשלום. כבוי כברירת מחדל - כל עוד
+      // youCanEnabled==false שום דבר לא משתנה בפועל לאף אחת. אין עדיין חיבור לסליקה אמיתית
+      // (לפי בקשה מפורשת: "ברגע שתהיה לי מערכת סליקה - אוכל אוטומטית להכניס אותה לאתר"), אז
+      // הארכיטקטורה בנויה כך שהחיבור העתידי הוא רק הדבקת קישור: youCanPaymentUrl ריק = דף
+      // ההצטרפות הפנימי מציג הוראות תשלום ידניות (youCanPaymentInstructions, טקסט חופשי שהיא
+      // ממלאה - ביט/העברה בנקאית) ובקשת הצטרפות שממתינה לאישור ידני בפאנל הניהול (בדיוק כמו
+      // pending_payment→active הקיים כבר אצל עצמאיות בתשלום); youCanPaymentUrl מלא = כפתור
+      // ההצטרפות מוביל ישר לדף הסליקה החיצוני שלה, בלי שום שינוי קוד נוסף מהצד שלי.
+      youCanEnabled: false,
+      youCanMonthlyPrice: 13,
+      youCanPaymentUrl: "",
+      youCanPaymentInstructions: "",
+      // סטטוסים 24 שעות לעצמאיות פרימיום (2026-09-02) - כבוי כברירת מחדל, כמו כל תכונה חדשה
+      // השנה. freelancerStatusesPosition קובע איפה מוצג פס העיגולים באתר: "bottom" = פס קבוע
+      // בתחתית שנשאר תמיד למרות גלילה, "side" = עמודה קבועה בצד ימין (טבעי לאתר בעברית, לפי
+      // אישור מפורש). ניתן להחלפה בכל רגע בפאנל הניהול.
+      freelancerStatusesEnabled: false,
+      freelancerStatusesPosition: "bottom",
       // "בקשות שירות" (נוסף 2026-08-26) - לקוחה מפרסמת בקשה לשירות ספציפי (ר' d.serviceRequests
       // למטה), שמופיעה לעצמאיות בתחום המתאים. כל עוד false (ברירת המחדל) - פתוח לכולן; true =
       // מוצג רק לעצמאיות עם tier==="premium" (אותו שדה tier הקיים כבר לרמת "מומלצת"/pricing.
@@ -404,6 +431,14 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     reviews: [],
     magazines: [],
     stories: [], // "סיפור השראה שבועי" - ראיון/פוסט שספיר מעלה ידנית על עצמאית אחת - { id, title, freelancerId, content, photoDataUri, createdAt }
+    // "סטטוסים" - תמונה/סרטון שעצמאית ברמת "מומלצת" (premium) מעלה בעצמה ושנעלם אוטומטית אחרי
+    // 24 שעות, עד 3 פעילים בו-זמנית (2026-09-02, לפי בקשה מפורשת). מוצג בעיגולים באזור קבוע
+    // באתר (ר' d.settings.freelancerStatusesEnabled/freelancerStatusesPosition, ו-
+    // statusRailHtml ב-layout.js) - { id, freelancerId, type: "image"|"video", url, createdAt,
+    // expiresAt, heartCount }. הקובץ עצמו נשמר בדיסק (UPLOADS_DIR, ר' saveStatusFile ב-
+    // server.js), לא כ-base64 בתוך ה-DB - כדי לא לחזור לבעיית הביצועים שכבר תוקנה עבור
+    // תמונות/לוגואים (ר' fileToDataUri).
+    freelancerStatuses: [],
     admins: [
       { id: "1", email: "admin@shecan.co.il", name: "ספיר", passwordHash: null, pushSubscriptions: [] },
     ],
@@ -424,6 +459,7 @@ function migrate(data) {
   if (!Array.isArray(data.couponRevealEvents)) { data.couponRevealEvents = []; changed = true; }
   if (!Array.isArray(data.chatMessages)) { data.chatMessages = []; changed = true; }
   if (!Array.isArray(data.stories)) { data.stories = []; changed = true; }
+  if (!Array.isArray(data.freelancerStatuses)) { data.freelancerStatuses = []; changed = true; }
   if (!Array.isArray(data.arenaQuestions)) { data.arenaQuestions = []; changed = true; }
   if (!Array.isArray(data.consultations)) { data.consultations = []; changed = true; }
   if (!Array.isArray(data.polls)) { data.polls = []; changed = true; }
@@ -478,6 +514,51 @@ function migrate(data) {
   (data.customers || []).forEach((c) => {
     if (!c.favoriteNotes || typeof c.favoriteNotes !== "object") { c.favoriteNotes = {}; changed = true; }
     if (!c.communityNotifyTags || typeof c.communityNotifyTags !== "object") { c.communityNotifyTags = {}; changed = true; }
+    // מועדון YouCan (2026-09-02) - כל לקוחה קיימת בלי השדות האלה מקבלת ברירת מחדל "לא חברה".
+    if (typeof c.youCanMember !== "boolean") { c.youCanMember = false; changed = true; }
+    if (!("youCanRequestedAt" in c)) { c.youCanRequestedAt = null; changed = true; }
+    if (!("youCanActivatedAt" in c)) { c.youCanActivatedAt = null; changed = true; }
+    // תאריך אישור מדיניות המועדון (חתימה על "ביטול = צריך להצטרף ולשלם מחדש") ותאריך ביטול
+    // עצמי אחרון - נוספו ב-2026-09-02 יחד עם כפתור הביטול העצמי באזור האישי (ר' server.js,
+    // POST /account/youcan/cancel).
+    if (!("youCanPolicyAgreedAt" in c)) { c.youCanPolicyAgreedAt = null; changed = true; }
+    if (!("youCanCancelledAt" in c)) { c.youCanCancelledAt = null; changed = true; }
+  });
+  // אוטו-קישור חשבון לקוחה לכל עצמאית קיימת שעדיין אין לה אחד (2026-09-02, לפי בקשה מפורשת:
+  // "קצת מסרבל... תעשה את זה אוטומטית") - כדי שכפתור "מעבר למצב לקוחה" באזור האישי שלה תמיד
+  // ימצא לאן לעבור, בלי שהיא תצטרך להירשם בנפרד כלקוחה עם אותו מייל. חשבון חדש שנרשם מעכשיו
+  // ואילך מקבל את זה מיד ב-POST /join עצמו (ר' ensureLinkedCustomerAccount ב-server.js) - הבלוק
+  // הזה רק מגבה (backfill) בבת אחת את כל מי שהצטרפה לפני שהתכונה הזו נוספה. מדלג לגמרי אם כבר
+  // קיים חשבון לקוחה עם אותו מייל (למשל היא נרשמה כלקוחה בעצמה בעבר, כולל אם זה חשבון "גבר"
+  // נעול במקרה עם אותו מייל - לא נוגעים בו). מעתיק ישירות את ה-passwordHash הקיים (הוא כבר
+  // hash, לא צריך hashPassword מחדש) - שני החשבונות לא חייבים להישאר מסונכרנים לתמיד, כי מעבר
+  // בין מצבים תמיד קורה כשהיא כבר מחוברת (ר' switch-to-customer/switch-to-freelancer), בלי
+  // בדיקת סיסמה מחדש. emailVerified מסומן true מראש - יש לה כבר כרטיסייה עסקית פומבית חיה תחת
+  // אותו מייל בדיוק, אז סבב "אמתי את המייל" נוסף פה הוא רק חיכוך מיותר, לא בדיקת בטיחות אמיתית.
+  // משתמש ב-nextId מקומי (לא db.nextId שבסוף הקובץ, כדי לא לגרום ל-save() נפרד על כל עצמאית -
+  // כאן זה חלק מ-migrate() שכבר שומר פעם אחת בסוף דרך ה-changed flag).
+  (data.freelancers || []).forEach((f) => {
+    if (!f.email) return;
+    if ((data.customers || []).find((c) => c.email === f.email)) return;
+    if (typeof data.nextId.customer !== "number" || Number.isNaN(data.nextId.customer)) data.nextId.customer = 1;
+    const id = String(data.nextId.customer++);
+    data.customers = data.customers || [];
+    data.customers.push({
+      id, name: f.name, email: f.email,
+      passwordHash: f.passwordHash, cityId: f.cityId || "",
+      favorites: [], favoriteNotes: {}, viewedDeals: [], revealedCoupons: [], pushSubscriptions: [],
+      createdAt: new Date().toISOString(),
+      communityNotifyTags: {},
+      emailVerified: true, emailVerifyToken: null,
+      gender: "female", accountLocked: false,
+      wantsPushNotifications: false,
+      publicVisibilityConsentAt: f.publicListingConsentAt || new Date().toISOString(),
+      referredByCustomerId: null,
+      referralPopupSeen: true,
+      siteVisitCount: 0,
+      autoLinkedFromFreelancerId: f.id,
+    });
+    changed = true;
   });
   if (!Array.isArray(data.supportMessages)) { data.supportMessages = []; changed = true; }
   // supportMessages היה במקור רשומה אחת לכל שאלה (question/answer/status) - שודרג לצ'אט
