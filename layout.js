@@ -293,7 +293,10 @@ a{color:inherit;text-decoration:none;}
 
 /* ---- סטטוסים 24 שעות (2026-09-02) - פס עיגולים קבוע (bottom/side, ר' statusRailHtml) +
    מציג/viewer מסך מלא, בדיוק כמו lightbox אבל עם תמונה/וידאו + לב + שיתוף + קישור לפרופיל. ---- */
-.sc-status-rail{position:fixed;z-index:150;display:flex;gap:10px;background:rgba(255,255,255,.94);backdrop-filter:blur(6px);}
+/* רקע הפס שקוף בהרבה (2026-09-03, לפי בקשה מפורשת - "כמו בווצאפ") - היה כמעט אטום (.94),
+   עכשיו רק "רמז" עדין של רקע לבן מאחורי העיגולים עם טשטוש קל, כדי שהעיגולים עצמם עדיין
+   קריאים על רקע כהה/עמוס בלי להסתיר את מה שמאחורי הפס. */
+.sc-status-rail{position:fixed;z-index:150;display:flex;gap:10px;background:rgba(255,255,255,.16);backdrop-filter:blur(4px);}
 /* padding-right (פיזי, לא inline-end, בכוונה - בלי קשר לכיווניות RTL) שומר מקום פנוי בקצה
    הימני של הפס לפני העיגול הראשון, כדי שהוא לא ייכנס לשטח הקבוע של כפתור "לתמיכה לחצי"
    (position:fixed;bottom:20px;right:20px;z-index:500 - גבוה מה-z-index של הפס עצמו, ולכן
@@ -304,7 +307,11 @@ a{color:inherit;text-decoration:none;}
    לא יגיע לשטח הכפתור הקבוע בפינה הימנית-תחתונה (אותה הערה כמו למעלה). overflow-y:auto נשאר
    כדי שרשימה ארוכה של סטטוסים תגלול בתוך הפס במקום לדחוף אותו מעבר לעוגן התחתון. */
 .sc-status-rail.sc-status-side{top:110px;right:0;bottom:100px;flex-direction:column;overflow-y:auto;padding:14px 10px;border-radius:12px 0 0 12px;box-shadow:-2px 2px 14px rgba(0,0,0,.08);}
-.sc-status-circle{flex-shrink:0;width:56px;height:56px;border-radius:50%;padding:2px;background:linear-gradient(135deg,var(--rose),#e8b4a0);cursor:pointer;}
+/* צבע הטבעת נקבע דינמית ב-JS (ר' scRefreshStatusRings) לפי מה שכבר נצפה בדפדפן הזה - בדיוק
+   כמו בווצאפ: ירוק = יש עוד סטטוס שלא נצפה, אפור-בהיר = הכל כבר נצפה, ואם יש כמה קבצים -
+   טבעת מחולקת לפי מספר הקבצים עם פס לכל אחד בנפרד (2026-09-03, לפי בקשה מפורשת). הצבע כאן
+   הוא רק ברירת מחדל למקרה שה-JS עוד לא רץ (למשל תצוגה ראשונית לרגע לפני שהסקריפט מתחיל).*/
+.sc-status-circle{flex-shrink:0;width:56px;height:56px;border-radius:50%;padding:2px;background:#25D366;cursor:pointer;}
 .sc-status-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;border:2px solid #fff;display:block;}
 .sc-status-circle-fallback{width:100%;height:100%;border-radius:50%;border:2px solid #fff;background:var(--rose-dark);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;}
 .sc-status-viewer-overlay{position:fixed;inset:0;background:rgba(20,16,14,.95);display:none;align-items:center;justify-content:center;z-index:300;flex-direction:column;padding:20px;}
@@ -2094,12 +2101,64 @@ var scStatusItems = [];
 var scStatusIndex = 0;
 var scStatusFreelancerName = "";
 var scStatusFreelancerId = "";
+
+// מעקב "נצפה" (2026-09-03, לפי בקשה מפורשת - "כמו בווצאפ") - מקומי לדפדפן הזה בלבד
+// (localStorage, בדיוק כמו הלייקים), לא נשמר בשרת. שומר סט של id-ים של פריטי סטטוס בודדים
+// שכבר הוצגו במציג בפועל (לא רק "העיגול נלחץ" - כל פריט מסומן בנפרד ברגע שהוא באמת מוצג, ר'
+// scRenderStatusViewer למטה) - כך שאם לעצמאית יש כמה קבצים, כל פלח בטבעת מתעדכן בנפרד לפי מה
+// שכבר נצפה ומה שעדיין לא, בדיוק כמו הסטורי המחולק של WhatsApp.
+function scGetViewedStatusIds(){
+  try { return JSON.parse(localStorage.getItem("scStatusViewedIds") || "[]"); } catch (e) { return []; }
+}
+function scMarkStatusViewed(id){
+  if (!id) return;
+  var ids = scGetViewedStatusIds();
+  if (ids.indexOf(id) !== -1) return;
+  ids.push(id);
+  try { localStorage.setItem("scStatusViewedIds", JSON.stringify(ids)); } catch (e) {}
+  scRefreshStatusRings();
+}
+// בונה את צבע/עיצוב הטבעת של עיגול אחד: פריט בודד = צבע אחיד (ירוק אם לא נצפה, אפור אם כן);
+// כמה פריטים = טבעת מחולקת לפלחים שווים (conic-gradient), עם פס לבן דק מפריד בין כל שני
+// פלחים, כל פלח בצבעו לפי מצב הצפייה שלו בנפרד.
+function scStatusRingCss(items, viewedIds){
+  var n = items.length;
+  if (!n) return "#25D366";
+  var colorFor = function(item){ return viewedIds.indexOf(item.id) !== -1 ? "#c7c7c7" : "#25D366"; };
+  if (n === 1) return colorFor(items[0]);
+  var gap = 6, per = 360 / n, stops = [];
+  for (var i = 0; i < n; i++) {
+    var segStart = i * per, segEnd = (i + 1) * per;
+    var innerStart = segStart + gap / 2, innerEnd = segEnd - gap / 2;
+    stops.push("#fff " + segStart + "deg " + innerStart + "deg");
+    stops.push(colorFor(items[i]) + " " + innerStart + "deg " + innerEnd + "deg");
+    stops.push("#fff " + innerEnd + "deg " + segEnd + "deg");
+  }
+  return "conic-gradient(" + stops.join(",") + ")";
+}
+function scRefreshStatusRings(){
+  var viewedIds = scGetViewedStatusIds();
+  var circles = document.querySelectorAll(".sc-status-circle");
+  for (var i = 0; i < circles.length; i++) {
+    var el = circles[i];
+    var items = [];
+    try { items = JSON.parse(el.getAttribute("data-items") || "[]"); } catch (e) {}
+    el.style.background = scStatusRingCss(items, viewedIds);
+  }
+}
+scRefreshStatusRings();
+
 function scOpenStatusViewer(el){
   try { scStatusItems = JSON.parse(el.getAttribute("data-items") || "[]"); } catch (e) { scStatusItems = []; }
   if (!scStatusItems.length) return;
   scStatusFreelancerName = el.getAttribute("data-name") || "";
   scStatusFreelancerId = el.getAttribute("data-freelancer-id") || "";
-  scStatusIndex = 0;
+  // פותחת תמיד מהפריט הראשון שעוד לא נצפה (אם יש כזה) ולא תמיד מהראשון בסדר - בדיוק כמו
+  // בווצאפ, כדי שלא תצטרך לדפדף שוב על מה שכבר ראתה.
+  var viewedIds = scGetViewedStatusIds();
+  var firstUnseen = 0;
+  for (var i = 0; i < scStatusItems.length; i++) { if (viewedIds.indexOf(scStatusItems[i].id) === -1) { firstUnseen = i; break; } }
+  scStatusIndex = firstUnseen;
   scRenderStatusViewer();
   var overlay = document.getElementById("scStatusViewer");
   if (overlay) overlay.style.display = "flex";
@@ -2107,6 +2166,7 @@ function scOpenStatusViewer(el){
 function scRenderStatusViewer(){
   var item = scStatusItems[scStatusIndex];
   if (!item) return;
+  scMarkStatusViewed(item.id);
   var mediaWrap = document.getElementById("scStatusViewerMedia");
   if (mediaWrap) {
     mediaWrap.innerHTML = item.type === "video"
