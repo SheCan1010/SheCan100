@@ -2148,6 +2148,46 @@ function scRefreshStatusRings(){
 }
 scRefreshStatusRings();
 
+// ---- הגנת "טיוטה" על טפסי המלצה (2026-09-06) ----
+// דיווח + סרטון: לקוחה (שהיא גם עצמאית, ועברה למצב לקוחה) כתבה המלצה שלמה על עצמאית, צירפה
+// תמונה מגלריית הטלפון, לחצה "שליחה" - וקיבלה שגיאה "צריך לכתוב כמה מילים על החוויה", עם
+// התיבה ריקה מחדש. זה כנראה לא קשור לקוד של האתר עצמו: בטלפונים רבים (בעיקר עם פחות זיכרון
+// פנוי), פתיחת בורר התמונות של המכשיר (כדי לצרף תמונה) גורמת לדפדפן לפעמים לרענן את העמוד
+// ברקע כדי לפנות זיכרון - וזה מוחק כל טקסט שהיא כבר הקלידה בטופס, בלי שהיא בכלל שמה לב, לפני
+// שהיא בכלל לחצה "שליחה". אין דרך למנוע את זה בצד השרת (זו התנהגות של הדפדפן/מערכת ההפעלה),
+// אז הפתרון הוא לגבות את הטקסט כל הזמן: כל הקלדה בתיבה (ר' oninput="scSaveReviewDraft(this)"
+// ב-reviewFormHtml ו-GET /reviews) נשמרת מיד ב-localStorage של הדפדפן (שורד רענון עמוד, בניגוד
+// למצב ה-DOM), ובכל טעינת עמוד (ר' scRestoreReviewDrafts למטה) אם יש טיוטה שמורה והתיבה עדיין
+// ריקה, הטקסט חוזר אליה אוטומטית. טיוטה של המלצה שכבר הוגשה בהצלחה (data-sc-has-existing="1",
+// או הגעה עם ?ok= בכתובת - סימן שההגשה הקודמת הצליחה) נמחקת כדי שלא תופיע שוב בטעות.
+function scSaveReviewDraft(textarea){
+  var form = textarea.closest("form");
+  var key = form && form.getAttribute("data-sc-review-draft-key");
+  if (!key) return;
+  try {
+    if (textarea.value.trim()) localStorage.setItem(key, textarea.value);
+    else localStorage.removeItem(key);
+  } catch (e) {}
+}
+function scRestoreReviewDrafts(){
+  var justSucceeded = false;
+  try { justSucceeded = !!new URLSearchParams(window.location.search).get("ok"); } catch (e) {}
+  var forms = document.querySelectorAll("form[data-sc-review-draft-key]");
+  for (var i = 0; i < forms.length; i++) {
+    var form = forms[i];
+    var key = form.getAttribute("data-sc-review-draft-key");
+    var hasExisting = form.getAttribute("data-sc-has-existing") === "1";
+    var textarea = form.querySelector("textarea[name='text']");
+    if (!key || !textarea) continue;
+    if (hasExisting || justSucceeded) { try { localStorage.removeItem(key); } catch (e) {} continue; }
+    if (textarea.value.trim()) continue;
+    var draft = null;
+    try { draft = localStorage.getItem(key); } catch (e) {}
+    if (draft) textarea.value = draft;
+  }
+}
+scRestoreReviewDrafts();
+
 function scOpenStatusViewer(el){
   try { scStatusItems = JSON.parse(el.getAttribute("data-items") || "[]"); } catch (e) { scStatusItems = []; }
   if (!scStatusItems.length) return;
