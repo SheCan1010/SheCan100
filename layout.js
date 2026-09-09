@@ -805,6 +805,25 @@ form .field{margin-bottom:6px;}
 @keyframes scFlashAttention{0%,100%{transform:translateX(0);}20%{transform:translateX(-6px);}40%{transform:translateX(6px);}60%{transform:translateX(-4px);}80%{transform:translateX(4px);}}
 .flash-err.sc-flash-attention{animation:scFlashAttention .5s ease-in-out;}
 .panel{background:var(--white);border-radius:14px;padding:22px;margin-bottom:22px;box-shadow:0 2px 10px rgba(0,0,0,.05);}
+/* בלוקי "המירוץ" בדף הבית (נוסף 2026-09-09) - מספר גדול ובולט למעלה, כותרת יעד קריאה מתחתיו.
+   .race-number-primary - הדגשה נוספת למספר העצמאיות בפרט (בלוק העצמאיות), לפי בקשה מפורשת. */
+.race-panel{padding-top:28px;padding-bottom:26px;}
+.race-number{display:inline-flex;direction:ltr;align-items:center;justify-content:center;font-size:54px;font-weight:800;line-height:1;color:var(--arena);font-variant-numeric:tabular-nums;}
+.race-number-primary{font-size:68px;text-shadow:0 1px 0 rgba(166,38,91,.15);}
+.race-number-label{font-size:16px;font-weight:700;color:var(--dark);margin-top:4px;}
+.race-goal{font-size:19px;font-weight:700;line-height:1.4;margin:16px 0 8px;}
+.race-goal-label{color:var(--arena);font-weight:800;}
+.race-details-link{display:inline-block;margin-top:16px;font-size:12.5px;}
+.race-leader-link{color:inherit;text-decoration:underline;}
+@media (max-width:720px){.race-number{font-size:42px;} .race-number-primary{font-size:52px;}}
+/* "גלגל" מתגלגל למספרים בבלוקי המירוץ (odometer) - כל ספרה היא חלון קטן עם רצועת 0-9 שמוסתרת
+   מלבד ספרה אחת; מעבר לספרה הבאה מזיז את הרצועה למעלה עם טרנזישן חלק, כך שזה נראה כמו גלגל
+   מסתובב שעובר דרך הספרות שבדרך למספר הבא - במקום קפיצה יבשה של הטקסט. ר' animateNumberEntrance
+   ו-startLivePolling בסקריפט שבתוך GET /. */
+.odometer-digit{display:inline-block;overflow:hidden;height:1em;width:0.62em;position:relative;vertical-align:top;}
+.odometer-digit .odometer-strip{display:block;transition:transform .6s cubic-bezier(.25,.46,.45,.94);}
+.odometer-digit .odometer-strip span{display:block;height:1em;line-height:1;text-align:center;}
+.odometer-static{display:inline-block;}
 /* Admin dashboard: every top-level panel is collapsible (collapsed by default) so a long
    section (lots of reviews, lots of pending items) doesn't force endless scrolling - open
    state is remembered per-panel across visits via localStorage (see scSetupAdminCollapsibles). */
