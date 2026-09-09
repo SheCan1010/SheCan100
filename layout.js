@@ -1011,10 +1011,21 @@ function adCardHtml(f, d, listing) {
 // is always reserved on both sides - otherwise, whenever the two sides had an uneven number
 // of cards (or none at all on one side), the empty side would take up no space and the whole
 // main column would visibly drift toward the fuller side instead of staying centered.
+// "האם המודעה שלה מוצגת בפועל כרגע" - מקבילה ל-isFreelancerCurrentlyAdvertised ב-server.js
+// (נוסף 2026-09-09 יחד עם פרס "פרסום חינם" במרוץ ההפניות - ר' ההערה המלאה שם), משוכפלת כאן
+// כי sidebarColumnsHtml למטה (הפאנל הצדדי "עסקים ממומנים", מוזרק לכל עמוד באתר) חי ב-layout.js
+// ואין לו גישה ישירה לפונקציית התאריך של אזור הזמן הישראלי שבצד server.js. משתמשת בתאריך UTC
+// פשוט (במקום ישראל-מקומי במדויק) - הפרש של כמה שעות סביב חצות לא משנה כלום עבור "עד איזה יום"
+// מודעה בחינם, כך שאין צורך לייבא/לשכפל את כל לוגיקת אזור הזמן המדויקת בשביל זה.
+function isCurrentlyAdvertisedForSidebar(f) {
+  if (!f.isAdvertised) return false;
+  if (!f.isAdvertisedUntil) return true;
+  return new Date().toISOString().slice(0, 10) <= f.isAdvertisedUntil;
+}
 function sidebarColumnsHtml(d) {
   const eligible = (f) => f.status === "approved" && f.active !== false;
   const sponsors = d.freelancers.filter((f) => eligible(f) && f.isLeadingBusiness).map((f) => ({ f, listing: null, kind: "sponsor" }));
-  const freelancerAds = d.freelancers.filter((f) => eligible(f) && f.isAdvertised && !f.isLeadingBusiness).map((f) => ({ f, listing: null, kind: "ad" }));
+  const freelancerAds = d.freelancers.filter((f) => eligible(f) && isCurrentlyAdvertisedForSidebar(f) && !f.isLeadingBusiness).map((f) => ({ f, listing: null, kind: "ad" }));
   // An additional listing can be advertised on its own, independently of whether her main
   // profile is advertised - so this scans every approved freelancer's additionalListings too.
   const listingAds = [];

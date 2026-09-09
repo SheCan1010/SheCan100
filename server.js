@@ -1449,6 +1449,44 @@ function generateCouponCode() {
   return code;
 }
 
+// קוד VIP אישי (ר' d.vipCoupons) - אותה גישה בדיוק כמו generateCouponCode למעלה (מוודא ייחודיות
+// מול כל הקודים הקיימים), רק עם קידומת נפרדת (VIP במקום SheCan) כדי שיהיה ברור מיד בהסתכלות
+// שזה קוד מסוג אחר (פטור מתשלום, לא הטבת לקוחות רגילה).
+function generateVipCode() {
+  const d = db.load();
+  const existing = new Set((d.vipCoupons || []).map((c) => c.code).filter(Boolean));
+  let code;
+  do {
+    code = "VIP" + Math.floor(1000 + Math.random() * 9000);
+  } while (existing.has(code));
+  return code;
+}
+
+// "האם המודעה שלה מוצגת בפועל כרגע" - שונה מבדיקת f.isAdvertised הגולמית כשיש גם
+// f.isAdvertisedUntil (תאריך תפוגה, מוגדר רק כשהמודעה הוענקה כפרס "פרסום חינם" במרוץ ההפניות -
+// ר' POST /admin/referral-settings/grant-ad-prizes) - במקרה הזה המודעה נחשבת פעילה רק עד
+// (כולל) התאריך הזה, ומפסיקה "להיראות" אוטומטית אחריו בלי שספיר תצטרך לזכור לכבות אותה ידנית.
+// מודעה רגילה בתשלום (isAdvertisedUntil ריק) ממשיכה להתנהג בדיוק כמו היום - נשארת פעילה עד
+// שספיר מכבה אותה ידנית בפאנל הניהול. יש להשתמש בפונקציה הזו (ולא ב-f.isAdvertised הגולמי) בכל
+// מקום שמציג/משפיע על התצוגה הציבורית של תג "מודעה"/סינון "עסקים ממומנים" - הטוגל עצמו בניהול
+// (POST /admin/freelancer/:id/toggle-ad) ממשיך לעבוד על f.isAdvertised הגולמי כרגיל.
+function isFreelancerCurrentlyAdvertised(f) {
+  return !!f.isAdvertised && (!f.isAdvertisedUntil || israelDayKeyOffset(0) <= f.isAdvertisedUntil);
+}
+
+// רשימת "מי מובילה" גנרית לתצוגה הציבורית (בניגוד לפאנל הניהול המלא) - מחזירה top-N ממויין,
+// כולל רק מי שיש לה לפחות הפנייה אחת (בדיוק כמו freelancerReferralRanking/customerReferralRanking
+// בניהול), לשימוש בבלוקים החדשים של דף הבית (ר' GET /). לא נוגעת ב-referralStatusHtml הקיימת
+// (הפאנל האישי באזור האישי) כדי לא לסכן פיצ'ר עובד - זו רק תמצית ציבורית קטנה בנוסף.
+function publicReferralLeaders(entities, refField, nameOf, n) {
+  const counts = referralCounts(entities, refField);
+  return entities
+    .map((e) => ({ id: e.id, name: nameOf(e), count: counts[e.id] || 0 }))
+    .filter((r) => r.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, n || 4);
+}
+
 // d (optional) - when given, falls back to d.settings.defaultBusinessLogoDataUri when the
 // freelancer has neither her own photo nor her own logo (see cardPhotoHtml above for the same
 // fallback used on the grid cards). Left optional (rather than required) so the handful of
@@ -1487,7 +1525,7 @@ function freelancerCard(f, d, opts = {}) {
   if (f.availableNow) badges.push(`<span class="badge badge-available">🟢 זמינה כרגע</span>`);
   if (f.isLeadingBusiness) badges.push(`<span class="badge badge-leading">👑 עסק מוביל</span>`);
   if (f.tier === "premium") badges.push(`<span class="badge">מומלצת</span>`);
-  const cardClass = "card" + (f.isLeadingBusiness ? " card-leading" : "") + (f.isAdvertised ? " card-ad" : "");
+  const cardClass = "card" + (f.isLeadingBusiness ? " card-leading" : "") + (isFreelancerCurrentlyAdvertised(f) ? " card-ad" : "");
   // Search by name should match either her business name or her own personal name, not
   // just whichever one happens to be shown - a customer typing the freelancer's own name
   // (rather than the business name) was getting zero matches before this fix.
@@ -2081,7 +2119,7 @@ function route(method, pattern, handler) {
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update126 - 2026-09-06 - תיקון באג שדווח בסרטון: עצמאית שעברה למצב לקוחה ניסתה לכתוב המלצה, הקלידה טקסט, צירפה תמונה - ואז נתקלה בהודעת שגיאה 'צריך לכתוב כמה מילים על החוויה' למרות שכן כתבה טקסט. הסיבה הסבירה ביותר: בטלפונים ניידים רבים, פתיחת בורר התמונות של המכשיר (כדי לצרף תמונה לביקורת) גורמת לדפדפן לרענן את העמוד ברקע כדי לפנות זיכרון - וזה מוחק כל טקסט שכבר הוקלד בטופס, בלי שהמשתמשת שמה לב, עוד לפני שהיא לוחצת 'שליחה'. זו התנהגות של הדפדפן/מערכת ההפעלה ולא ניתן למנוע אותה בצד השרת - בדיקת הקוד בשרת אישרה שהלוגיקה שם תקינה ודוחה נכון רק המלצות שבאמת ריקות. הפתרון: כל טקסט שמוקלד בתיבת ההמלצה (גם בעמוד עסק וגם בעמוד '/reviews' הכללי) נשמר אוטומטית ובאופן שקוף ב-localStorage של הדפדפן בכל הקלדה; אם העמוד נטען מחדש בלי כוונה והתיבה ריקה, הטקסט חוזר אליה אוטומטית מהטיוטה השמורה. ברגע שההמלצה נשלחת בהצלחה (או אם כבר יש המלצה קיימת לעריכה), הטיוטה נמחקת כדי שלא תופיע שוב בטעות בביקור הבא. נבדק קצה-לקצה עם Playwright: הקלדה ואז רענון עמוד (סימולציה למקרה שדווח) - הטקסט חוזר נכון לתיבה; שליחה מוצלחת של המלצה - הטיוטה נמחקת ולא מופיעה שוב בביקור חוזר (מוצג נכון הטקסט הקיים של ההמלצה שכבר נשלחה); טופס ההמלצה הכללי בעמוד '/reviews' נבדק בנפרד ועובד באותה צורה. וגם (מ-update125) - עיצוב פס הסטטוסים כמו בווצאפ, לפי בקשה מפורשת: (1) רקע הפס הרבה יותר שקוף (היה כמעט אטום). (2) הטבעת סביב כל עיגול עכשיו דינמית - ירוק = יש עוד סטטוס של אותה עצמאית שעדיין לא נצפה בדפדפן הזה, אפור-בהיר = הכל כבר נצפה; אם יש לה כמה קבצים בו-זמנית, הטבעת מחולקת לפלחים (אחד לכל קובץ, עם פס לבן מפריד ביניהם) שכל אחד מתעדכן בנפרד ברגע שהיא צופה בו בפועל בתוך המציג - בדיוק כמו הסטורי המחולק של WhatsApp. פתיחת עיגול קופצת ישר לפריט הראשון שעדיין לא נצפה. מעקב הצפייה מקומי לדפדפן (localStorage, אותו מנגנון כמו הלייקים) ולא נשמר בשרת. נבדק ויזואלית עם צילומי מסך - טבעת ירוקה מלאה לפני צפייה, פלח נהיה אפור אחרי צפייה בפריט שלו, וכל הטבעת אפורה אחרי שנצפו כל הפריטים. וגם (מ-update124) - תיקון עיצוב: כפתור 'לתמיכה לחצי' (הכפתור הצף הקבוע בפינה הימנית-תחתונה) היה מסתיר חלק מהעיגולים של פס הסטטוסים (גם בגרסת 'תחתית' וגם בגרסת 'צד ימין') - עכשיו יש תמיד מרווח שמור בין הכפתור לפס, כך שהעיגולים לא נכנסים לשטח שלו יותר, בשני המיקומים. נבדק ויזואלית (צילום מסך) בשני המצבים אחרי התיקון. וגם (מ-update123) - (1) מעבר בין מצב לקוחה/עצמאית: כשעצמאית מחוברת כרגע כמצב לקוחה וממשיכה לקבל הודעות כעצמאית (הודעות צ'אט מלקוחות, הודעות מהנהלה) - עכשיו מופיע לה בתפריט העליון כפתור 'הודעות כעצמאית' עם מספר, שמעביר אותה בלחיצה אחת ישר לדשבורד שלה כדי לענות. בנוסף, בזירה - אם יש שאלה בתחום שלה שהיא עדיין לא ענתה עליה והיא כרגע מחוברת כלקוחה, מוצג לה 'זו שאלה בתחום שלך' עם כפתור מעבר מיידי למצב עצמאית שמחזיר אותה בדיוק לאותו עמוד כדי לענות (בלי לאבד את המקום). (2) שדרוג עצמי לרמת 'מומלצת': עצמאית ברמת 'בסיסית' יכולה עכשיו ללחוץ על כפתור באזור האישי שלה כדי לבקש שדרוג - הבקשה מופיעה בפאנל ייעודי חדש בניהול ('בקשות שדרוג לרמת מומלצת') שם מאשרים אחרי שסידרתן תשלום מולה (עדיין תהליך ידני, כמו כל תשלום אחר באתר כרגע). (3) תיקון עיצוב בעמוד המודליסטיות: כפתורי 'לצפייה בפרופיל' בכרטיסיות עכשיו תמיד מיושרים באותו גובה בשורה (לא קופצים למעלה/למטה לפי אורך הטקסט מעליהם), והטקסט ההסברי מעל הכרטיסיות קוצר וצומצם. וגם (מ-update122) - השלמות למועדון YouCan: (1) באזור האישי של הלקוחה (/account) נוסף פאנל 'מועדון YouCan' שמראה את הסטטוס שלה בזמן אמת - חברה פעילה (ועם תאריך הצטרפות), ממתינה לאישור, או לא חברה (עם כפתור הצטרפות) - מוצג רק כשהמועדון פעיל בניהול. (2) נוספה אפשרות ביטול עצמית ללקוחה (בעמוד /youcan/join, גם מקושר מהפאנל באזור האישי) - הביטול נכנס לתוקף מיידית. (3) נוספה מדיניות מועדון מפורשת: ביטול הוא סופי ולא מתחדש אוטומטית - כדי לחזור לחברות צריך להצטרף מחדש ולשלם מחדש. הטקסט הזה מוצג גם בטופס ההצטרפות עם צ'קבוקס אישור חובה (נשמר בתאריך על הלקוחה, youCanPolicyAgreedAt) וגם ליד כפתור הביטול לחברה פעילה. נבדק קצה-לקצה: בקשת הצטרפות בלי לסמן את הצ'קבוקס לא עוברת; עם הסימון - נשמר תאריך האישור, אישור ידני בניהול הופך לחברות פעילה, מופיע נכון בפאנל באזור האישי, וביטול עצמי מאפס את הסטטוס בחזרה למצב 'לא חברה' (מחייב תהליך הצטרפות ותשלום חדשים לחידוש). וגם (מ-update121) - (1) מועדון YouCan: אפשר להגביל את פעולת 'לצפייה בקוד קופון' בלבד (שאר האתר פתוח כרגיל) לחברות מועדון בתשלום (13 ש\"ח לחודש, ניתן לעריכה) - מתג הפעלה/כיבוי בניהול, כרגע (בלי סליקה מחוברת) זה תהליך ידני: לקוחה רואה הסבר קצר + הוראות תשלום (ביט/העברה, ממלאים בניהול) ושולחת בקשת הצטרפות שאת מאשרת ידנית; ברגע שיהיה חיבור סליקה אמיתי, מספיק להדביק קישור בניהול והכפתור יוביל ישר לשם. (2) סטטוסים 24 שעות לעצמאיות 'מומלצות': תמונה/סרטון שנעלם אוטומטית אחרי 24 שעות, עד 3 בו-זמנית, מוצג בעיגולים בפס קבוע באתר (תחתית או צד ימין - ניתן לבחירה/שינוי בניהול), עם לב, שיתוף, וכפתור מעבר לפרופיל; מתג הפעלה/כיבוי + פאנל פיקוח על כל הסטטוסים הפעילים בניהול. וגם (מ-update120): (1) פינת ההתייעצויות בזירה: נוסף מתג ניהול (פאנל 'פינת ההתייעצויות בזירה') להצגה/הסתרה שלה בכלל מהאתר הציבורי, בלי למחוק שום תוכן קיים - שימושי כדי להוריד אותה זמנית בזמן שמחכים לתשובת נטפרי. (2) חיבור אוטומטי בין חשבון עצמאית לחשבון לקוחה: מעכשיו כל עצמאית שנרשמת מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל/סיסמה), וגם כל העצמאיות הקיימות קיבלו את זה רטרואקטיבית - כדי שכפתור 'מעבר למצב לקוחה' תמיד יעבוד. בנוסף, בכל מקום באתר שבו רק לקוחה יכולה לפעול (כתיבת המלצה, שליחת הודעה, תגובה בזירה/בסיפורים/בקהילה) ועצמאית מחוברת מנסה - היא רואה עכשיו כפתור 'מעבר למצב לקוחה' שמעביר אותה בלחיצה אחת (בלי סיסמה) וחוזר אותה בדיוק לאותו מקום, במקום לשלוח אותה להתחבר מחדש מהתחלה. וגם (מ-update119): תיקון שני באגים בסיפור השראה השבועי: (1) תור הרוטציה האוטומטי עכשיו ממויין לפי מתי כל סיפור עצמו אושר (approvedAt), לא לפי מתי העצמאית שמאחוריו נרשמה לאתר - זה היה גורם לסיפורים להיראות 'לא לפי סדר'. (2) התאריך של 'הסיפור הבא יתעדכן ב-' עכשיו מציג גם שעה מדויקת (20:00) וגם מחושב באזור זמן ישראל במפורש, ולא רק תאריך לפי אזור הזמן של השרת (UTC ב-Render) - זה מה שגרם לתחושה שהסיפור 'לא התחלף' למרות שהתאריך המוצג כבר הגיע, כשבפועל השעה המדויקת פשוט עוד לא הגיעה. שימו לב: יום ההחלפה עצמו עדיין יכול לנחות בכל יום בשבוע אם משך הרוטציה בניהול (storyRotationDays) אינו כפולה של 7 - זה נשאר מכוון, לפי אישור מפורש. וגם (מ-update118): שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update127 - 2026-09-09 - 4 עדכונים גדולים לפי בקשה מפורשת: (1) קודי VIP אישיים לחברות ומשפחה קרובה - בפאנל ניהול חדש ('קודי VIP אישיים') את יוצרת קוד ייחודי על שם מסוימת (קוד אוטומטי או מותאם אישית שלך), עם טבלה מסודרת של שם+קוד+סטטוס מימוש. הקוד ניתן להזנה בטופס ההצטרפות (/join) - ברגע שעצמאית מזינה קוד תקף היא פטורה לצמיתות מדמי ההצטרפות (paymentStatus הופך ישר ל-'פעיל'), והקוד ננעל לצמיתות לאותו חשבון בלבד ולא ניתן לשימוש חוזר על ידי אף אחת אחרת (גם לא אם תנסה להזין אותו שוב). יש גם שדה גיבוי באזור האישי שלה (רלוונטי רק אם תשלום נשאר ממתין אחרי שכבר אושרה). (2) שני פאנלים חדשים בניהול: 'עצמאיות וצפיות לפי תחום' (טבלה של כמות עצמאיות מאושרות + סה'כ צפיות בפרופילים, לכל תחום) ופאנל 'קישור לשיתוף עם מעקב מקור' הקיים נשאר כמו שהיה. (3) שני בלוקים חדשים בדף הבית, בנוסף לפאנל 'הקהילה שלנו במספרים' הקיים (לא במקומו) - בלוק 'מרוץ העצמאיות' (יעד 700+ עצמאיות, ניתן לעריכה בניהול) עם מי מובילה כרגע וקישור אישי לשיתוף (או כפתור התחברות כעצמאית אם לא מחוברת), ובלוק 'מרוץ הלקוחות' (יעד 1000 לקוחות, ניתן לעריכה) עם טבלת 4 המובילות וקישור אישי לשיתוף. שני הבלוקים מקושרים לעמוד הסבר קצר וחדש (/race) כדי שדף הבית עצמו יישאר קצר. שני הבלוקים מוצגים/מוסתרים לפי אותם מתגי הפעלה קיימים של כל תחרות (בפאנל 'הגדרות תחרויות הפניות' בניהול). (4) שינוי מבנה הפרס במרוץ ההפניות של העצמאיות - לפי בקשה מפורשת, 3 המקומות הראשונים (לא רק הראשונה) זוכות עכשיו ב'פרסום חינם' באתר: מקום 1 - חודש, מקום 2 - שבועיים, מקום 3 - שבוע. יש טופס חדש בפאנל 'מרוץ ההפניות של העצמאיות' בניהול לבחירת 3 המקומות, וזה מדליק אוטומטית את תכונת 'מודעה פעילה' הקיימת (התג 📣 שכבר מופיע בכל האתר) עם תאריך תפוגה אוטומטי לפי המקום - כשהתאריך עובר, המודעה נעלמת לבד בלי שתצטרכי לזכור לכבות אותה, בכל מקום שהיא מופיעה באתר (כרטיסיות, עמוד פרופיל, הדשבורד שלה, וגם הפאנל הצדדי של עסקים ממומנים). נבדק קצה-לקצה: יצירת קוד VIP, מימוש בהרשמה (כולל דחיית קוד לא תקף/כבר מומש), הענקת פרס פרסום חינם ל-3 מקומות ווידוא שהתג מופיע נכון בכל מקום, ווידוא שהתג נעלם אוטומטית אחרי תאריך התפוגה (כולל בפאנל הצדדי). וגם (מ-update126) - תיקון באג שדווח בסרטון: עצמאית שעברה למצב לקוחה ניסתה לכתוב המלצה, הקלידה טקסט, צירפה תמונה - ואז נתקלה בהודעת שגיאה 'צריך לכתוב כמה מילים על החוויה' למרות שכן כתבה טקסט. הסיבה הסבירה ביותר: בטלפונים ניידים רבים, פתיחת בורר התמונות של המכשיר (כדי לצרף תמונה לביקורת) גורמת לדפדפן לרענן את העמוד ברקע כדי לפנות זיכרון - וזה מוחק כל טקסט שכבר הוקלד בטופס, בלי שהמשתמשת שמה לב, עוד לפני שהיא לוחצת 'שליחה'. זו התנהגות של הדפדפן/מערכת ההפעלה ולא ניתן למנוע אותה בצד השרת - בדיקת הקוד בשרת אישרה שהלוגיקה שם תקינה ודוחה נכון רק המלצות שבאמת ריקות. הפתרון: כל טקסט שמוקלד בתיבת ההמלצה (גם בעמוד עסק וגם בעמוד '/reviews' הכללי) נשמר אוטומטית ובאופן שקוף ב-localStorage של הדפדפן בכל הקלדה; אם העמוד נטען מחדש בלי כוונה והתיבה ריקה, הטקסט חוזר אליה אוטומטית מהטיוטה השמורה. ברגע שההמלצה נשלחת בהצלחה (או אם כבר יש המלצה קיימת לעריכה), הטיוטה נמחקת כדי שלא תופיע שוב בטעות בביקור הבא. נבדק קצה-לקצה עם Playwright: הקלדה ואז רענון עמוד (סימולציה למקרה שדווח) - הטקסט חוזר נכון לתיבה; שליחה מוצלחת של המלצה - הטיוטה נמחקת ולא מופיעה שוב בביקור חוזר (מוצג נכון הטקסט הקיים של ההמלצה שכבר נשלחה); טופס ההמלצה הכללי בעמוד '/reviews' נבדק בנפרד ועובד באותה צורה. וגם (מ-update125) - עיצוב פס הסטטוסים כמו בווצאפ, לפי בקשה מפורשת: (1) רקע הפס הרבה יותר שקוף (היה כמעט אטום). (2) הטבעת סביב כל עיגול עכשיו דינמית - ירוק = יש עוד סטטוס של אותה עצמאית שעדיין לא נצפה בדפדפן הזה, אפור-בהיר = הכל כבר נצפה; אם יש לה כמה קבצים בו-זמנית, הטבעת מחולקת לפלחים (אחד לכל קובץ, עם פס לבן מפריד ביניהם) שכל אחד מתעדכן בנפרד ברגע שהיא צופה בו בפועל בתוך המציג - בדיוק כמו הסטורי המחולק של WhatsApp. פתיחת עיגול קופצת ישר לפריט הראשון שעדיין לא נצפה. מעקב הצפייה מקומי לדפדפן (localStorage, אותו מנגנון כמו הלייקים) ולא נשמר בשרת. נבדק ויזואלית עם צילומי מסך - טבעת ירוקה מלאה לפני צפייה, פלח נהיה אפור אחרי צפייה בפריט שלו, וכל הטבעת אפורה אחרי שנצפו כל הפריטים. וגם (מ-update124) - תיקון עיצוב: כפתור 'לתמיכה לחצי' (הכפתור הצף הקבוע בפינה הימנית-תחתונה) היה מסתיר חלק מהעיגולים של פס הסטטוסים (גם בגרסת 'תחתית' וגם בגרסת 'צד ימין') - עכשיו יש תמיד מרווח שמור בין הכפתור לפס, כך שהעיגולים לא נכנסים לשטח שלו יותר, בשני המיקומים. נבדק ויזואלית (צילום מסך) בשני המצבים אחרי התיקון. וגם (מ-update123) - (1) מעבר בין מצב לקוחה/עצמאית: כשעצמאית מחוברת כרגע כמצב לקוחה וממשיכה לקבל הודעות כעצמאית (הודעות צ'אט מלקוחות, הודעות מהנהלה) - עכשיו מופיע לה בתפריט העליון כפתור 'הודעות כעצמאית' עם מספר, שמעביר אותה בלחיצה אחת ישר לדשבורד שלה כדי לענות. בנוסף, בזירה - אם יש שאלה בתחום שלה שהיא עדיין לא ענתה עליה והיא כרגע מחוברת כלקוחה, מוצג לה 'זו שאלה בתחום שלך' עם כפתור מעבר מיידי למצב עצמאית שמחזיר אותה בדיוק לאותו עמוד כדי לענות (בלי לאבד את המקום). (2) שדרוג עצמי לרמת 'מומלצת': עצמאית ברמת 'בסיסית' יכולה עכשיו ללחוץ על כפתור באזור האישי שלה כדי לבקש שדרוג - הבקשה מופיעה בפאנל ייעודי חדש בניהול ('בקשות שדרוג לרמת מומלצת') שם מאשרים אחרי שסידרתן תשלום מולה (עדיין תהליך ידני, כמו כל תשלום אחר באתר כרגע). (3) תיקון עיצוב בעמוד המודליסטיות: כפתורי 'לצפייה בפרופיל' בכרטיסיות עכשיו תמיד מיושרים באותו גובה בשורה (לא קופצים למעלה/למטה לפי אורך הטקסט מעליהם), והטקסט ההסברי מעל הכרטיסיות קוצר וצומצם. וגם (מ-update122) - השלמות למועדון YouCan: (1) באזור האישי של הלקוחה (/account) נוסף פאנל 'מועדון YouCan' שמראה את הסטטוס שלה בזמן אמת - חברה פעילה (ועם תאריך הצטרפות), ממתינה לאישור, או לא חברה (עם כפתור הצטרפות) - מוצג רק כשהמועדון פעיל בניהול. (2) נוספה אפשרות ביטול עצמית ללקוחה (בעמוד /youcan/join, גם מקושר מהפאנל באזור האישי) - הביטול נכנס לתוקף מיידית. (3) נוספה מדיניות מועדון מפורשת: ביטול הוא סופי ולא מתחדש אוטומטית - כדי לחזור לחברות צריך להצטרף מחדש ולשלם מחדש. הטקסט הזה מוצג גם בטופס ההצטרפות עם צ'קבוקס אישור חובה (נשמר בתאריך על הלקוחה, youCanPolicyAgreedAt) וגם ליד כפתור הביטול לחברה פעילה. נבדק קצה-לקצה: בקשת הצטרפות בלי לסמן את הצ'קבוקס לא עוברת; עם הסימון - נשמר תאריך האישור, אישור ידני בניהול הופך לחברות פעילה, מופיע נכון בפאנל באזור האישי, וביטול עצמי מאפס את הסטטוס בחזרה למצב 'לא חברה' (מחייב תהליך הצטרפות ותשלום חדשים לחידוש). וגם (מ-update121) - (1) מועדון YouCan: אפשר להגביל את פעולת 'לצפייה בקוד קופון' בלבד (שאר האתר פתוח כרגיל) לחברות מועדון בתשלום (13 ש\"ח לחודש, ניתן לעריכה) - מתג הפעלה/כיבוי בניהול, כרגע (בלי סליקה מחוברת) זה תהליך ידני: לקוחה רואה הסבר קצר + הוראות תשלום (ביט/העברה, ממלאים בניהול) ושולחת בקשת הצטרפות שאת מאשרת ידנית; ברגע שיהיה חיבור סליקה אמיתי, מספיק להדביק קישור בניהול והכפתור יוביל ישר לשם. (2) סטטוסים 24 שעות לעצמאיות 'מומלצות': תמונה/סרטון שנעלם אוטומטית אחרי 24 שעות, עד 3 בו-זמנית, מוצג בעיגולים בפס קבוע באתר (תחתית או צד ימין - ניתן לבחירה/שינוי בניהול), עם לב, שיתוף, וכפתור מעבר לפרופיל; מתג הפעלה/כיבוי + פאנל פיקוח על כל הסטטוסים הפעילים בניהול. וגם (מ-update120): (1) פינת ההתייעצויות בזירה: נוסף מתג ניהול (פאנל 'פינת ההתייעצויות בזירה') להצגה/הסתרה שלה בכלל מהאתר הציבורי, בלי למחוק שום תוכן קיים - שימושי כדי להוריד אותה זמנית בזמן שמחכים לתשובת נטפרי. (2) חיבור אוטומטי בין חשבון עצמאית לחשבון לקוחה: מעכשיו כל עצמאית שנרשמת מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל/סיסמה), וגם כל העצמאיות הקיימות קיבלו את זה רטרואקטיבית - כדי שכפתור 'מעבר למצב לקוחה' תמיד יעבוד. בנוסף, בכל מקום באתר שבו רק לקוחה יכולה לפעול (כתיבת המלצה, שליחת הודעה, תגובה בזירה/בסיפורים/בקהילה) ועצמאית מחוברת מנסה - היא רואה עכשיו כפתור 'מעבר למצב לקוחה' שמעביר אותה בלחיצה אחת (בלי סיסמה) וחוזר אותה בדיוק לאותו מקום, במקום לשלוח אותה להתחבר מחדש מהתחלה. וגם (מ-update119): תיקון שני באגים בסיפור השראה השבועי: (1) תור הרוטציה האוטומטי עכשיו ממויין לפי מתי כל סיפור עצמו אושר (approvedAt), לא לפי מתי העצמאית שמאחוריו נרשמה לאתר - זה היה גורם לסיפורים להיראות 'לא לפי סדר'. (2) התאריך של 'הסיפור הבא יתעדכן ב-' עכשיו מציג גם שעה מדויקת (20:00) וגם מחושב באזור זמן ישראל במפורש, ולא רק תאריך לפי אזור הזמן של השרת (UTC ב-Render) - זה מה שגרם לתחושה שהסיפור 'לא התחלף' למרות שהתאריך המוצג כבר הגיע, כשבפועל השעה המדויקת פשוט עוד לא הגיעה. שימו לב: יום ההחלפה עצמו עדיין יכול לנחות בכל יום בשבוע אם משך הרוטציה בניהול (storyRotationDays) אינו כפולה של 7 - זה נשאר מכוון, לפי אישור מפורש. וגם (מ-update118): שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -2122,8 +2160,8 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   // Whoever has the most approved recommendations shows up first, in descending order -
   // applied wherever freelancers are listed (home, search, deals), per explicit request.
   const byReviewCountDesc = (a, b) => reviewCountFor(d, b.id) - reviewCountFor(d, a.id);
-  const featured = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && f.tier === "premium" && !f.isLeadingBusiness && !f.isAdvertised).slice().sort(byReviewCountDesc).slice(0, 6);
-  const recentBasic = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && f.tier !== "premium" && !f.isLeadingBusiness && !f.isAdvertised).slice().sort(byReviewCountDesc).slice(0, 6);
+  const featured = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && f.tier === "premium" && !f.isLeadingBusiness && !isFreelancerCurrentlyAdvertised(f)).slice().sort(byReviewCountDesc).slice(0, 6);
+  const recentBasic = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && f.tier !== "premium" && !f.isLeadingBusiness && !isFreelancerCurrentlyAdvertised(f)).slice().sort(byReviewCountDesc).slice(0, 6);
   const shown = [...featured, ...recentBasic].slice(0, 6);
   const siteReviews = d.reviews.filter((r) => r.type === "site" && r.status === "approved").slice(-3).reverse();
 
@@ -2140,6 +2178,25 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const weeklyLikeCount = weekly.freelancer ? (weekly.freelancer.weeklyQuoteLikeCount || 0) : (d.settings.weeklyMessageLikeCount || 0);
   const currentStory = getCurrentStory(d);
   const currentStoryFreelancer = currentStory ? d.freelancers.find((x) => x.id === currentStory.freelancerId) : null;
+
+  // ---- בלוקי "מרוץ" חדשים בדף הבית (נוסף 2026-09-09, לפי בקשה מפורשת) - בנוסף לפאנל "הקהילה
+  // שלנו במספרים" הקיים למטה (לא במקומו, לפי אישור מפורש), כל אחד מוצג/מוסתר לפי בדיוק אותו
+  // טוגל שכבר שולט על התחרות המקבילה באזור האישי (freelancerReferralContestActive/
+  // customerReferralContestActive) - בלי טוגל נפרד חדש. ר' publicReferralLeaders למעלה בקובץ.
+  const approvedActiveFreelancersCount = d.freelancers.filter((f) => f.status === "approved" && f.active !== false).length;
+  const registeredCustomersCount = d.customers.length;
+  const freelancerRaceLeader = publicReferralLeaders(d.freelancers, "referredByFreelancerId", (f) => f.businessName || f.name, 1)[0] || null;
+  const customerRaceLeaders = publicReferralLeaders(d.customers, "referredByCustomerId", (c) => c.name, 4);
+  const isFreelancerSession = ctx.session && ctx.session.role === "freelancer";
+  const isCustomerSession = ctx.session && ctx.session.role === "customer";
+  const myFreelancerRaceLink = isFreelancerSession ? `${getOrigin(req)}/join?ref=${ctx.session.id}` : "";
+  const myCustomerRaceLink = isCustomerSession ? `${getOrigin(req)}/signup?ref=${ctx.session.id}` : "";
+  const freelancerRaceCtaHtml = isFreelancerSession
+    ? `<div class="referral-link-row"><input type="text" id="scHomeFreelancerRefLink" value="${esc(myFreelancerRaceLink)}" readonly /><button type="button" class="btn btn-small" onclick="scCopyLink('scHomeFreelancerRefLink')">העתקת קישור</button></div>`
+    : `<a class="btn btn-small btn-outline" href="/login">התחברות כעצמאית לקבלת קישור אישי לשיתוף</a>`;
+  const customerRaceCtaHtml = isCustomerSession
+    ? `<div class="referral-link-row"><input type="text" id="scHomeCustomerRefLink" value="${esc(myCustomerRaceLink)}" readonly /><button type="button" class="btn btn-small" onclick="scCopyLink('scHomeCustomerRefLink')">העתקת קישור</button></div>`
+    : `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"><a class="btn btn-small btn-outline" href="/login">התחברות כלקוחה</a><a class="btn btn-small btn-outline" href="/signup">הרשמה</a></div>`;
 
   const body = `
       ${currentStoryFreelancer ? `
@@ -2221,6 +2278,30 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         <p class="muted">מקום שבו כל עצמאית מוצאת את הבית העסקי שלה. הצטרפי אלינו, הציגי את העסק שלך בקלות, ותני ללקוחות הבאות למצוא אותך בדיוק בזמן הנכון.</p>
         <a class="btn" href="/join">ספרי לי עוד</a>
       </section>
+
+      ${d.settings.freelancerReferralContestActive ? `
+      <section class="panel" style="text-align:center;margin-top:30px;">
+        <p class="muted" style="margin:0 0 6px;font-size:14px;">${registeredCustomersCount}+ לקוחות רשומות &nbsp;·&nbsp; ${approvedActiveFreelancersCount}+ עצמאיות כבר איתנו</p>
+        <h2 class="section-title" style="margin-top:0;">היעד שלנו: ${esc(String(d.settings.customerRaceGoal || 1000))}+ לקוחות, ${esc(String(d.settings.freelancerRaceGoal || 700))}+ עצמאיות - מירוץ ${esc(String(d.settings.freelancerRaceGoal || 700))} יוצא לדרך! 🚀</h2>
+        <p class="muted">שתפי את הקישור האישי שלך ועזרי לנו להגיע ליעד. על כל עצמאית שנרשמת דרכך - 10 נקודות! 3 המקומות הראשונים זוכות בפרסום חינם ב-SheCan.</p>
+        <a href="/race#freelancers" style="font-size:12.5px;">מה זה המירוץ? לפרטים ←</a>
+        <p style="margin-top:14px;font-weight:700;">${freelancerRaceLeader ? `מובילה כרגע: ${esc(freelancerRaceLeader.name)} 👑` : "עדיין אין מי שמובילה - זו ההזדמנות שלך!"}</p>
+        <div style="margin-top:10px;">${freelancerRaceCtaHtml}</div>
+      </section>` : ""}
+
+      ${d.settings.customerReferralContestActive ? `
+      <section class="panel" style="text-align:center;margin-top:30px;">
+        <p class="muted" style="margin:0 0 6px;font-size:14px;">${registeredCustomersCount}+ לקוחות רשומות כבר איתנו</p>
+        <h2 class="section-title" style="margin-top:0;">היעד שלנו: ${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות! מירוץ ${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות בעיצומו! 🚀</h2>
+        <p class="muted">שתפי את SheCan עם חברות והגדילי את הסיכוי שלך לזכות. 4 פרסים שווים מחכים למובילות!</p>
+        <a href="/race#customers" style="font-size:12.5px;">מה זה המירוץ? לפרטים ←</a>
+        ${customerRaceLeaders.length ? `
+        <div class="muted" style="font-size:13px;margin:12px 0;line-height:1.8;">
+          ${customerRaceLeaders.map((r, i) => `<div>${i + 1}. ${esc(r.name)} - ${r.count}${i === 0 ? " 👑" : ""}</div>`).join("")}
+        </div>
+        <p class="muted" style="font-size:11.5px;">*המובילות נקבעות לפי מספר הלקוחות שהצטרפו דרכן.</p>` : `<p class="muted" style="margin-top:10px;">עדיין אין מי שמובילה - זו ההזדמנות שלך!</p>`}
+        <div style="margin-top:10px;">${customerRaceCtaHtml}</div>
+      </section>` : ""}
 
       ${d.settings.showPublicStats ? `
       <section class="panel" style="text-align:center;margin-top:30px;">
@@ -2639,7 +2720,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const heroBadges = [
     f.availableNow ? `<span class="badge badge-available">🟢 זמינה כרגע</span>` : "",
     f.isLeadingBusiness ? `<span class="badge badge-leading">👑 עסק מוביל</span>` : "",
-    f.isAdvertised ? `<span class="badge badge-ad">📣 מודעה</span>` : "",
+    isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">📣 מודעה</span>` : "",
     f.tier === "premium" ? `<span class="badge">מומלצת</span>` : "",
     f.offersOnline ? `<span class="badge badge-outline">💻 שירות אונליין</span>` : "",
     f.offersHomeVisit ? `<span class="badge badge-outline">🚗 מגיעה אלייך</span>` : "",
@@ -5712,6 +5793,9 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן." required>${esc(p.dealText || "")}</textarea>
     <label>🌸 איזו רמה מתאימה לך?
     <select name="tier"><option value="basic" ${p.tier !== "premium" ? "selected" : ""}>בסיסית</option><option value="premium" ${p.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
+    ${charging ? `
+    <label>יש לך קוד VIP? הזיני כאן ופטרי את עצמך מהתשלום (אופציונלי)
+    <input type="text" name="vipCode" value="${esc(p.vipCode || "")}" placeholder="לדוגמה: VIP1234" /></label>` : ""}
 
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
     <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לך (בזירה או במסר), כשלקוחה מתעניינת פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בזירה בתחום שלך.</p>
@@ -5860,6 +5944,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       offersHomeVisit: body.get("offersHomeVisit") === "1", instagram: body.get("instagram"),
       portfolioUrl: body.get("portfolioUrl"), description: body.get("description"), dealText: body.get("dealText"),
       tier: body.get("tier"), wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+      vipCode: body.get("vipCode"),
       publicListingConsent: body.get("publicListingConsent") === "1",
       howHeardChoice: body.get("howHeardChoice"), howHeardBusinessName: body.get("howHeardBusinessName"),
       // Preserve whatever she'd already typed into the inspiration-story questions too, so a
@@ -5899,6 +5984,17 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     .filter((q, i) => (body.get(`storyAnswer${i}`) || "").trim()).length;
   if (joinStoryAnswersCount > 0 && joinStoryAnswersCount < joinStoryMin) {
     return rerenderWithError(d, `סיפור ההשראה - אם מתחילים לכתוב אותו צריך לענות על לפחות ${joinStoryMin} שאלות (ענית כרגע על ${joinStoryAnswersCount}). אפשר גם להשאיר את כל השאלות ריקות כרגע ולדלג - תמיד אפשר לכתוב את זה מאוחר יותר באזור האישי.`);
+  }
+  // קוד VIP אישי (ר' d.vipCoupons, ההערה המלאה ב-db.js) - נבדק כאן, לפני יצירת הפרופיל, כי
+  // האישור הידני של המנהלת (POST /admin/freelancer/:id/approve) הופך pending_payment ל-active
+  // אוטומטית באותו רגע - כלומר עד שהיא בכלל מאושרת ויכולה להתחבר לדשבורד שלה, כבר "מאוחר מדי"
+  // לממש שם קוד שנועד למנוע את התשלום מלכתחילה. לכן זה קורה כבר כאן בהרשמה, ולא (רק) בדשבורד.
+  const rawVipCode = (body.get("vipCode") || "").trim().toUpperCase();
+  let vipCoupon = null;
+  if (rawVipCode) {
+    vipCoupon = (d.vipCoupons || []).find((c) => (c.code || "").toUpperCase() === rawVipCode);
+    if (!vipCoupon) return rerenderWithError(d, "קוד ה-VIP לא נמצא - בדקי שהקלדת אותו נכון, או השאירי את השדה ריק.");
+    if (vipCoupon.redeemedByFreelancerId) return rerenderWithError(d, "קוד ה-VIP הזה כבר מומש בעבר ולא ניתן לשימוש חוזר.");
   }
   const id = db.nextId("freelancer");
   const charging = d.settings.chargingEnabled;
@@ -5951,13 +6047,19 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     tier: body.get("tier") === "premium" ? "premium" : "basic",
     tierUpgradeRequestedAt: null,
     joinType: charging ? "regular" : "founding",
-    paymentStatus: charging ? "pending_payment" : "free",
-    isLeadingBusiness: false, isAdvertised: false, adPaymentStatus: "none",
+    paymentStatus: vipCoupon ? "active" : (charging ? "pending_payment" : "free"),
+    isLeadingBusiness: false, isAdvertised: false, isAdvertisedUntil: null, adPaymentStatus: "none",
     viewCount: 0, couponRevealCount: 0, pushSubscriptions: [],
     referredByFreelancerId, welcomePopupSeen: false,
     status: "pending", createdAt: new Date().toISOString(),
     siteVisitCount: 0,
   });
+  // נועלת את קוד ה-VIP לצמיתות על הפרופיל החדש הזה - ר' ההערה המלאה למעלה ליד הבדיקה.
+  if (vipCoupon) {
+    vipCoupon.redeemedByFreelancerId = id;
+    vipCoupon.redeemedFreelancerName = body.get("businessName") || body.get("name") || "";
+    vipCoupon.redeemedAt = new Date().toISOString();
+  }
   // מקשר לה מיד גם חשבון לקוחה תואם (ר' ensureLinkedCustomerAccount למעלה) - לפני ה-save היחיד
   // כאן, כדי לא להוסיף כתיבה נפרדת לדיסק.
   ensureLinkedCustomerAccount(d, d.freelancers.find((x) => x.id === id));
@@ -6790,8 +6892,14 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   <div class="panel">
     ${f.joinType === "founding" ? `<span class="founding-badge">מייסדת ✦</span> ` : ""}
     ${f.isLeadingBusiness ? `<span class="badge badge-leading">👑 נותנת חסות</span> ` : ""}
-    ${f.isAdvertised ? `<span class="badge badge-ad">📣 מודעה פעילה</span> ` : ""}
+    ${isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">📣 מודעה פעילה${f.isAdvertisedUntil ? ` (פרס מרוץ ההפניות, עד ${esc(f.isAdvertisedUntil)})` : ""}</span> ` : ""}
     <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"} · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}</span>
+    ${f.paymentStatus === "pending_payment" ? `
+    <form method="post" action="/freelancer-dashboard/redeem-vip-code" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <label style="flex:1;min-width:180px;">יש לך קוד VIP? הזיני כאן ופטרי את עצמך מהתשלום
+      <input type="text" name="code" placeholder="לדוגמה: VIP1234" required /></label>
+      <button class="btn btn-small" type="submit">מימוש קוד</button>
+    </form>` : ""}
     ${f.tier !== "premium" ? (
       f.tierUpgradeRequestedAt
         ? `<p class="muted" style="margin-top:8px;font-size:13px;">🔔 בקשת השדרוג שלך לרמת "מומלצת" נשלחה - ניצור איתך קשר לגבי התשלום.</p>`
@@ -7056,6 +7164,34 @@ route("POST", "/freelancer-dashboard/request-tier-upgrade", async (req, res, par
     return redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("בקשת השדרוג נשלחה - ניצור איתך קשר לגבי התשלום.")}`);
   }
   redirect(res, "/freelancer-dashboard");
+});
+
+// מימוש קוד VIP אישי (ר' d.vipCoupons, נוסף 2026-09-09 לפי בקשה מפורשת) - פוטר מתשלום לצמיתות
+// עצמאית שממתינה כרגע לתשלום (paymentStatus==="pending_payment"), בלי שספיר תצטרך לאשר תשלום
+// ידנית. חד-פעמי ובלתי-ניתן-להעברה: קוד שכבר מומש (redeemedByFreelancerId מלא) לא ניתן לשימוש
+// חוזר, גם לא על ידי אותה עצמאית שוב - ר' ההערה המלאה על d.vipCoupons ב-db.js.
+route("POST", "/freelancer-dashboard/redeem-vip-code", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (!f) return redirect(res, "/login");
+  const body = await readBody(req);
+  const rawCode = (body.get("code") || "").trim().toUpperCase();
+  if (!rawCode) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("צריך להזין קוד.")}`);
+  if (f.paymentStatus !== "pending_payment") {
+    return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("הקוד רלוונטי רק כשיש תשלום ממתין - אצלך אין כרגע תשלום שממתין.")}`);
+  }
+  const coupon = (d.vipCoupons || []).find((c) => (c.code || "").toUpperCase() === rawCode);
+  if (!coupon) return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("קוד לא נמצא - בדקי שהקלדת אותו נכון.")}`);
+  if (coupon.redeemedByFreelancerId) {
+    return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("הקוד הזה כבר מומש בעבר ולא ניתן לשימוש חוזר.")}`);
+  }
+  coupon.redeemedByFreelancerId = f.id;
+  coupon.redeemedFreelancerName = f.businessName || f.name;
+  coupon.redeemedAt = new Date().toISOString();
+  f.paymentStatus = "active";
+  db.save();
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("הקוד מומש בהצלחה - את פטורה מהתשלום, ברוכה הבאה! 🎉")}`);
 });
 
 route("POST", "/freelancer-dashboard/switch-to-customer", async (req, res, params, query, ctx) => {
@@ -8286,6 +8422,21 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <p class="muted" style="margin-top:8px;font-size:12px;">שימי לב: כל אחוז מעוגל בנפרד, אז לפעמים סכום העמודה יוצא 99% או 101% במקום 100% בדיוק - זה טבעי ולא טעות בספירה עצמה.</p>` : `<p class="muted" style="margin-top:10px;">עדיין אין נתוני מקור - יופיעו כאן ברגע שיהיו כניסות חדשות לאתר.</p>`}
   </div>
 
+  <div class="panel" id="category-stats-panel">
+    <h3>עצמאיות וצפיות לפי תחום 📊</h3>
+    <p class="muted">כמה עצמאיות (מאושרות ופעילות) יש בכל תחום, וכמה צפיות בסך הכל צברו הפרופילים שלהן (👁️ f.viewCount - אותו מונה שסופר כל כניסה לעמוד הפרופיל של עצמאית, ר' "הצגת מספר הצפיות" בפאנל ההגדרות למטה). ממוין מהתחום עם הכי הרבה עצמאיות להכי מעט.</p>
+    ${(() => {
+      const rows = d.categories.map((c) => {
+        const inCat = activeFreelancers.filter((f) => f.categoryId === c.id || (f.additionalCategoryIds || []).includes(c.id));
+        const views = inCat.reduce((sum, f) => sum + (f.viewCount || 0), 0);
+        return { name: c.name, count: inCat.length, views };
+      }).sort((a, b) => b.count - a.count);
+      return rows.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>תחום</th><th>עצמאיות</th><th>סה"כ צפיות בפרופילים</th></tr>
+        ${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.count}</td><td>${r.views}</td></tr>`).join("")}
+      </table></div>` : `<p class="muted">עדיין אין תחומים מוגדרים.</p>`;
+    })()}
+  </div>
+
   <div class="panel">
     <h3>קישור לשיתוף עם מעקב מקור 🔗</h3>
     <p class="muted">בוחרים איפה משתפות את הקישור, ואופציונלית לאיזה עמוד באתר (ברירת מחדל - עמוד הבית), ולוחצות "יצירת קישור". הקישור שייווצר יעבוד בדיוק כמו קישור רגיל, אבל כשיילחצו עליו זה יירשם במדויק בטבלה למעלה - כך שאין תלות בזיהוי אוטומטי (שלא תמיד עובד לווטסאפ/מייל).</p>
@@ -8856,6 +9007,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <input type="text" name="customerReferralAnnounceDate" value="${esc(d.settings.customerReferralAnnounceDate || "")}" /></label>
       <label>הערה למבצע (אופציונלי - מוצגת ללקוחות ליד המבצע, למשל "המבצע הוארך!")
       <input type="text" name="customerReferralPromoNote" maxlength="200" value="${esc(d.settings.customerReferralPromoNote || "")}" placeholder="השאירי ריק אם אין הערה" /></label>
+      <label>יעד מספר הלקוחות (מוצג בבלוק "מרוץ הלקוחות" בדף הבית, למשל 1000)
+      <input type="number" min="1" name="customerRaceGoal" value="${esc(d.settings.customerRaceGoal || 1000)}" /></label>
 
       <h4 style="margin-top:22px;">תחרות הפניות - עצמאיות ("צרפי חברה")</h4>
       <p class="muted" style="margin-top:-6px;">שולט על הבלוק שמופיע באזור האישי של העצמאיות.</p>
@@ -8866,6 +9019,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <input type="text" name="freelancerReferralAnnounceDate" value="${esc(d.settings.freelancerReferralAnnounceDate || "")}" /></label>
       <label>הערה למבצע (אופציונלי - מוצגת לעצמאיות ליד המבצע, למשל "המבצע הוארך!")
       <input type="text" name="freelancerReferralPromoNote" maxlength="200" value="${esc(d.settings.freelancerReferralPromoNote || "")}" placeholder="השאירי ריק אם אין הערה" /></label>
+      <label>יעד מספר העצמאיות (מוצג בבלוק "מרוץ העצמאיות" בדף הבית, למשל 700)
+      <input type="number" min="1" name="freelancerRaceGoal" value="${esc(d.settings.freelancerRaceGoal || 700)}" /></label>
       <button class="btn btn-small" style="margin-top:10px;" type="submit">עדכון</button>
     </form>
   </div>
@@ -8922,6 +9077,38 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           <input type="date" name="until" value="${esc(israelDateKey(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))}" required />
         </label>
         <button class="btn btn-small" type="submit">פרסום כמנצחת</button>
+      </form>
+    </div>
+    <!-- פרס "פרסום חינם" ל-3 המקומות הראשונים במרוץ (נוסף 2026-09-09, לפי בקשה מפורשת: "מי
+         שהביאה את הכי הרבה מקבלת חודש פרסום חינם, מקום שני שבועיים, מקום שלישי שבוע") - שונה
+         מ"הכרזת מנצחת" למעלה (שמחליפה את הטיפ השבועי בדף הבית): כאן זה משתמש בתכונת "מודעה
+         פעילה" הקיימת (📣, אותה תכונה שמופעלת ידנית בטבלת העצמאיות למטה בתשלום רגיל) - ומדליק
+         אותה בחינם עם תאריך תפוגה אוטומטי לפי המקום, כך שהמודעה נכבית מעצמה בלי שתצטרכי לזכור.
+         ר' isFreelancerCurrentlyAdvertised למעלה בקובץ. אפשר להשאיר מקום ריק (למשל אם אין
+         מספיק מתמודדות) - רק מי שנבחרה בפועל מקבלת את הפרס. -->
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <h4 style="margin:0 0 6px;">📣 הענקת פרס "פרסום חינם" ל-3 המקומות הראשונים</h4>
+      <p class="muted" style="margin:0 0 8px;">חודש פרסום חינם למקום 1, שבועיים למקום 2, שבוע למקום 3 - מדליק אוטומטית את תכונת "מודעה פעילה" הקיימת (התג 📣 שמופיע על הכרטיסייה בכל האתר) עד התאריך המתאים, ואז נכבה מעצמו. אפשר להשאיר מקום ריק.</p>
+      <form method="post" action="/admin/referral-settings/grant-ad-prizes" style="display:flex;flex-direction:column;gap:10px;">
+        <label>מקום 1 (חודש - עד ${esc(israelDateKey(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))})
+          <select name="place1">
+            <option value="">ללא</option>
+            ${d.freelancers.filter((f) => f.status === "approved").sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he")).map((f) => `<option value="${f.id}" ${freelancerReferralRanking[0] && freelancerReferralRanking[0].id === f.id ? "selected" : ""}>${esc(f.businessName || f.name)}${freelancerReferralRanking[0] && freelancerReferralRanking[0].id === f.id ? " (מובילה כרגע)" : ""}</option>`).join("")}
+          </select>
+        </label>
+        <label>מקום 2 (שבועיים - עד ${esc(israelDateKey(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)))})
+          <select name="place2">
+            <option value="">ללא</option>
+            ${d.freelancers.filter((f) => f.status === "approved").sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he")).map((f) => `<option value="${f.id}" ${freelancerReferralRanking[1] && freelancerReferralRanking[1].id === f.id ? "selected" : ""}>${esc(f.businessName || f.name)}${freelancerReferralRanking[1] && freelancerReferralRanking[1].id === f.id ? " (מקום 2 כרגע)" : ""}</option>`).join("")}
+          </select>
+        </label>
+        <label>מקום 3 (שבוע - עד ${esc(israelDateKey(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)))})
+          <select name="place3">
+            <option value="">ללא</option>
+            ${d.freelancers.filter((f) => f.status === "approved").sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he")).map((f) => `<option value="${f.id}" ${freelancerReferralRanking[2] && freelancerReferralRanking[2].id === f.id ? "selected" : ""}>${esc(f.businessName || f.name)}${freelancerReferralRanking[2] && freelancerReferralRanking[2].id === f.id ? " (מקום 3 כרגע)" : ""}</option>`).join("")}
+          </select>
+        </label>
+        <button class="btn btn-small" type="submit" style="align-self:flex-start;">הענקת הפרסים</button>
       </form>
     </div>
     <!-- תיקון שיוך הפניה ידני - מקביל לזה שנוסף לפאנל הלקוחות למטה, לאותה סיבה בדיוק (הקישור
@@ -9152,7 +9339,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/resend-credentials" onsubmit="return confirm('זה ייצור סיסמה זמנית חדשה ל' + ${JSON.stringify(f.businessName || f.name)} + ' וישלח אותה במייל (הסיסמה הישנה שלה תפסיק לעבוד). להמשיך?');"><button class="btn btn-small btn-outline" type="submit">📧 שליחת פרטי התחברות</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-leading"><button class="btn btn-small ${f.isLeadingBusiness ? "" : "btn-outline"}" type="submit">${f.isLeadingBusiness ? "👑 נותנת חסות" : "הפכי לנותנת חסות"}</button></form></td>
-        <td><form method="post" action="/admin/freelancer/${f.id}/toggle-ad"><button class="btn btn-small ${f.isAdvertised ? "" : "btn-outline"}" type="submit">${f.isAdvertised ? "📣 פעילה" : "הפעילי מודעה"}</button></form></td>
+        <td><form method="post" action="/admin/freelancer/${f.id}/toggle-ad"><button class="btn btn-small ${f.isAdvertised ? "" : "btn-outline"}" type="submit">${f.isAdvertised ? "📣 פעילה" : "הפעילי מודעה"}</button></form>${f.isAdvertised && f.isAdvertisedUntil ? `<div class="muted" style="font-size:11px;margin-top:2px;">פרס מרוץ - עד ${esc(f.isAdvertisedUntil)}</div>` : ""}</td>
         <td>${f.isAdvertised ? `<form method="post" action="/admin/freelancer/${f.id}/mark-ad-paid"><button class="btn btn-small ${f.adPaymentStatus === "paid" ? "" : "btn-outline"}" type="submit">${esc(adPaymentStatusLabel(f.adPaymentStatus))}</button></form>` : `<span class="muted">-</span>`}</td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-active"><button class="btn btn-small ${f.active === false ? "btn-outline" : ""}" type="submit">${f.active === false ? "⏸️ לא פעילה" : "🟢 פעילה"}</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/delete" onsubmit="return confirm('למחוק לצמיתות את ' + ${JSON.stringify(f.businessName || f.name)} + '? זו פעולה שלא ניתן לבטל.');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td>
@@ -9288,6 +9475,27 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-tier"><button class="btn btn-small" type="submit">אישור שדרוג ל"מומלצת"</button></form></td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">אין בקשות ממתינות כרגע.</p>`}
+  </div>
+
+  <div class="panel" id="vip-coupons" style="scroll-margin-top:90px;">
+    <h3>🎟️ קודי VIP אישיים (חברות ומשפחה - פטור מתשלום)</h3>
+    <p class="muted">כל קוד תקף לעצמאית אחת בלבד - היא תזין אותו באזור האישי שלה בזמן שהיא ממתינה לתשלום, וזה יפטור אותה מהתשלום לצמיתות. חד-פעמי: ברגע שקוד מומש, הוא ננעל ולא ניתן לשימוש חוזר על ידי אף אחת אחרת. הקודים לא מתפרסמים בשום מקום באתר - מעבירים אותם באופן אישי (וואטסאפ/טלפון וכו').</p>
+    <form method="post" action="/admin/vip-coupons/create" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;">
+      <label style="flex:2;min-width:200px;">על שם מי הקוד?
+      <input type="text" name="name" required placeholder="לדוגמה: רותי כהן" /></label>
+      <label style="flex:1;min-width:160px;">קוד מותאם אישית (אופציונלי - השאירי ריק ליצירה אוטומטית)
+      <input type="text" name="code" placeholder="למשל VIP1234" /></label>
+      <button class="btn btn-small" type="submit">יצירת קוד</button>
+    </form>
+    ${(d.vipCoupons || []).length ? `
+    <div class="table-scroll" style="margin-top:14px;"><table class="table-simple"><tr><th>שם</th><th>קוד</th><th>סטטוס</th><th>נוצר</th><th>פעולה</th></tr>
+      ${d.vipCoupons.slice().reverse().map((c) => `<tr>
+        <td>${esc(c.name)}</td><td style="font-weight:700;">${esc(c.code)}</td>
+        <td>${c.redeemedByFreelancerId ? `✅ מומש ע"י ${esc(c.redeemedFreelancerName || "")} (${esc(new Date(c.redeemedAt).toLocaleDateString("he-IL"))})` : `<span class="muted">עדיין לא מומש</span>`}</td>
+        <td>${esc(new Date(c.createdAt).toLocaleDateString("he-IL"))}</td>
+        <td>${c.redeemedByFreelancerId ? "-" : `<form method="post" action="/admin/vip-coupons/${c.id}/delete" onsubmit="return confirm('למחוק את הקוד של ${esc(c.name).replace(/'/g, "")}?');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form>`}</td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted" style="margin-top:10px;">עדיין לא נוצרו קודי VIP.</p>`}
   </div>
 
   <div class="panel" id="freelancer-statuses" style="scroll-margin-top:90px;" data-badge="${allActiveStatuses.length}">
@@ -9778,10 +9986,14 @@ route("POST", "/admin/referral-settings", async (req, res, params, query, ctx) =
   // הערה חופשית שמוצגת ללקוחות/לעצמאיות ליד המבצע שלהן (למשל "המבצע הוארך!") - לפי בקשה
   // מפורשת 2026-08-30. אופציונלי - ריקה כברירת מחדל, לא מוצגת בכלל אם לא מולאה.
   d.settings.customerReferralPromoNote = clip((body.get("customerReferralPromoNote") || "").trim(), 200);
+  const customerGoal = Math.round(Number(body.get("customerRaceGoal")));
+  if (customerGoal > 0) d.settings.customerRaceGoal = customerGoal;
   d.settings.freelancerReferralContestActive = body.get("freelancerReferralContestActive") === "1";
   d.settings.freelancerReferralContestEndDate = (body.get("freelancerReferralContestEndDate") || "").trim();
   d.settings.freelancerReferralAnnounceDate = (body.get("freelancerReferralAnnounceDate") || "").trim();
   d.settings.freelancerReferralPromoNote = clip((body.get("freelancerReferralPromoNote") || "").trim(), 200);
+  const freelancerGoal = Math.round(Number(body.get("freelancerRaceGoal")));
+  if (freelancerGoal > 0) d.settings.freelancerRaceGoal = freelancerGoal;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("הגדרות התחרות עודכנו!")}`);
 });
@@ -9828,6 +10040,33 @@ route("POST", "/admin/referral-settings/clear-winner", async (req, res, params, 
   d.settings.freelancerReferralWinnerUntil = null;
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("הפרסום בוטל - חוזרים לרוטציה הרגילה.")}#freelancer-referral-race`);
+});
+
+// הענקת פרס "פרסום חינם" ל-3 המקומות הראשונות במרוץ ההפניות של העצמאיות (ר' ההערה המלאה ליד
+// הטופס עצמו ב-GET /admin) - כל מקום שנבחר מדליק את "מודעה פעילה" (isAdvertised) עם תאריך
+// תפוגה (isAdvertisedUntil) לפי משך הפרס, ומסמן adPaymentStatus כ"paid" (זה פרס, לא ממתין
+// לתשלום אמיתי). מקום שהושאר ריק ("ללא") פשוט לא נוגעים בו.
+route("POST", "/admin/referral-settings/grant-ad-prizes", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const PRIZE_DAYS = { place1: 30, place2: 14, place3: 7 };
+  const granted = [];
+  for (const key of Object.keys(PRIZE_DAYS)) {
+    const fid = body.get(key);
+    if (!fid) continue;
+    const f = d.freelancers.find((x) => x.id === fid);
+    if (!f) continue;
+    const until = israelDateKey(new Date(Date.now() + PRIZE_DAYS[key] * 24 * 60 * 60 * 1000));
+    f.isAdvertised = true;
+    f.isAdvertisedUntil = until;
+    f.adPaymentStatus = "paid";
+    granted.push(`${f.businessName || f.name} (עד ${until})`);
+  }
+  db.save();
+  redirect(res, granted.length
+    ? `/admin?ok=${encodeURIComponent(`הפרסים הוענקו: ${granted.join(", ")}`)}#freelancer-referral-race`
+    : `/admin?err=${encodeURIComponent("לא נבחרה אף עצמאית.")}#freelancer-referral-race`);
 });
 
 // תיקון רטרואקטיבי של שיוך הפניה - לפי בקשה מפורשת 2026-08-30 (לקוחה טענה שהפנתה חברות בפועל
@@ -10287,7 +10526,7 @@ route("POST", "/admin/bulk-import", async (req, res, params, query, ctx) => {
       dealCode: generateCouponCode(),
       tier: "basic", joinType: d.settings.chargingEnabled ? "regular" : "founding",
       paymentStatus: d.settings.chargingEnabled ? "pending_payment" : "free",
-      isLeadingBusiness: false, isAdvertised: false, adPaymentStatus: "none",
+      isLeadingBusiness: false, isAdvertised: false, isAdvertisedUntil: null, adPaymentStatus: "none",
       viewCount: 0, couponRevealCount: 0, pushSubscriptions: [],
       status: "approved", createdAt: new Date().toISOString(),
       siteVisitCount: 0,
@@ -10789,6 +11028,44 @@ route("POST", "/admin/freelancer/:id/toggle-tier", async (req, res, params, quer
   redirect(res, `/admin?ok=${encodeURIComponent(f && f.tier === "premium" ? "היא מסומנת עכשיו כ'מומלצת'." : "היא סומנה בחזרה כ'בסיסית'.")}#tier-upgrade-requests`);
 });
 
+// יצירת קוד VIP אישי חדש (ר' d.vipCoupons, ההערה המלאה ב-db.js) - שם חובה (כדי שהטבלה תישאר
+// מסודרת ותדע שפיר בדיוק למי כל קוד שייך), קוד עצמו אופציונלי (ריק = generateVipCode() אוטומטי,
+// מלא = משתמשים בקוד שהיא הקלידה בעצמה, אחרי נירמול לאותיות גדולות ווידוא ייחודיות).
+route("POST", "/admin/vip-coupons/create", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const name = clip((body.get("name") || "").trim(), 100);
+  if (!name) return redirect(res, `/admin?err=${encodeURIComponent("צריך להזין שם.")}#vip-coupons`);
+  let code = (body.get("code") || "").trim().toUpperCase();
+  if (code) {
+    if ((d.vipCoupons || []).some((c) => (c.code || "").toUpperCase() === code)) {
+      return redirect(res, `/admin?err=${encodeURIComponent("הקוד הזה כבר קיים - בחרי קוד אחר או השאירי ריק ליצירה אוטומטית.")}#vip-coupons`);
+    }
+  } else {
+    code = generateVipCode();
+  }
+  d.vipCoupons = d.vipCoupons || [];
+  d.vipCoupons.push({
+    id: db.nextId("vipCoupon"), name, code, createdAt: new Date().toISOString(),
+    redeemedByFreelancerId: null, redeemedFreelancerName: "", redeemedAt: null,
+  });
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`נוצר קוד VIP עבור ${name}: ${code}`)}#vip-coupons`);
+});
+
+route("POST", "/admin/vip-coupons/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const coupon = (d.vipCoupons || []).find((c) => c.id === params.id);
+  // בכוונה לא מאפשרים מחיקת קוד שכבר מומש - זה חלק מהתיעוד ההיסטורי של מי קיבלה פטור ומתי.
+  if (coupon && !coupon.redeemedByFreelancerId) {
+    d.vipCoupons = d.vipCoupons.filter((c) => c.id !== params.id);
+    db.save();
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("הקוד נמחק.")}#vip-coupons`);
+});
+
 route("POST", "/admin/freelancer/:id/toggle-ad", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -10798,6 +11075,11 @@ route("POST", "/admin/freelancer/:id/toggle-ad", async (req, res, params, query,
     // Every time an ad is turned on it starts as "awaiting payment" so nothing gets
     // forgotten; turning it off clears the payment status back to none.
     f.adPaymentStatus = f.isAdvertised ? "pending_payment" : "none";
+    // Manual toggle (in either direction) always clears any leftover expiry date from a race
+    // prize (ר' isAdvertisedUntil, POST /admin/referral-settings/grant-ad-prizes) - a manual
+    // "on" here means a regular paid ad that stays on until manually turned off, not a
+    // self-expiring prize, and a manual "off" should fully reset the state either way.
+    f.isAdvertisedUntil = null;
   }
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(f && f.isAdvertised ? "המודעה שלה פעילה עכשיו באתר (ממתינה לתשלום)." : "המודעה כובתה.")}`);
@@ -11062,6 +11344,30 @@ route("GET", "/about", async (req, res, params, query, ctx) => {
   const body = `<h1 class="section-title">מי אנחנו</h1><div class="panel" style="text-align:right;max-width:680px;margin:0 auto;">${renderRichText(d.settings.aboutText)}</div><p class="muted" style="text-align:center;margin-top:18px;">יש לך שאלה או רצית לספר לנו משהו? <a href="/contact" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">בואי נדבר</a> ❤️</p>`;
   sendHtml(res, 200, page({ title: "מי אנחנו", session: ctx.session, body, query }));
 });
+// עמוד הסבר קצר לשני "מרוצי ההפניות" (נוסף 2026-09-09, לפי בקשה מפורשת) - מקושר מקישור קטן
+// בבלוקים החדשים בדף הבית, כדי שדף הבית עצמו יישאר קצר ולא עמוס במלל. שתי העוגנים (#freelancers
+// / #customers) מאפשרים לקשר ישירות לחלק הרלוונטי לפי מאיזה בלוק הגיעו.
+route("GET", "/race", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const body = `
+  <h1 class="section-title">מירוץ ההפניות של SheCan 🏆</h1>
+  <div class="panel" id="freelancers" style="scroll-margin-top:90px;max-width:680px;margin:0 auto 20px;text-align:right;">
+    <h3 style="margin-top:0;">מירוץ ${esc(String(d.settings.freelancerRaceGoal || 700))} העצמאיות</h3>
+    <p>אנחנו שואפות להגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))}+ עצמאיות באתר - וכל עצמאית יכולה לעזור להגיע לשם. לכל עצמאית יש קישור אישי משלה (מהאזור האישי שלה): כל עצמאית חדשה שנרשמת דרך הקישור הזה מזכה אותה ב-10 נקודות.</p>
+    <p><strong>הפרסים:</strong> 3 המקומות הראשונים${d.settings.freelancerReferralContestEndDate ? ` (נכון ליום סיום התחרות, ${esc(d.settings.freelancerReferralContestEndDate)})` : ""} זוכות בפרסום חינם באתר: מקום 1 - חודש שלם, מקום 2 - שבועיים, מקום 3 - שבוע. הפרסום מוצג לכל אורך האתר (תג "📣 מודעה"), בדיוק כמו מודעה בתשלום רגילה.</p>
+    ${d.settings.freelancerReferralAnnounceDate ? `<p class="muted">הזוכות יוכרזו ב-${esc(d.settings.freelancerReferralAnnounceDate)}.</p>` : ""}
+  </div>
+  <div class="panel" id="customers" style="scroll-margin-top:90px;max-width:680px;margin:0 auto;text-align:right;">
+    <h3 style="margin-top:0;">מירוץ ${esc(String(d.settings.customerRaceGoal || 1000))} הלקוחות</h3>
+    <p>אנחנו שואפות להגיע ל-${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות רשומות באתר - וכל לקוחה יכולה לעזור להגיע לשם. לכל לקוחה יש קישור אישי משלה (מהאזור האישי שלה): כל חברה שנרשמת דרך הקישור הזה מזכה אותה אוטומטית ב-10 נקודות.</p>
+    <p><strong>הפרסים:</strong> 4 פרסים שווים מחכים ל-4 המקומות המובילות${d.settings.customerReferralContestEndDate ? ` (נכון ליום סיום ההרשמה לתחרות, ${esc(d.settings.customerReferralContestEndDate)})` : ""}.</p>
+    ${d.settings.customerReferralAnnounceDate ? `<p class="muted">הזוכות יוכרזו ב-${esc(d.settings.customerReferralAnnounceDate)}.</p>` : ""}
+  </div>
+  <p class="muted" style="text-align:center;margin-top:20px;">מחוברת כבר? הקישור האישי שלך מחכה לך <a href="/account" style="color:var(--rose-dark);font-weight:800;">באזור האישי</a> (או <a href="/freelancer-dashboard" style="color:var(--rose-dark);font-weight:800;">בדשבורד שלך</a> אם את עצמאית).</p>
+  `;
+  sendHtml(res, 200, page({ title: "מירוץ ההפניות של SheCan", session: ctx.session, body, query }));
+});
+
 route("GET", "/contact", async (req, res, params, query, ctx) => {
   const d = db.load();
   // Pulls from the same "מייל ליצירת קשר" setting shown on the home page (admin panel ->

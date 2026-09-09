@@ -49,6 +49,12 @@ function defaultData() {
       freelancerReferralContestActive: true,
       freelancerReferralContestEndDate: "17.9",
       freelancerReferralAnnounceDate: "20.9",
+      // יעדי "המירוץ" המוצגים בבלוקים החדשים בדף הבית (נוסף 2026-09-09, לפי בקשה מפורשת) - רק
+      // המספרים שבטקסט, ניתנים לעריכה בפאנל הניהול בלי דיפלוי. אין קשר לפעילות/כיבוי של כל
+      // תחרות בפני עצמה - זה נשלט על ידי customerReferralContestActive/
+      // freelancerReferralContestActive למעלה, בדיוק כמו היום.
+      freelancerRaceGoal: 700,
+      customerRaceGoal: 1000,
       // חותמת הזמן האחרונה שבה ספיר "פינגה" מתוך פאנל הניהול (ר' POST /admin/support/heartbeat,
       // נשלח אוטומטית ברקע כל עוד היא מחוברת כאדמין ונמצאת באיזשהו עמוד ניהול) - משמש כדי
       // להראות לשואלת ב-"לתמיכה לחצי" אם ספיר "מחוברת עכשיו" (צ'אט חי) או לא (משאירה הודעה).
@@ -251,6 +257,16 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // { id, voterKey, name, email, from: "asker"|"admin", text, createdAt, read }
     supportMessages: [],
     couponRevealEvents: [], // לוג גלובלי של כל לחיצה על "לצפייה בקוד קופון" - freelancerId + date
+    // קודי VIP אישיים לחברות/משפחה קרובה (נוסף 2026-09-09, לפי בקשה מפורשת) - ספיר יוצרת בניהול
+    // קוד ייחודי על שם מסוימת (חברה/קרובת משפחה שרוצה להצטרף כעצמאית), ומעבירה לה אותו באופן
+    // אישי (וואטסאפ/טלפון וכו') - לא מתפרסם באתר בשום מקום. כשעצמאית מזינה את הקוד באזור האישי
+    // שלה (ר' POST /freelancer-dashboard/redeem-vip-code) בזמן שהיא ממתינה לתשלום
+    // (paymentStatus==="pending_payment"), זה פוטר אותה מהתשלום לצמיתות בלי שספיר תצטרך לאשר
+    // ידנית תשלום שלא התקבל בפועל. כל קוד הוא חד-פעמי ובלתי-ניתן-להעברה: ברגע שמישהי מימשה
+    // אותו, redeemedByFreelancerId ננעל והקוד לא ניתן לשימוש חוזר על ידי אף אחת אחרת - גם לא
+    // אם אותה עצמאית עצמה תנסה להזין אותו שוב. { id, name, code, createdAt,
+    // redeemedByFreelancerId, redeemedFreelancerName, redeemedAt }
+    vipCoupons: [],
     // מונה כניסות לאתר - נספר בכל טעינת עמוד ציבורית (לא כולל אזור ניהול/דשבורד עצמאית/API
     // פנימי). totalVisits הוא הסה"כ המצטבר, dailyVisits הוא מיפוי תאריך (YYYY-MM-DD) -> מספר
     // כניסות באותו יום, כדי שאפשר יהיה להציג גם מגמה של הימים האחרונים ולא רק מספר אחד יבש.
@@ -442,7 +458,7 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     admins: [
       { id: "1", email: "admin@shecan.co.il", name: "ספיר", passwordHash: null, pushSubscriptions: [] },
     ],
-    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1, patternmakerRequest: 1, supportMessage: 1, communityListing: 1 },
+    nextId: { freelancer: 1, customer: 1, review: 1, magazine: 1, coupon: 110, message: 1, chat: 1, story: 1, storyComment: 1, listing: 1, arenaQuestion: 1, arenaAnswer: 1, consultation: 1, consultationReply: 1, poll: 1, deal: 1, adminMessage: 1, patternmakerRequest: 1, supportMessage: 1, communityListing: 1, vipCoupon: 1 },
   };
 }
 
@@ -472,6 +488,8 @@ function migrate(data) {
   if (!Array.isArray(data.tehillimSalvationStories)) { data.tehillimSalvationStories = []; changed = true; }
   if (!Array.isArray(data.adminSnoozed)) { data.adminSnoozed = []; changed = true; }
   if (!Array.isArray(data.subcategorySuggestions)) { data.subcategorySuggestions = []; changed = true; }
+  if (!Array.isArray(data.vipCoupons)) { data.vipCoupons = []; changed = true; }
+  if (!("vipCoupon" in data.nextId)) { data.nextId.vipCoupon = 1; changed = true; }
   // מוודא ש-kabbalot תמיד קיים כמערך על כל רשומת שם ישנה (הגנה זהה לזו שמעל, לרמה מקוננת).
   (data.tehillimNames || []).forEach((n) => { if (!Array.isArray(n.kabbalot)) { n.kabbalot = []; changed = true; } });
   // מוסיף claimed לכל יחידה ישנה שנוצרה לפני שהשדה הזה נוסף (2026-08-26, כשנפתחה האפשרות
@@ -629,6 +647,14 @@ function migrate(data) {
     if (typeof f.couponRevealCount !== "number") { f.couponRevealCount = 0; changed = true; }
     if (typeof f.siteVisitCount !== "number") { f.siteVisitCount = 0; changed = true; }
     if (!f.adPaymentStatus) { f.adPaymentStatus = f.isAdvertised ? "pending_payment" : "none"; changed = true; }
+    // תאריך תפוגה אופציונלי ל"מודעה פעילה" (נוסף 2026-09-09) - null = מודעה רגילה בתשלום, נשארת
+    // פעילה עד שספיר תכבה אותה ידנית, בדיוק כמו היום. תאריך אמיתי = הוענקה כפרס "פרסום חינם"
+    // במרוץ ההפניות (ר' POST /admin/referral-settings/grant-ad-prizes) ותכבה את עצמה אוטומטית
+    // בתאריך הזה - ר' isFreelancerCurrentlyAdvertised ב-server.js, שבודק את שני השדות יחד בכל
+    // מקום שבו isAdvertised משפיע על מה שמוצג בפועל באתר (באדג', שיוך לרשימת "עסקים ממומנים"
+    // וכו') - מבלי לגעת בשדה isAdvertised/adPaymentStatus עצמם, כדי לא לשבור את זרימת המודעה
+    // הרגילה בתשלום שכבר קיימת.
+    if (!("isAdvertisedUntil" in f)) { f.isAdvertisedUntil = null; changed = true; }
     if (!("logoDataUri" in f)) { f.logoDataUri = null; changed = true; }
     if (!Array.isArray(f.galleryPhotos)) { f.galleryPhotos = []; changed = true; }
     if (!("inspirationQuote" in f)) { f.inspirationQuote = ""; changed = true; }
