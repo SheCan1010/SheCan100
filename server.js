@@ -2317,8 +2317,8 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <div class="race-number race-number-primary" id="scRaceNumFreelancer" data-real="${approvedActiveFreelancersCount}">${raceOdometerHtml(freelancerRaceStartCount)}</div>
           <div class="race-number-label">עצמאיות כבר איתנו</div>
           ${freelancerRoundMilestone ? `<p style="margin:10px 0 0;font-weight:800;font-size:15px;color:var(--arena);">🎉 כבר עברנו את ה-${freelancerRoundMilestone}!</p>` : ""}
-          <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> ${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות.</p>
-          <p class="muted">עד אז ההרשמה נשארת חינמית לגמרי, ואחרי שנגיע ליעד היא עוברת למסלול בתשלום 🚀</p>
+          <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> ${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות!</p>
+          <p class="muted">עד אז ההרשמה נשארת חינמית לגמרי - <span class="race-goal-label">המעבר לתשלום יחול רק על העצמאית ה-${esc(String((d.settings.freelancerRaceGoal || 700) + 1))} ואילך</span> 🚀</p>
           <p class="muted">שתפי את הקישור האישי שלך ועזרי לנו להגיע ליעד לפני שהוא נסגר. על כל עצמאית שנרשמת דרכך - 10 נקודות!</p>
           <p class="muted">3 העצמאיות שיירשמו דרכן הכי הרבה - יזכו בפרסום שווה בחינם!</p>
           <div style="margin-top:10px;">${freelancerRaceCtaHtml}</div>
@@ -8313,12 +8313,18 @@ route("POST", "/admin/subcategory-suggestion/:id/reject", async (req, res, param
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("ההמלצה נדחתה.")}#subcategory-suggestions`);
 });
+// אישור משפט השראה - כולל אפשרות לתקן/לערוך את הניסוח לפני האישור (שדה "text" בטופס, ר'
+// הטקסטאריה הניתנת לעריכה בפאנל "משפטי השראה ממתינים לאישור") - אם היא שינתה את הטקסט בתיבה,
+// הגרסה הערוכה היא זו שתתפרסם, לא הגרסה המקורית שהעצמאית כתבה (לפי בקשה מפורשת 2026-09-14:
+// "תן לי אופציה לערוך משפט השראה שנכתב ולתקן אותו").
 route("POST", "/admin/inspiration-quote/:id/approve", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
   if (f && (f.inspirationQuotePending || "").trim()) {
-    f.inspirationQuote = f.inspirationQuotePending.trim();
+    const edited = clip((body.get("text") || "").trim(), 300);
+    f.inspirationQuote = edited || f.inspirationQuotePending.trim();
     f.inspirationQuotePending = "";
   }
   db.save();
@@ -8536,6 +8542,19 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // בלי לחפש אותה בטופס הכללי. ממויין לפי שם העסק לנוחות סריקה.
   const dealsManagementList = d.freelancers.filter((f) => f.status === "approved" && f.active !== false)
     .slice().sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he"));
+
+  // "ניהול משפטי השראה" - קוביה אחת מאוחדת (צומצם מ-2 פאנלים נפרדים ל-1 לפי בקשה מפורשת
+  // 2026-09-14: "תצמצם לי את הכל למקום אחד") - כל עצמאית מאושרת ופעילה שיש לה משפט השראה
+  // ממתין לאישור ו/או משפט חי שכבר פורסם, כדי שאפשר יהיה לראות ולערוך/לאשר/לדחות הכל מאותו
+  // מקום. ממתינות (שצריך החלטה עליהן) קודם ברשימה, ואחריהן הפעילות - כל קבוצה ממוינת לפי שם.
+  const allInspirationQuoteFreelancers = d.freelancers.filter((f) => f.status === "approved" && f.active !== false &&
+      (((f.inspirationQuotePending || "").trim() && !isSnoozed(d, `inspirationQuote:${f.id}`)) || (f.inspirationQuote || "").trim()))
+    .slice().sort((a, b) => {
+      const aPending = (a.inspirationQuotePending || "").trim() ? 0 : 1;
+      const bPending = (b.inspirationQuotePending || "").trim() ? 0 : 1;
+      if (aPending !== bPending) return aPending - bPending;
+      return (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he");
+    });
 
   // בקשות שדרוג לרמת "מומלצת" (2026-09-02) - ר' POST /freelancer-dashboard/request-tier-upgrade.
   const tierUpgradeRequests = d.freelancers.filter((f) => f.tierUpgradeRequestedAt && f.tier !== "premium")
@@ -8935,21 +8954,31 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel" id="inspiration-quotes" style="scroll-margin-top:90px;" data-badge="${pendingInspirationQuotes.length}">
-    <h3>💬 משפטי השראה ממתינים לאישור (${pendingInspirationQuotes.length})</h3>
-    <p class="muted">משפט השראה שכתבה עצמאית (בהרשמה או באזור האישי) מחכה כאן לאישור לפני שהוא יכול להופיע כטיפ השבועי בדף הבית - כדי לשמור שרק משפטי השראה אמיתיים מתפרסמים ולא פרסומות.</p>
-    ${pendingInspirationQuotes.length ? pendingInspirationQuotes.map((f) => `
-      <div class="panel" style="background:var(--cream);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-        <div>
+    <h3>💬 ניהול משפטי השראה (${allInspirationQuoteFreelancers.length})</h3>
+    <p class="muted">כל משפטי ההשראה של העצמאיות במקום אחד - גם אלה שממתינות לאישור לפני שהן מתפרסמות כטיפ השבועי בדף הבית, וגם אלה שכבר פעילות באתר. אפשר לתקן/לערוך את הניסוח של כל אחת ישירות בתיבה.</p>
+    ${allInspirationQuoteFreelancers.length ? allInspirationQuoteFreelancers.map((f) => {
+      const isPending = !!(f.inspirationQuotePending || "").trim();
+      const text = isPending ? f.inspirationQuotePending : (f.inspirationQuote || "");
+      return `
+      <div class="panel" style="background:var(--cream);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
           <div style="font-weight:700;">${esc(f.businessName || f.name || "")}</div>
-          <div class="muted" style="font-size:14px;margin-top:4px;">"${esc(f.inspirationQuotePending)}"</div>
+          ${isPending ? `<span style="font-size:12px;font-weight:700;color:var(--rose-dark);">⏳ ממתין לאישור</span>` : `<span class="muted" style="font-size:12px;">✓ פעיל באתר</span>`}
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <form method="post" action="/admin/inspiration-quote/${f.id}/approve"><button class="btn btn-small" type="submit">✓ אישור</button></form>
+        <form method="post" action="${isPending ? `/admin/inspiration-quote/${f.id}/approve` : `/admin/freelancer/${f.id}/update-inspiration-quote`}" style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+          <textarea name="${isPending ? "text" : "inspirationQuote"}" maxlength="300" style="flex:1;min-width:220px;min-height:50px;">${esc(text)}</textarea>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-self:center;">
+            <button class="btn btn-small" type="submit">${isPending ? "✓ שמירה ואישור" : "שמירה"}</button>
+          </div>
+        </form>
+        ${isPending ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
           <form method="post" action="/admin/inspiration-quote/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">✕ דחייה</button></form>
           ${snoozeButtonHtml(`inspirationQuote:${f.id}`, "inspirationQuote", `משפט השראה של ${f.businessName || f.name || ""}`)}
           ${messageFreelancerButtonHtml(f.id, "משפט ההשראה ששלחת לאישור", `inspQuote-${f.id}`)}
-        </div>
-      </div>`).join("") : `<p class="muted">אין כרגע משפטים ממתינים.</p>`}
+        </div>` : ""}
+      </div>`;
+    }).join("") : `<p class="muted">אין כרגע משפטי השראה לנהל.</p>`}
   </div>
 
   <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;" data-badge="${pendingFreelancers.length}">
@@ -11458,6 +11487,20 @@ route("POST", "/admin/freelancer/:id/update-deal", async (req, res, params, quer
   f.dealText = clip(body.get("dealText"), 200);
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(`ההטבה של ${f.businessName || f.name} עודכנה.`)}#deals-management`);
+});
+
+// תיקון ישיר של משפט השראה שכבר פורסם (ר' allInspirationQuoteFreelancers/פאנל "ניהול משפטי
+// השראה" המאוחד למעלה) - לפי בקשה מפורשת 2026-09-14 ("תן לי אופציה לערוך משפט השראה שנכתב
+// ולתקן אותו"), באותו דפוס בדיוק כמו עדכון ההטבות (update-deal) למעלה.
+route("POST", "/admin/freelancer/:id/update-inspiration-quote", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}#inspiration-quotes`);
+  f.inspirationQuote = clip(body.get("inspirationQuote"), 300);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`משפט ההשראה של ${f.businessName || f.name} עודכן.`)}#inspiration-quotes`);
 });
 
 // Manual re-send of the "your area is ready" credentials email, per explicit request after
