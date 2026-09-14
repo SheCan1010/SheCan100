@@ -2317,7 +2317,8 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <div class="race-number race-number-primary" id="scRaceNumFreelancer" data-real="${approvedActiveFreelancersCount}">${raceOdometerHtml(freelancerRaceStartCount)}</div>
           <div class="race-number-label">עצמאיות כבר איתנו</div>
           ${freelancerRoundMilestone ? `<p style="margin:10px 0 0;font-weight:800;font-size:15px;color:var(--arena);">🎉 כבר עברנו את ה-${freelancerRoundMilestone}!</p>` : ""}
-          <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> אנחנו כרגע במירוץ ל-${esc(String(d.settings.freelancerRaceGoal || 700))}+ עצמאיות מייסדות - ברגע שנגיע ליעד, ההרשמה החינמית <span class="race-goal-label">נסגרת</span> ומתחילה הרשמה בתשלום 🚀</p>
+          <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> להגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות. עד אז ההרשמה נשארת חינמית לגמרי, ואחרי שנגיע ליעד היא עוברת למסלול בתשלום 🚀</p>
+          <p style="font-weight:700;margin:8px 0;">בואי תהיי חלק מ-SheCan מההתחלה - הצטרפי עכשיו ושלחי את הקישור שלך לחברות שגם הן יכולות להיות מייסדות 💛</p>
           <p class="muted">שתפי את הקישור האישי שלך ועזרי לנו להגיע ליעד לפני שהוא נסגר. על כל עצמאית שנרשמת דרכך - 10 נקודות! 3 המקומות הראשונות זוכות בפרסום חינם ב-SheCan.</p>
           <div style="margin-top:10px;">${freelancerRaceCtaHtml}</div>
           <p style="margin-top:14px;font-weight:700;">${freelancerRaceLeader ? `מובילה כרגע: <a class="race-leader-link" href="/freelancer/${freelancerRaceLeader.id}">${esc(freelancerRaceLeader.name)}</a> 👑` : "עדיין אין מי שמובילה - זו ההזדמנות שלך!"}</p>
