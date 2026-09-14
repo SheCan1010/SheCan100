@@ -248,6 +248,14 @@ body{
 .container{max-width:1080px;margin:0 auto;padding:0 24px;}
 a{color:inherit;text-decoration:none;}
 .site-header-sticky{position:sticky;top:0;z-index:10;}
+/* הסתרת הסרגל העליון (כולל הלוגו) בגלילה למטה במובייל בלבד - לפי בקשה מפורשת 2026-09-14, כדי
+   לפנות עוד מקום למסך. הגלילה למעלה מחזירה אותו "לאט לאט" (טרנזישן 0.5s). ר' scSetupHeaderHide
+   בסקריפט הגלובלי למטה - הוא זה שמוסיף/מוריד את sc-header-hidden בהתאם לכיוון הגלילה. בדסקטופ
+   (מעל 720px) הכותרת נשארת sticky כרגיל בלי שום הסתרה, בדיוק כמו היום. */
+@media (max-width:720px){
+  .site-header-sticky{transition:transform .5s ease;}
+  .site-header-sticky.sc-header-hidden{transform:translateY(-100%);}
+}
 /* Persistent "בס"ד" strip: always shown at the very top of the page, above the (sticky) header
    row, in its own thin bar rather than merged into the nav row. */
 .bsd-strip{text-align:right;font-size:13px;font-weight:700;color:var(--gray);background:var(--cream);padding:4px 24px;border-bottom:1px solid #e5ddd0;}
@@ -824,6 +832,18 @@ form .field{margin-bottom:6px;}
 .odometer-digit .odometer-strip{display:block;transition:transform .6s cubic-bezier(.25,.46,.45,.94);}
 .odometer-digit .odometer-strip span{display:block;height:1em;line-height:1;text-align:center;}
 .odometer-static{display:inline-block;}
+/* בלוק "מחירי המייסדות" (מחיר מלא מחוק עם פס מול 0 ₪ מודגש) - ר' founderPricingBlockHtml
+   ב-server.js. שני כרטיסים זה לצד זה בדסקטופ, נערמים אחד מתחת לשני במובייל. הדגשת ה-0 ₪
+   חוזקה לפי בקשה מפורשת 2026-09-14 ("אני רוצה שתדגיש 0 ש"ח עכשיו - ההרשמה כרגע היא בחינם
+   לחלוטין!") - נוסף פס/תג ירוק בולט מעל המספר עצמו, וסרט כותרת נוסף מעל כל הבלוק. */
+.founder-pricing-freebanner{display:inline-block;background:var(--rose-dark);color:var(--white);font-weight:800;font-size:15px;padding:8px 18px;border-radius:20px;}
+.founder-pricing-row{display:flex;gap:14px;margin-top:8px;flex-wrap:wrap;}
+.founder-pricing-card{flex:1;min-width:160px;background:var(--cream);border-radius:12px;padding:16px 10px;}
+.founder-pricing-name{font-weight:800;font-size:15px;margin-bottom:6px;}
+.price-strike{color:var(--gray);text-decoration:line-through;font-size:15px;}
+.price-zero-badge{display:inline-flex;flex-direction:column;align-items:center;gap:2px;background:#e9f1e8;border:2px solid var(--ok);border-radius:12px;padding:8px 16px;margin-top:6px;}
+.price-zero{color:var(--ok);font-weight:900;font-size:36px;line-height:1;}
+.price-zero-sub{color:var(--ok);font-weight:700;font-size:12px;}
 /* Admin dashboard: every top-level panel is collapsible (collapsed by default) so a long
    section (lots of reviews, lots of pending items) doesn't force endless scrolling - open
    state is remembered per-panel across visits via localStorage (see scSetupAdminCollapsibles). */
@@ -936,6 +956,17 @@ form .field{margin-bottom:6px;}
 .sc-support-open-item a{display:block;font-weight:700;color:var(--rose-dark);}
 .sc-support-open-item .muted{margin:2px 0 0;}
 @media (max-width:600px){.sc-support-open-widget{left:8px;right:8px;max-width:none;top:auto;bottom:8px;}}
+/* הרחבת אזורי מגע (tap targets) במובייל בלבד, בעקבות בדיקת נגישות מגע מפורשת 2026-09-14 -
+   הגדלת שטח הלחיצה סביב כפתורים קטנים בלי לשנות את הגודל החזותי של האייקון/הטקסט עצמו
+   (padding/מידות קופסה+היסט מיקום מקביל, לא font-size גדול יותר), כדי שיהיה קל יותר ללחוץ
+   עליהם באצבע. ממוקם בסוף גיליון הסגנונות בכוונה - כדי לגבור (באותה specificity) על ההגדרות
+   הבסיסיות של אותן מחלקות שמוגדרות מוקדם יותר בקובץ. */
+@media (max-width:720px){
+  .sc-modal-close{padding:9px;top:3px;left:5px;}
+  .view-btn{width:38px;height:38px;}
+  .weekly-tip-like{min-height:34px;padding:8px 12px;}
+  .sc-pw-toggle{padding:9px;left:-3px;}
+}
 `;
 
 function subcatsJsMap() {
@@ -2665,6 +2696,39 @@ function scArenaCopyLink(id, btn){
   };
 
   apply();
+})();
+
+// הסתרת הסרגל העליון (site-header-sticky, כולל הלוגו) בגלילה למטה במובייל, לפי בקשה מפורשת
+// 2026-09-14: "כשגוללים בפלאפון למטה אז הסרגל העליון והלוגו יעלמו... ואם גוללים למעלה הם
+// חוזרים לאט לאט". רץ רק כש-window.innerWidth<=720 (אותו breakpoint שכבר בשימוש בכל האתר,
+// למשל .race-number) - בדסקטופ הכותרת נשארת sticky כרגיל, בלי נגיעה. מוסיף/מוריד את המחלקה
+// sc-header-hidden (הטרנזישן/טרנספורם עצמם מוגדרים ב-CSS, כולל משך 0.5s לחזרה "לאט לאט").
+// מתעלם מהבדלים זעירים (±6px, ריצוד תת-פיקסל בחלק מהדפדפנים) ותמיד מציג את הכותרת קרוב לראש
+// הדף (עד 80px) כדי שלא תיעלם מיד כשמתחילים לגלול.
+(function(){
+  var header = document.querySelector(".site-header-sticky");
+  if (!header) return;
+  var lastY = window.scrollY || window.pageYOffset || 0;
+  var ticking = false;
+  var THRESHOLD = 6;
+  var TOP_ZONE = 80;
+  function onScroll(){
+    ticking = false;
+    if (window.innerWidth > 720) { header.classList.remove("sc-header-hidden"); lastY = window.scrollY; return; }
+    var y = window.scrollY || window.pageYOffset || 0;
+    var diff = y - lastY;
+    if (y <= TOP_ZONE) {
+      header.classList.remove("sc-header-hidden");
+    } else if (diff > THRESHOLD) {
+      header.classList.add("sc-header-hidden");
+    } else if (diff < -THRESHOLD) {
+      header.classList.remove("sc-header-hidden");
+    }
+    lastY = y;
+  }
+  window.addEventListener("scroll", function(){
+    if (!ticking) { ticking = true; window.requestAnimationFrame(onScroll); }
+  }, { passive: true });
 })();
 </script>
 <div class="sc-a11y-widget">
