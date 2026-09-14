@@ -2317,9 +2317,10 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <div class="race-number race-number-primary" id="scRaceNumFreelancer" data-real="${approvedActiveFreelancersCount}">${raceOdometerHtml(freelancerRaceStartCount)}</div>
           <div class="race-number-label">עצמאיות כבר איתנו</div>
           ${freelancerRoundMilestone ? `<p style="margin:10px 0 0;font-weight:800;font-size:15px;color:var(--arena);">🎉 כבר עברנו את ה-${freelancerRoundMilestone}!</p>` : ""}
-          <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> להגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות. עד אז ההרשמה נשארת חינמית לגמרי, ואחרי שנגיע ליעד היא עוברת למסלול בתשלום 🚀</p>
-          <p style="font-weight:700;margin:8px 0;">בואי תהיי חלק מ-SheCan מההתחלה - הצטרפי עכשיו ושלחי את הקישור שלך לחברות שגם הן יכולות להיות מייסדות 💛</p>
-          <p class="muted">שתפי את הקישור האישי שלך ועזרי לנו להגיע ליעד לפני שהוא נסגר. על כל עצמאית שנרשמת דרכך - 10 נקודות! 3 המקומות הראשונות זוכות בפרסום חינם ב-SheCan.</p>
+          <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> ${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות.</p>
+          <p class="muted">עד אז ההרשמה נשארת חינמית לגמרי, ואחרי שנגיע ליעד היא עוברת למסלול בתשלום 🚀</p>
+          <p class="muted">שתפי את הקישור האישי שלך ועזרי לנו להגיע ליעד לפני שהוא נסגר. על כל עצמאית שנרשמת דרכך - 10 נקודות!</p>
+          <p class="muted">3 העצמאיות שיירשמו דרכן הכי הרבה - יזכו בפרסום שווה בחינם!</p>
           <div style="margin-top:10px;">${freelancerRaceCtaHtml}</div>
           <p style="margin-top:14px;font-weight:700;">${freelancerRaceLeader ? `מובילה כרגע: <a class="race-leader-link" href="/freelancer/${freelancerRaceLeader.id}">${esc(freelancerRaceLeader.name)}</a> 👑` : "עדיין אין מי שמובילה - זו ההזדמנות שלך!"}</p>
           <a class="race-details-link" href="/race#freelancers">ספרי לי עוד על המירוץ ←</a>
@@ -2334,8 +2335,8 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <p class="muted">שתפי את SheCan עם חברות והגדילי את הסיכוי שלך לזכות. 4 פרסים שווים מחכים למובילות!</p>
           <div style="margin-top:10px;">${customerRaceCtaHtml}</div>
           ${customerRaceLeaders.length ? `
-          <div style="font-size:14px;font-weight:800;margin:12px 0;line-height:1.9;color:var(--dark);">
-            ${customerRaceLeaders.map((r, i) => `<div>${i + 1}. ${esc((r.name || "").trim().split(" ")[0] || r.name)} - ${r.count}${i === 0 ? " 👑" : ""}</div>`).join("")}
+          <div style="display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin:12px 0;">
+            ${customerRaceLeaders.map((r, i) => `<span style="font-size:14px;font-weight:800;color:var(--dark);background:var(--cream);border-radius:20px;padding:6px 14px;white-space:nowrap;">${i + 1}. ${esc((r.name || "").trim().split(" ")[0] || r.name)} - ${r.count}${i === 0 ? " 👑" : ""}</span>`).join("")}
           </div>
           <p class="muted" style="font-size:11.5px;">*המובילות נקבעות לפי מספר הלקוחות שהצטרפו דרכן.</p>` : `<p class="muted" style="margin-top:10px;">עדיין אין מי שמובילה - זו ההזדמנות שלך!</p>`}
           <a class="race-details-link" href="/race#customers">ספרי לי עוד על המירוץ ←</a>
