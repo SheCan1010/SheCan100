@@ -5974,7 +5974,10 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <div class="sc-modal">
       <button type="button" class="sc-modal-close" onclick="scCloseModal()" aria-label="סגירה">✕</button>
       <h2>⏰ תפסת אותנו בזמן!</h2>
-      <p>ההרשמה לנבחרת המייסדות של SheCan נפתחה!<br/>הצטרפי עכשיו ב-<strong style="color:var(--ok);font-size:19px;">0 ₪</strong> (במקום ${esc(String(d.settings.plusMonthlyPrice || 39))} ₪/חודש ב-SheCan Plus או ${esc(String(d.settings.premiumMonthlyPrice || 59))} ₪/חודש ב-SheCan Premium) - ההרשמה כרגע בחינם לחלוטין! קבלי תג יוקרתי והטבת מחיר קבועה לכל החיים על שירותי הפרימיום שלנו.<br/>אנחנו במירוץ ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות - ברגע שמגיעים ליעד, ההרשמה החינמית נסגרת.<br/>בואי לבנות איתנו את הבית של העצמאיות בישראל.</p>
+      <p>ההרשמה לנבחרת המייסדות של SheCan נפתחה! ✨<br/>זה הזמן להצטרף ל-SheCan ולהיות חלק ממאגר העצמאיות כבר מההתחלה.</p>
+      <p style="font-weight:800;font-size:16.5px;color:var(--ok);background:#e9f1e8;border-radius:10px;padding:10px 12px;">🎉 ההצטרפות כרגע ב-<span style="font-size:20px;">0 ₪</span> - ללא דמי הצטרפות וללא תשלום! 🎁</p>
+      <p>🚀 מסלול המייסדות פתוח עד שהמאגר יגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות בלבד. אחרי שנגיע ליעד, ההצטרפות תעבור למסלולים בתשלום.</p>
+      <p>💪 אז אם יש לך עסק - זה בדיוק הזמן לתפוס את המקום שלך ב-SheCan.<br/>מצטרפת עכשיו, בונה נוכחות, נהנית מההזדמנות. והכי חשוב: את יכולה להגיד - הייתי כאן מההתחלה. 💛</p>
       <button type="button" class="btn sc-modal-btn" onclick="scCloseModal()">מצטרפת!</button>
     </div>
   </div>` : ""}
