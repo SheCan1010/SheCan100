@@ -7186,7 +7186,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ${groupMessages.length ? `<div class="chat-thread" style="text-align:right;">${groupMessages.map((m) => `<div class="chat-msg ${m.authorType === "admin" ? "from-admin" : "from-freelancer"}">${m.authorType !== "admin" ? `<div style="font-size:12px;font-weight:700;opacity:.85;margin-bottom:4px;">${esc(m.authorName || "עצמאית")}</div>` : ""}${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>` : `<p class="muted">עדיין אין הודעות בקבוצה.</p>`}
     ${groupChatCanPost ? `
     <form method="post" action="/freelancer-dashboard/group-message" style="margin-top:10px;">
-      <textarea name="text" maxlength="500" placeholder="כתבי הודעה לקבוצה..." required></textarea>
+      <textarea name="text" maxlength="2000" placeholder="כתבי הודעה לקבוצה..." required></textarea>
       <button class="btn btn-small" type="submit">שליחה לקבוצה</button>
     </form>` : `<p class="muted" style="font-size:12.5px;margin-top:8px;">כרגע רק ההנהלה יכולה לפרסם בקבוצה.</p>`}
   </div>
@@ -9864,7 +9864,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       <button class="btn btn-small ${d.settings.groupChatFreelancersCanPost ? "" : "btn-outline"}" type="submit">${d.settings.groupChatFreelancersCanPost ? "🔓 עצמאיות יכולות לפרסם - לכבות" : "🔒 רק את יכולה לפרסם - לאפשר גם להן"}</button>
     </form>
     <form method="post" action="/admin/group-message" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
-      <textarea name="text" maxlength="500" placeholder="הודעה חדשה לקבוצה..." required style="flex:1;min-width:220px;"></textarea>
+      <textarea name="text" maxlength="2000" placeholder="הודעה חדשה לקבוצה..." required style="flex:1;min-width:220px;"></textarea>
       <button class="btn btn-small" type="submit">שליחה לקבוצה</button>
     </form>
     ${groupMessagesForAdmin.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מאת</th><th>הודעה</th><th>תאריך</th><th>נצפתה</th></tr>
@@ -10138,7 +10138,7 @@ route("POST", "/admin/group-message", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
   const d = db.load();
-  const text = clip(body.get("text"), 500);
+  const text = clip(body.get("text"), 2000);
   if (!text) return redirect(res, `/admin?err=${encodeURIComponent("יש לכתוב הודעה.")}#group-chat-management`);
   d.groupMessages = d.groupMessages || [];
   d.groupMessages.push({ id: db.nextId("groupMessage"), authorType: "admin", authorId: null, authorName: "SheCan", text, date: new Date().toISOString(), readBy: [] });
@@ -12092,9 +12092,13 @@ route("POST", "/support/send", async (req, res, params, query, ctx) => {
   if (!isAdminOnline(d)) {
     const notifyAdmin = d.admins[0];
     const notifyTo = d.settings.contactEmail || notifyAdmin.email;
-    sendPushToUser(notifyAdmin, { title: "הודעה חדשה מהאתר 💬", body: `${name}: ${text}`, url: "/admin" })
+    // הקישור מוביל ישר לעמוד השיחה עם הלקוחה/עצמאית הספציפית (לא רק ל-/admin הכללי) - כדי
+    // שלחיצה על ההתראה (פוש או מייל) תעביר אותה ישירות למענה, בלי צורך לחפש את השיחה בפאנל
+    // (לפי בקשה מפורשת 2026-09-14).
+    const threadPath = `/admin/support/thread/${encodeSupportKey(key)}`;
+    sendPushToUser(notifyAdmin, { title: "הודעה חדשה מהאתר 💬", body: `${name}: ${text}`, url: threadPath })
       .then((pushed) => { if (!pushed) sendEmail(notifyTo, `הודעה חדשה מהאתר - ${name}`,
-        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(name)} (${esc(email)}) כתבה:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לענות לה מפאנל הניהול.</p></div>`
+        `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(name)} (${esc(email)}) כתבה:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p><a href="${getOrigin(req)}${threadPath}" style="display:inline-block;background:#C97D8D;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:700;">לחצי כאן כדי לענות לה ישירות</a></p></div>`
       ).catch(() => {}); })
       .catch(() => {});
   }
@@ -12215,8 +12219,12 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
     btn.disabled = true;
     btn.textContent = 'חושבת...';
     fetch('/admin/support/thread/${esc(params.key)}/suggest', { method: 'POST', headers: { 'Accept': 'application/json' } })
-      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if (r.status === 401) { btn.disabled = false; btn.textContent = originalLabel; alert('ההתחברות שלך פגה. מעבירה אותך להתחברות מחדש - אחר כך אפשר לחזור לשיחה הזו.'); location.href = '/login'; return null; }
+        return r.json();
+      })
       .then(function(data){
+        if (!data) return;
         btn.disabled = false;
         btn.textContent = originalLabel;
         if (!data.ok) { alert(data.error || 'לא הצלחנו להביא הצעה כרגע, נסי שוב.'); return; }
@@ -12266,15 +12274,23 @@ route("GET", "/admin/support/thread/:key", async (req, res, params, query, ctx) 
     form.addEventListener('submit', function(ev){
       ev.preventDefault();
       var fd = new FormData(form);
+      // ההתחברות היא סשן בזיכרון בלבד - אם השרת עולה מחדש (דיפלוי/הפעלה מחדש ב-Render), הסשן נמחק
+      // וכל בקשה חוזרת עם 401, גם אם עדיין נראה כאילו היא מחוברת. בלי הבדיקה הזו זה הופיע כ"שגיאה
+      // בשליחה - נסי שוב" גנרי וחוזר בלי שום הסבר (ר' דיווח מפורש 2026-09-14) - עכשיו מסבירה בדיוק
+      // מה קרה ומעבירה אותה ישר להתחברות מחדש.
       fetch(form.action, { method: 'POST', body: fd, headers: { 'Accept': 'application/json' } })
-        .then(function(r){ return r.json(); })
+        .then(function(r){
+          if (r.status === 401) { alert('ההתחברות שלך פגה (כנראה בעקבות עדכון/הפעלה מחדש של האתר). מעבירה אותך להתחברות מחדש - אחרי זה אפשר לחזור לשיחה הזו ולשלוח את ההודעה שוב.'); location.href = '/login'; return null; }
+          return r.json();
+        })
         .then(function(data){
-          if (!data.ok) { alert('שגיאה בשליחה - נסי שוב.'); return; }
+          if (!data) return;
+          if (!data.ok) { alert(data.error || 'שגיאה בשליחה - נסי שוב.'); return; }
           appendIfNew(data.message);
           lastTs = data.message.createdAt;
           var ta = document.getElementById('scSupportInput');
           if (ta) ta.value = '';
-        }).catch(function(){ alert('שגיאה בשליחה - נסי שוב.'); });
+        }).catch(function(){ alert('שגיאה בשליחה - נסי שוב. אם זה חוזר על עצמו, כדאי לרענן את הדף ולהתחבר מחדש.'); });
     });
   })();
   </script>
