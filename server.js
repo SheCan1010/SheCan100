@@ -203,6 +203,36 @@ function isContactRateLimited(ip) {
   return recent.length > CONTACT_RATE_LIMIT_MAX;
 }
 
+// ---------- הגנת ספאם לטופס ההרשמה של עצמאיות "יש לי עסק" (נוסף 2026-09-19, אחרי שספיר דיווחה
+// על כמה עסקים שנרשמו עם שם/תחום/תיאור שהם מחרוזות אותיות אקראיות לגמרי - דפוס קלאסי של בוט
+// שממלא טפסים אוטומטית באינטרנט, לא ספאם ממוקד) - אותו דפוס בדיוק כמו טופס "צרי קשר" למעלה:
+// honeypot (ר' השדה המוסתר ב-joinFormBody) בתוספת הגבלת קצב לפי IP כרשת ביטחון נוספת. שני
+// המנגנונים "נכשלים בשקט" - ר' POST /join - כדי לא ללמד בוט להתחמק בפעם הבאה.
+const joinRateLimitMap = new Map(); // ip -> [timestamps of recent submissions]
+const JOIN_RATE_LIMIT_MAX = 5; // סף גבוה בכוונה - הרבה מעבר למה שעצמאית אמיתית תנסה
+const JOIN_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+function isJoinRateLimited(ip) {
+  const now = Date.now();
+  const recent = (joinRateLimitMap.get(ip) || []).filter((t) => now - t < JOIN_RATE_LIMIT_WINDOW_MS);
+  recent.push(now);
+  joinRateLimitMap.set(ip, recent);
+  return recent.length > JOIN_RATE_LIMIT_MAX;
+}
+
+// ---------- אותה הגנה בדיוק על טופס הרשמת הלקוחות "/signup" (נוסף 2026-09-19, אחרי שספיר
+// הראתה הרשמת לקוחה עם מייל ממתחם formtests.info - מתחם קלאסי לבדיקת טפסים אוטומטית) - honeypot
+// (ר' השדה המוסתר ב-signupFormBody) + הגבלת קצב לפי IP, "נכשלים בשקט" בדיוק כמו ב-/join.
+const signupRateLimitMap = new Map(); // ip -> [timestamps of recent submissions]
+const SIGNUP_RATE_LIMIT_MAX = 5; // סף גבוה בכוונה - הרבה מעבר למה שלקוחה אמיתית תנסה
+const SIGNUP_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+function isSignupRateLimited(ip) {
+  const now = Date.now();
+  const recent = (signupRateLimitMap.get(ip) || []).filter((t) => now - t < SIGNUP_RATE_LIMIT_WINDOW_MS);
+  recent.push(now);
+  signupRateLimitMap.set(ip, recent);
+  return recent.length > SIGNUP_RATE_LIMIT_MAX;
+}
+
 // ---------- push notifications (installable app) ----------
 // Zero-dependency Web Push (see webpush.js) - no npm package needed. Requires two env vars
 // set in Render, generated ONCE and never changed afterward (every stored subscription is
@@ -1314,12 +1344,25 @@ function tickRotation(d, queue, getId, boundary, keys, onAdvance) {
   return d.settings[keys.currentIdKey];
 }
 
+// התראה לעצמאית ברגע שהמשפט שלה הופך בפועל לטיפ השבועי בדף הבית (לפי בקשה מפורשת 2026-09-19,
+// אחרי ששאלה "האם כרגע... הן מקבלות ע"כ הודעה?" וגילינו שלא) - נקראת פעם אחת בדיוק מכל אחת
+// משלוש נקודות ה-weeklyTipPublished למטה (זכיית מרוץ, פין ידני, רוטציה אוטומטית), באותו רגע
+// שבו הדגל עובר מ-false ל-true. push קודם, מייל רק אם אין לה push פעיל (ר' notify() למעלה).
+function notifyWeeklyTipFeatured(f) {
+  notify(f, {
+    pushTitle: "משפט ההשראה שלך מככב! 💬", pushBody: "המשפט שלך מוצג עכשיו כטיפ השבועי בדף הבית של SheCan", url: "/",
+    emailSubject: "משפט ההשראה שלך מככב ב-SheCan 💬",
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>יש לך רגע לחגוג - משפט ההשראה שלך מוצג עכשיו כ"טיפ השבועי" בדף הבית של SheCan! 💬</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">"${esc(f.inspirationQuote || "")}"</p></div>`,
+  }).catch(() => {});
+}
+
 // Picks the text shown in the homepage "weekly tip" panel. An admin-picked freelancer
 // (settings.freelancerOfWeekId) wins for one cycle if set (see tickRotation above).
 // Otherwise, freelancers who filled in their own inspiration quote are rotated through
 // automatically, in the order they registered, turning over every Sunday 08:00 Israel time.
 // The freelancer whose turn actually comes up gets marked weeklyTipPublished so her dashboard
-// can lock further edits to that quote (she can still freely edit it right up until then).
+// can lock further edits to that quote (she can still freely edit it right up until then), and
+// gets notified once (see notifyWeeklyTipFeatured above).
 function getWeeklyFeature(d) {
   const withQuotes = d.freelancers
     .filter((f) => f.status === "approved" && f.active !== false && (f.inspirationQuote || "").trim())
@@ -1342,7 +1385,7 @@ function getWeeklyFeature(d) {
   if (d.settings.freelancerReferralWinnerId && d.settings.freelancerReferralWinnerUntil && israelDayKeyOffset(0) <= d.settings.freelancerReferralWinnerUntil) {
     const winner = d.freelancers.find((x) => x.id === d.settings.freelancerReferralWinnerId && x.status === "approved" && x.active !== false);
     if (winner) {
-      if ((winner.inspirationQuote || "").trim() && !winner.weeklyTipPublished) { winner.weeklyTipPublished = true; db.save(); }
+      if ((winner.inspirationQuote || "").trim() && !winner.weeklyTipPublished) { winner.weeklyTipPublished = true; db.save(); notifyWeeklyTipFeatured(winner); }
       return { text: winner.inspirationQuote || d.settings.weeklyMessage, freelancer: winner, isReferralWinner: true };
     }
   }
@@ -1351,13 +1394,13 @@ function getWeeklyFeature(d) {
     if (picked) {
       // Her own quote (if she has one) is now genuinely live on the homepage too, via the
       // manual pin - lock it from further edits just like the automatic path does below.
-      if ((picked.inspirationQuote || "").trim() && !picked.weeklyTipPublished) { picked.weeklyTipPublished = true; db.save(); }
+      if ((picked.inspirationQuote || "").trim() && !picked.weeklyTipPublished) { picked.weeklyTipPublished = true; db.save(); notifyWeeklyTipFeatured(picked); }
       return { text: picked.inspirationQuote || d.settings.weeklyMessage, freelancer: picked };
     }
   }
   if (!withQuotes.length) return { text: d.settings.weeklyMessage, freelancer: null };
   const chosen = withQuotes.find((f) => f.id === autoId) || withQuotes[0];
-  if (!chosen.weeklyTipPublished) { chosen.weeklyTipPublished = true; db.save(); }
+  if (!chosen.weeklyTipPublished) { chosen.weeklyTipPublished = true; db.save(); notifyWeeklyTipFeatured(chosen); }
   return { text: chosen.inspirationQuote, freelancer: chosen };
 }
 
@@ -1402,6 +1445,17 @@ function getCurrentStory(d) {
   if (result && !result.featuredAt) {
     result.featuredAt = new Date().toISOString();
     db.save();
+    // התראה לעצמאית ברגע שהסיפור שלה הופך בפועל ל"סיפור השבוע" (לפי בקשה מפורשת 2026-09-19,
+    // באותו דפוס בדיוק כמו notifyWeeklyTipFeatured למעלה) - נקראת פעם אחת בדיוק, באותו רגע
+    // שבו featuredAt נקבע לראשונה.
+    const storyFreelancer = d.freelancers.find((f) => f.id === result.freelancerId);
+    if (storyFreelancer) {
+      notify(storyFreelancer, {
+        pushTitle: "הסיפור שלך מככב! 📖", pushBody: "הסיפור שלך מוצג עכשיו כסיפור השבוע בדף הבית של SheCan", url: "/",
+        emailSubject: "הסיפור שלך מככב ב-SheCan 📖",
+        emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(storyFreelancer.name || "")},</p><p>יש לך רגע לחגוג - הסיפור שלך מוצג עכשיו כ"סיפור השבוע" בדף הבית של SheCan! 📖</p><p>אפשר לראות איך זה נראה: <a href="https://shecan.co.il/stories/${esc(result.id)}">shecan.co.il/stories/${esc(result.id)}</a></p></div>`,
+      }).catch(() => {});
+    }
   }
   return result;
 }
@@ -2970,13 +3024,24 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     </div>
   </div>
 
-  ${(f.galleryPhotos && f.galleryPhotos.length) ? `
-  <div class="panel profile-detail">
-    <h3 style="color:var(--gray);font-size:22px;text-align:center;">גאה להציג</h3>
-    <div class="gallery-scroll">
-      ${f.galleryPhotos.map((src) => zoomableImage(src, "", "gallery-thumb", f.galleryPhotos)).join("")}
-    </div>
-  </div>` : ""}
+  ${(f.galleryPhotos && f.galleryPhotos.length) ? (
+    !f.galleryRequiresApproval || (customer && (f.galleryApprovedCustomerIds || []).includes(customer.id)) ? `
+    <div class="panel profile-detail">
+      <h3 style="color:var(--gray);font-size:22px;text-align:center;">גאה להציג</h3>
+      <div class="gallery-scroll">
+        ${f.galleryPhotos.map((src) => zoomableImage(src, "", "gallery-thumb", f.galleryPhotos)).join("")}
+      </div>
+    </div>` : `
+    <div class="panel profile-detail" style="text-align:center;">
+      <h3 style="color:var(--gray);font-size:20px;">🔒 גלריה פרטית</h3>
+      <p class="muted">${esc(f.businessName || f.name)} בחרה שהגלריה שלה תיפתח רק אחרי אישור אישי ממנה.</p>
+      ${!isCustomer
+        ? `<a class="btn btn-small" href="${loginUrl}">התחברי כדי לבקש לצפות</a>`
+        : (customer && (f.galleryPendingRequests || []).some((r) => r.customerId === customer.id))
+        ? `<p class="muted">הבקשה שלך ממתינה לאישור שלה.</p>`
+        : `<form method="post" action="/freelancer/${f.id}/gallery-request"><button class="btn btn-small" type="submit">בקשת צפייה בגלריה</button></form>`}
+    </div>`
+  ) : ""}
 
   <div class="panel profile-detail" id="scReview">
     <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
@@ -3153,6 +3218,12 @@ route("POST", "/freelancer/:id/message", async (req, res, params, query, ctx) =>
   if (!f || !text) return redirect(res, `/freelancer/${params.id}`);
   const listing = listingId ? (f.additionalListings || []).find((l) => String(l.id) === String(listingId)) : null;
   const customer = d.customers.find((c) => c.id === ctx.session.id);
+  const successRedirect = () => redirect(res, `/freelancer/${f.id}?ok=${encodeURIComponent("ההודעה נשלחה!")}`);
+  // לקוחה שהעצמאית חסמה במפורש (ר' POST /freelancer-dashboard/message/:customerId/block, נוסף
+  // לפי בקשה מפורשת 2026-09-21) - ההודעה "נשלחת" מבחינתה (אותה חוויה בדיוק כמו הצלחה רגילה)
+  // אבל לא נשמרת ולא מגיעה לעצמאית בפועל - אותה גישת "נכשל בשקט" שכבר משמשת נגד בוטים ב-/join
+  // וב-/signup, כדי לא להזין את הצד החוסם במידע על כך שהוא נחסם.
+  if ((f.blockedCustomerIds || []).includes(ctx.session.id)) return successRedirect();
   const id = db.nextId("chat");
   d.chatMessages = d.chatMessages || [];
   d.chatMessages.push({
@@ -3160,13 +3231,49 @@ route("POST", "/freelancer/:id/message", async (req, res, params, query, ctx) =>
     listingId: listing ? listing.id : null,
     text, date: new Date().toISOString(), read: false,
   });
+  // "צינתוק" (נוסף לפי בקשה מפורשת 2026-09-21) - לכל היותר התראה אחת (פוש+מייל) לעצמאית על
+  // הודעות מאותה לקוחה בחלון של 5 שעות, גם אם היא שולחת כמה הודעות ברצף - כדי שההתראות לא
+  // "יתמסמסו" לה ותישאר תשומת לב אמיתית לכל שיחה חדשה, בלי הצפה. ההודעה עצמה תמיד נשמרת
+  // ומופיעה בדשבורד שלה מיד בכל מקרה - הטרוטל חל רק על שליחת ההתראה עצמה.
+  const NUDGE_WINDOW_MS = 5 * 60 * 60 * 1000;
+  f.messageNudgeAt = f.messageNudgeAt || {};
+  const lastNudge = f.messageNudgeAt[ctx.session.id] ? new Date(f.messageNudgeAt[ctx.session.id]).getTime() : 0;
+  if (Date.now() - lastNudge > NUDGE_WINDOW_MS) {
+    f.messageNudgeAt[ctx.session.id] = new Date().toISOString();
+    notify(f, {
+      pushTitle: "הודעה חדשה ב-SheCan", pushBody: `${customer ? customer.name : "לקוחה"}: ${text}`, url: "/freelancer-dashboard",
+      emailSubject: `הודעה חדשה ב-SheCan מ${customer ? customer.name : "לקוחה"}`,
+      emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>קיבלת הודעה חדשה מ${esc(customer ? customer.name : "לקוחה")} ב-SheCan:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לענות ישירות מהאזור האישי שלך באתר.</p></div>`,
+    }).catch(() => {});
+  }
   db.save();
-  notify(f, {
-    pushTitle: "הודעה חדשה ב-SheCan", pushBody: `${customer ? customer.name : "לקוחה"}: ${text}`, url: "/freelancer-dashboard",
-    emailSubject: `הודעה חדשה ב-SheCan מ${customer ? customer.name : "לקוחה"}`,
-    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>קיבלת הודעה חדשה מ${esc(customer ? customer.name : "לקוחה")} ב-SheCan:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p><p>אפשר לענות ישירות מהאזור האישי שלך באתר.</p></div>`,
-  }).catch(() => {});
-  redirect(res, `/freelancer/${f.id}?ok=${encodeURIComponent("ההודעה נשלחה!")}`);
+  successRedirect();
+});
+
+// בקשת צפייה בגלריה פרטית (נוסף לפי בקשה מפורשת 2026-09-21) - ר' POST
+// /admin/freelancer/:id/toggle-gallery-approval למטה, שם ספיר קובעת לכל עצמאית אם הגלריה שלה
+// גלויה לכולן כרגיל, או דורשת אישור פר-לקוחה. משמשת גם את הפרופיל הראשי וגם (ר' listing route
+// למעלה) לא את הגלריות של תחומים נוספים - אלה עדיין מוצגות כרגיל.
+route("POST", "/freelancer/:id/gallery-request", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/freelancer/${params.id}`);
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  f.galleryApprovedCustomerIds = f.galleryApprovedCustomerIds || [];
+  f.galleryPendingRequests = f.galleryPendingRequests || [];
+  const alreadyApproved = f.galleryApprovedCustomerIds.includes(ctx.session.id);
+  const alreadyPending = f.galleryPendingRequests.some((r) => r.customerId === ctx.session.id);
+  if (!alreadyApproved && !alreadyPending) {
+    f.galleryPendingRequests.push({ customerId: ctx.session.id, requestedAt: new Date().toISOString() });
+    db.save();
+    notify(f, {
+      pushTitle: "בקשה לצפייה בגלריה שלך 🔒", pushBody: `${customer ? customer.name : "לקוחה"} ביקשה לצפות בגלריה שלך`, url: "/freelancer-dashboard",
+      emailSubject: "בקשה לצפייה בגלריה שלך ב-SheCan",
+      emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>${esc(customer ? customer.name : "לקוחה")} ביקשה לצפות בגלריה הפרטית שלך ב-SheCan. אפשר לאשר או לדחות מתוך הדשבורד שלך.</p></div>`,
+    }).catch(() => {});
+  }
+  redirect(res, `/freelancer/${f.id}?ok=${encodeURIComponent("הבקשה נשלחה - נעדכן אותך כשהיא תאשר.")}`);
 });
 
 route("POST", "/freelancer/:id/favorite", async (req, res, params, query, ctx) => {
@@ -6007,6 +6114,11 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
   ${!charging ? founderPricingBlockHtml(d) : ""}
 
   <form class="panel" id="scJoinForm" method="post" action="/join" enctype="multipart/form-data" style="max-width:560px;margin:24px auto;">
+    <!-- honeypot נגד בוטים (ר' ההערה המלאה ב-POST /join, אותו דפוס בדיוק כמו טופס "צרי קשר") -
+    בן/בת אדם אמיתיים אף פעם לא רואים את השדה הזה ולכן אף פעם לא ממלאים אותו. -->
+    <div style="position:absolute;left:-9999px;top:-9999px;" aria-hidden="true">
+      <label>השאירי שדה זה ריק<input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+    </div>
     <label>🌸 שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
     <label>🌸 שם העסק<input type="text" name="businessName" id="joinBusinessName" value="${esc(p.businessName || "")}" required /></label>
     <label>🌸 מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
@@ -6181,6 +6293,13 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
 
 route("POST", "/join", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
+  // הגנת בוטים (ר' ההערה המלאה למעלה ליד isJoinRateLimited): honeypot + הגבלת קצב לפי IP.
+  // "מצליחה" בשקט עם בדיוק אותה הודעת הצלחה כמו הרשמה אמיתית, בלי ליצור שום חשבון ובלי לשלוח
+  // אף מייל/פוש - כדי לא ללמד בוט להתחמק בפעם הבאה (ר' גם הסוף הרגיל של הפונקציה למטה, שמשתמש
+  // באותה פונקציית עזר בדיוק).
+  const joinSuccessRedirect = () => redirect(res, `/login?ok=${encodeURIComponent("קיבלנו! נעבור על הפרופיל שלך ונאשר אותו בקרוב - ואז תוכלי להתחבר. טיפ: כעצמאית יש לך גם אופציה להירשם בנפרד כלקוחה - רק שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים, צריך להחליף ביניהם.")}`);
+  if ((body.get("website") || "").trim()) return joinSuccessRedirect();
+  if (isJoinRateLimited(getClientIp(req))) return joinSuccessRedirect();
   // On any validation failure below, re-render the same form (200, not a redirect) with
   // everything she already typed filled back in - see joinFormBody's `prefill` handling.
   const rerenderWithError = (d, errMsg) => {
@@ -6374,7 +6493,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       .catch(() => {});
   }
 
-  redirect(res, `/login?ok=${encodeURIComponent("קיבלנו! נעבור על הפרופיל שלך ונאשר אותו בקרוב - ואז תוכלי להתחבר. טיפ: כעצמאית יש לך גם אופציה להירשם בנפרד כלקוחה - רק שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים, צריך להחליף ביניהם.")}`);
+  joinSuccessRedirect();
 });
 
 // ----- Login / Signup / Logout -----
@@ -6443,6 +6562,12 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
   }
   if (role === "customer" && user.accountLocked) {
     return rerenderLoginError("החשבון שלך עדיין ממתין לבדיקה ידנית ולא ניתן להתחבר איתו כרגע. אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.");
+  }
+  // חסימה בעקבות דיווח של עצמאית שספיר אישרה (ר' POST /admin/customer-report/:id/block, נוסף
+  // לפי בקשה מפורשת 2026-09-21) - שדה נפרד מ-accountLocked (שמיועד רק לנעילה האוטומטית של
+  // חשבון גברי בהרשמה), כדי שפאנל הניהול יוכל להבחין בין שני הסוגים ולהציג לכל אחד הסבר נכון.
+  if (role === "customer" && user.suspended) {
+    return rerenderLoginError("החשבון שלך הושעה על ידי הנהלת SheCan ולא ניתן להתחבר איתו כרגע. אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.");
   }
   const sid = auth.createSession(role, user.id);
   const loginCookies = role === "admin" ? sessionCookie(sid) : [sessionCookie(sid), identityCookie(role, user.id)];
@@ -6571,6 +6696,11 @@ function signupFormBody(d, { refId, referrer, prefill }) {
 
   <form class="panel" method="post" action="/signup" style="max-width:420px;margin:24px auto 0;">
     <input type="hidden" name="ref" value="${esc(refId)}" />
+    <!-- honeypot נגד בוטים (ר' ההערה המלאה ב-POST /signup ו-POST /join, אותו דפוס בדיוק) -
+    בן/בת אדם אמיתיים אף פעם לא רואים את השדה הזה ולכן אף פעם לא ממלאים אותו. -->
+    <div style="position:absolute;left:-9999px;top:-9999px;" aria-hidden="true">
+      <label>השאירי שדה זה ריק<input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+    </div>
     <label>שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
     <label>מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
     <label>בחרי סיסמה<input type="password" name="password" required /></label>
@@ -6608,6 +6738,20 @@ route("GET", "/signup", async (req, res, params, query, ctx) => {
 route("POST", "/signup", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
   const d = db.load();
+  // הגנת בוטים (ר' ההערה המלאה למעלה ליד isSignupRateLimited): honeypot + הגבלת קצב לפי IP.
+  // "מצליחה" בשקט עם מסך שנראה כמו הרשמה תקינה (בלי ליצור שום חשבון/סשן/מייל אימות בפועל) -
+  // כדי לא ללמד בוט להתחמק בפעם הבאה.
+  const signupSilentSuccess = () => {
+    const fakeBody = `
+    <h1 class="section-title">ההרשמה התקבלה</h1>
+    <div class="panel" style="max-width:460px;margin:24px auto;text-align:center;">
+      <p>קיבלנו את ההרשמה שלך.</p>
+      <p style="margin-top:16px;"><a href="/">חזרה לעמוד הבית</a></p>
+    </div>`;
+    return sendHtml(res, 200, page({ title: "ההרשמה התקבלה", session: ctx.session, body: fakeBody }));
+  };
+  if ((body.get("website") || "").trim()) return signupSilentSuccess();
+  if (isSignupRateLimited(getClientIp(req))) return signupSilentSuccess();
   // שני מקרי כשל אפשריים כאן משתפים אותה צורת re-render (200 + prefill) כדי שלא תצטרך להקליד
   // הכל מחדש - קודם אימייל כפול, אחר כך (חדש, 2026-08-30) אישור הפרסום הפומבי, שנבדק גם כאן
   // בצד השרת ולא רק כ-required בטופס עצמו, בדיוק כמו כל שדה required אחר בכל טופס באתר.
@@ -7046,6 +7190,13 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     .filter((c) => c.customer)
     .sort((a, b) => new Date(b.thread[b.thread.length - 1].date) - new Date(a.thread[a.thread.length - 1].date));
 
+  // בקשות ממתינות לצפייה בגלריה הפרטית שלה (נוסף לפי בקשה מפורשת 2026-09-21) - רלוונטי רק
+  // כשספיר קבעה עבורה galleryRequiresApproval (ר' POST /admin/freelancer/:id/toggle-gallery-approval).
+  const myGalleryRequests = (f.galleryPendingRequests || [])
+    .map((r) => ({ customer: d.customers.find((c) => c.id === r.customerId), requestedAt: r.requestedAt }))
+    .filter((r) => r.customer)
+    .sort((a, b) => new Date(a.requestedAt) - new Date(b.requestedAt));
+
   const myStory = (d.stories || []).find((s) => s.freelancerId === f.id && s.status !== "rejected");
   const storyQuestions = d.settings.storyQuestions || [];
   const storyUrl = myStory ? `${getOrigin(req)}/stories/${myStory.id}` : "";
@@ -7374,23 +7525,51 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ` : `<p class="muted">הגעת למקסימום של 3 תחומים נוספים.</p>`}
   </div>
 
-  <div class="panel">
+  ${f.galleryRequiresApproval ? `
+  <div class="panel" id="scGalleryRequestsPanel">
+    <h3>🔒 בקשות צפייה בגלריה (${myGalleryRequests.length})</h3>
+    <p class="muted">הגלריה שלך מוגדרת כרגע כ"דורשת אישור פר-לקוחה" - כל בקשה כאן מחכה להחלטה שלך.</p>
+    ${myGalleryRequests.length ? myGalleryRequests.map((r) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+        <span>${esc(r.customer.name)} <span class="muted" style="font-size:12px;">· ${esc(new Date(r.requestedAt).toLocaleString("he-IL"))}</span></span>
+        <div style="display:flex;gap:6px;">
+          <form method="post" action="/freelancer-dashboard/gallery-request/${r.customer.id}/approve"><button class="btn btn-small" type="submit">✓ אישור</button></form>
+          <form method="post" action="/freelancer-dashboard/gallery-request/${r.customer.id}/decline"><button class="btn btn-small btn-outline" type="submit">✕ דחייה</button></form>
+        </div>
+      </div>
+    `).join("") : `<p class="muted">אין כרגע בקשות ממתינות.</p>`}
+  </div>` : ""}
+
+  <div class="panel" id="scMessagesPanel" style="scroll-margin-top:90px;">
     <h3>ההודעות שלך 💬</h3>
-    ${conversations.length ? conversations.map((c) => `
+    ${conversations.length ? conversations.map((c) => {
+      const isBlocked = (f.blockedCustomerIds || []).includes(c.customer.id);
+      const reportBoxId = `scReportBox-${c.customer.id}`;
+      return `
       <div style="margin-bottom:22px;">
-        <strong>${esc(c.customer.name)}</strong>
+        <strong>${esc(c.customer.name)}</strong>${isBlocked ? ` <span class="muted" style="font-size:12px;">🚫 חסומה אצלך</span>` : ""}
         <div class="chat-thread" style="margin-top:8px;">
           ${c.thread.map((m) => {
             const targetLabel = m.fromRole === "customer" ? chatMessageTargetLabel(d, f, m) : null;
             return `<div class="chat-msg from-${m.fromRole}">${targetLabel ? `<span class="chat-target-label">📁 לגבי: ${esc(targetLabel)}</span>` : ""}${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`;
           }).join("")}
         </div>
+        ${!isBlocked ? `
         <form method="post" action="/freelancer-dashboard/message/${c.customer.id}/reply">
           <textarea name="text" placeholder="כתבי תשובה..." style="min-height:70px;" required></textarea>
           <button class="btn btn-small" style="margin-top:8px;" type="submit">שליחה</button>
+        </form>` : ""}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <form method="post" action="/freelancer-dashboard/message/${c.customer.id}/block" onsubmit="return confirm(${JSON.stringify(isBlocked ? "לבטל את החסימה שלה?" : "לחסום את הלקוחה הזו? היא לא תוכל יותר לשלוח לך הודעות.")});"><button class="btn btn-small btn-outline" type="submit">${isBlocked ? "ביטול חסימה" : "🚫 חסימת הלקוחה"}</button></form>
+          <button type="button" class="btn btn-small btn-outline" onclick="var b=document.getElementById('${reportBoxId}');b.style.display=(b.style.display==='none'?'block':'none');">🚩 דיווח למנהלת</button>
+        </div>
+        <form method="post" action="/freelancer-dashboard/message/${c.customer.id}/report" id="${reportBoxId}" style="display:none;margin-top:8px;max-width:400px;">
+          <textarea name="reason" maxlength="1000" required placeholder="ספרי לנו מה קרה, ונטפל בזה..." style="min-height:60px;"></textarea>
+          <button class="btn btn-small" style="margin-top:6px;" type="submit">שליחת הדיווח</button>
         </form>
       </div>
-    `).join("") : `<p class="muted">עוד לא קיבלת הודעות - הן יופיעו כאן ברגע שלקוחה תכתוב לך מהכרטיסייה שלך.</p>`}
+    `;
+    }).join("") : `<p class="muted">עוד לא קיבלת הודעות - הן יופיעו כאן ברגע שלקוחה תכתוב לך מהכרטיסייה שלך.</p>`}
   </div>
 
   <div class="panel" id="deal-close-section" style="scroll-margin-top:90px;">
@@ -7842,6 +8021,75 @@ route("POST", "/freelancer-dashboard/message/:customerId/reply", async (req, res
     emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(customer.name || "")},</p><p>${esc(f.businessName || f.name)} ענתה לך ב-SheCan:</p><p style="background:#f3ede8;padding:12px;border-radius:8px;">${esc(text)}</p></div>`,
   }).catch(() => {});
   redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("התשובה נשלחה!")}`);
+});
+
+// חסימת לקוחה שהטרידה אצל העצמאית הספציפית הזו (נוסף לפי בקשה מפורשת 2026-09-21) - טוגל: לחיצה
+// חוזרת מבטלת את החסימה. חסימה מקומית בלבד (רק אצל העצמאית הזו) - לא חוסמת את הלקוחה באתר
+// כולו; לזה יש את "דיווח למנהלת" למטה, שמעביר את ההחלטה לספיר.
+route("POST", "/freelancer-dashboard/message/:customerId/block", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (!f) return redirect(res, "/freelancer-dashboard");
+  f.blockedCustomerIds = f.blockedCustomerIds || [];
+  const idx = f.blockedCustomerIds.indexOf(params.customerId);
+  if (idx === -1) f.blockedCustomerIds.push(params.customerId); else f.blockedCustomerIds.splice(idx, 1);
+  db.save();
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent(idx === -1 ? "הלקוחה נחסמה - היא לא תוכל יותר לשלוח לך הודעות." : "החסימה בוטלה.")}#scMessagesPanel`);
+});
+
+// דיווח של עצמאית על לקוחה (למשל הטרדה, נוסף לפי בקשה מפורשת 2026-09-21) - נכנס לתור חדש בפאנל
+// הניהול (d.customerReports, ר' GET /admin). לא חוסם אוטומטית בעצמו - ההחלטה אם לחסום את הלקוחה
+// באתר כולו תמיד אצל ספיר, בדיוק כמו כל תור אישור אחר בפאנל הניהול.
+route("POST", "/freelancer-dashboard/message/:customerId/report", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const reason = (body.get("reason") || "").trim();
+  if (!reason) return redirect(res, "/freelancer-dashboard#scMessagesPanel");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  const customer = d.customers.find((c) => c.id === params.customerId);
+  if (!f || !customer) return redirect(res, "/freelancer-dashboard");
+  d.customerReports = d.customerReports || [];
+  const id = db.nextId("customerReport");
+  d.customerReports.push({
+    id, freelancerId: f.id, customerId: customer.id, reason: clip(reason, 1000),
+    createdAt: new Date().toISOString(), status: "pending", resolution: null, resolvedAt: null,
+  });
+  db.save();
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("הדיווח נשלח למנהלת SheCan - נטפל בזה.")}#scMessagesPanel`);
+});
+
+// אישור/דחייה של בקשת צפייה בגלריה פרטית (נוסף לפי בקשה מפורשת 2026-09-21) - ר' POST
+// /freelancer/:id/gallery-request למעלה, שם נוצרת הבקשה מצד הלקוחה.
+route("POST", "/freelancer-dashboard/gallery-request/:customerId/approve", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (!f) return redirect(res, "/freelancer-dashboard");
+  f.galleryPendingRequests = (f.galleryPendingRequests || []).filter((r) => r.customerId !== params.customerId);
+  f.galleryApprovedCustomerIds = f.galleryApprovedCustomerIds || [];
+  if (!f.galleryApprovedCustomerIds.includes(params.customerId)) f.galleryApprovedCustomerIds.push(params.customerId);
+  db.save();
+  const customer = d.customers.find((c) => c.id === params.customerId);
+  if (customer) {
+    notify(customer, {
+      pushTitle: `${f.businessName || f.name} אישרה לך צפייה בגלריה 🎉`, pushBody: "אפשר לצפות בגלריה שלה עכשיו", url: `/freelancer/${f.id}`,
+      emailSubject: `${f.businessName || f.name} אישרה לך צפייה בגלריה ב-SheCan`,
+      emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(customer.name || "")},</p><p>${esc(f.businessName || f.name)} אישרה לך לצפות בגלריה הפרטית שלה - אפשר להיכנס לפרופיל שלה ולראות.</p></div>`,
+    }).catch(() => {});
+  }
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("האישור נשלח.")}#scGalleryRequestsPanel`);
+});
+
+route("POST", "/freelancer-dashboard/gallery-request/:customerId/decline", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (!f) return redirect(res, "/freelancer-dashboard");
+  f.galleryPendingRequests = (f.galleryPendingRequests || []).filter((r) => r.customerId !== params.customerId);
+  db.save();
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("הבקשה נדחתה.")}#scGalleryRequestsPanel`);
 });
 
 // ===================== "עסקה נסגרה" - אישור דו-צדדי =====================
@@ -8530,6 +8778,13 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // מייל/גישה עד שאת בוחרת לפתוח אותם ידנית כאן.
   const lockedCustomers = d.customers.filter((c) => c.accountLocked);
 
+  // דיווחים של עצמאיות על לקוחות (למשל הטרדה, נוסף לפי בקשה מפורשת 2026-09-21, ר' POST
+  // /freelancer-dashboard/message/:customerId/report) שעוד לא טופלו - וחשבונות שהושעו בעקבות
+  // דיווח שכבר אישרת (שדה נפרד מ-lockedCustomers למעלה, שמיועד רק לנעילה האוטומטית לפי מגדר).
+  const pendingCustomerReports = (d.customerReports || []).filter((r) => r.status === "pending")
+    .slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const suspendedCustomers = d.customers.filter((c) => c.suspended);
+
   // מועדון YouCan (2026-09-02) - בקשות הצטרפות שממתינות לאישור ידני (שילמה ידנית, ר' GET
   // /youcan/join) וחברות פעילות כרגע.
   const youCanPending = d.customers.filter((c) => c.youCanRequestedAt && !c.youCanMember)
@@ -8979,6 +9234,25 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         </div>` : ""}
       </div>`;
     }).join("") : `<p class="muted">אין כרגע משפטי השראה לנהל.</p>`}
+  </div>
+
+  <div class="panel" id="customer-reports" style="scroll-margin-top:90px;" data-badge="${pendingCustomerReports.length}">
+    <h3>🚩 דיווחים על לקוחות (${pendingCustomerReports.length})</h3>
+    <p class="muted">עצמאית שדיווחה על לקוחה (למשל הטרדה) - הלקוחה לא נחסמת אוטומטית, ההחלטה תמיד אצלך.</p>
+    ${pendingCustomerReports.length ? pendingCustomerReports.map((r) => {
+      const rf = d.freelancers.find((x) => x.id === r.freelancerId);
+      const rc = d.customers.find((x) => x.id === r.customerId);
+      return `
+      <div class="panel" style="background:var(--cream);">
+        <p style="margin:0 0 6px;"><strong>${esc(rf ? (rf.businessName || rf.name) : "עצמאית שהוסרה")}</strong> דיווחה על <strong>${esc(rc ? rc.name : "לקוחה שהוסרה")}</strong>${rc ? ` (${esc(rc.email)})` : ""}</p>
+        <p class="muted" style="margin:0 0 10px;">${esc(new Date(r.createdAt).toLocaleString("he-IL"))}</p>
+        <p style="background:#fff;padding:10px;border-radius:8px;">${esc(r.reason)}</p>
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+          ${rc ? `<form method="post" action="/admin/customer-report/${r.id}/block" onsubmit="return confirm(${JSON.stringify(`לחסום את ${rc.name} מהאתר?`)});"><button class="btn btn-small" type="submit">חסימת הלקוחה באתר</button></form>` : ""}
+          <form method="post" action="/admin/customer-report/${r.id}/dismiss"><button class="btn btn-small btn-outline" type="submit">דחיית הדיווח</button></form>
+        </div>
+      </div>`;
+    }).join("") : `<p class="muted">אין כרגע דיווחים ממתינים.</p>`}
   </div>
 
   <div class="panel" id="pending-approvals" style="scroll-margin-top:90px;" data-badge="${pendingFreelancers.length}">
@@ -9989,6 +10263,17 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </table></div>` : `<p class="muted">אין כרגע חשבונות נעולים.</p>`}
   </div>
 
+  <div class="panel" id="suspended-accounts" style="scroll-margin-top:90px;" data-badge="${suspendedCustomers.length}">
+    <h3>⛔ לקוחות שהושעו (${suspendedCustomers.length})</h3>
+    <p class="muted">חשבונות שהושעו בעקבות דיווח של עצמאית שאישרת (ר' "דיווחים על לקוחות" למעלה) - לא יכולות להתחבר עד שתבטלי את ההשעיה.</p>
+    ${suspendedCustomers.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>מייל</th><th>סיבה</th><th>תאריך</th><th>פעולה</th></tr>
+      ${suspendedCustomers.map((c) => `<tr>
+        <td>${esc(c.name)}</td><td>${esc(c.email)}</td><td>${esc(c.suspendedReason || "-")}</td><td>${esc(new Date(c.suspendedAt || c.createdAt).toLocaleDateString("he-IL"))}</td>
+        <td><form method="post" action="/admin/customer/${c.id}/unsuspend"><button class="btn btn-small" type="submit">ביטול ההשעיה</button></form></td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="muted">אין כרגע חשבונות מושעים.</p>`}
+  </div>
+
   <div class="panel">
     <h3>מחיר מודעה</h3>
     <p class="muted">מחיר ייחוס למודעה בצד העמוד (לשימוש שלך כשאת סוגרת עם עצמאית על פרסום - אין כרגע גבייה אוטומטית באתר, את מסמנת ידנית בטבלה למעלה מתי מודעה שולמה).</p>
@@ -10606,6 +10891,43 @@ route("POST", "/admin/customer/:id/unlock", async (req, res, params, query, ctx)
   customer.accountUnlockedAt = new Date().toISOString();
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent(`החשבון של ${customer.name} נפתח - היא יכולה להתחבר עכשיו.`)}#locked-accounts`);
+});
+
+// טיפול בדיווח של עצמאית על לקוחה (נוסף לפי בקשה מפורשת 2026-09-21, ר' POST
+// /freelancer-dashboard/message/:customerId/report) - ספיר מחליטה אם לחסום את הלקוחה באתר כולו
+// (customer.suspended, נפרד מ-accountLocked) או לדחות את הדיווח בלי שום שינוי בחשבון הלקוחה.
+route("POST", "/admin/customer-report/:id/block", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const r = (d.customerReports || []).find((x) => x.id === params.id);
+  if (!r) return redirect(res, "/admin#customer-reports");
+  const customer = d.customers.find((c) => c.id === r.customerId);
+  if (customer) {
+    customer.suspended = true;
+    customer.suspendedReason = r.reason;
+    customer.suspendedAt = new Date().toISOString();
+  }
+  r.status = "resolved";
+  r.resolution = "blocked";
+  r.resolvedAt = new Date().toISOString();
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(customer ? `${customer.name} הושעתה מהאתר.` : "הדיווח טופל.")}#customer-reports`);
+});
+
+route("POST", "/admin/customer-report/:id/dismiss", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const r = (d.customerReports || []).find((x) => x.id === params.id);
+  if (r) { r.status = "resolved"; r.resolution = "dismissed"; r.resolvedAt = new Date().toISOString(); db.save(); }
+  redirect(res, `/admin?ok=${encodeURIComponent("הדיווח נדחה.")}#customer-reports`);
+});
+
+route("POST", "/admin/customer/:id/unsuspend", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const customer = d.customers.find((c) => c.id === params.id);
+  if (customer) { customer.suspended = false; db.save(); }
+  redirect(res, `/admin?ok=${encodeURIComponent(customer ? `ההשעיה של ${customer.name} בוטלה.` : "בוצע.")}#suspended-accounts`);
 });
 
 route("POST", "/admin/toggle-youcan", async (req, res, params, query, ctx) => {
@@ -11704,6 +12026,11 @@ route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx
         <form method="post" action="/admin/freelancer/${f.id}/gallery/${idx}/remove" style="margin-top:4px;" onsubmit="return confirm('להסיר את התמונה הזו מהגלריה?');"><button class="btn btn-small btn-outline" type="submit">הסרה</button></form>
       </div>`).join("")}
     </div>` : `<p class="muted">עדיין אין תמונות גלריה.</p>`}
+    <h3 style="margin-top:18px;">מצב תצוגת הגלריה</h3>
+    <p class="muted">${f.galleryRequiresApproval ? "כרגע: הגלריה שלה מוסתרת מכולן, ונפתחת רק ללקוחה ספציפית אחרי שהיא ביקשה וקיבלה אישור אישי מהעצמאית - נוסף לפי בקשה מפורשת, כדי להימנע מהצגת תמונות מסוימות לכל המשתמשים." : "כרגע: הגלריה שלה מוצגת לכל מי שנכנסת לפרופיל, כרגיל."}</p>
+    <form method="post" action="/admin/freelancer/${f.id}/toggle-gallery-approval">
+      <button class="btn btn-small ${f.galleryRequiresApproval ? "" : "btn-outline"}" type="submit">${f.galleryRequiresApproval ? "🔒 דורשת אישור פר-לקוחה - לחצי לביטול" : "החלה למצב 'דורשת אישור פר-לקוחה'"}</button>
+    </form>
     <form method="post" action="/admin/freelancer/${f.id}/photos" enctype="multipart/form-data" style="margin-top:18px;">
       <label>תמונת פרופיל חדשה ${f.photoDataUri ? "(להחלפה)" : ""}<input type="file" name="photo" accept="image/*" /></label>
       <label>לוגו חדש ${f.logoDataUri ? "(להחלפה)" : ""}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
@@ -11718,6 +12045,26 @@ route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx
   </div>
   `;
   sendHtml(res, 200, page({ title: `תמונות - ${f.businessName || f.name}`, session: ctx.session, body, query, noSidebars: true }));
+});
+
+// קביעת מצב תצוגת הגלריה לעצמאית ספציפית (נוסף לפי בקשה מפורשת 2026-09-21) - ההחלטה תמיד אצל
+// ספיר (לא אצל העצמאית עצמה), בדרך כלל בזמן שהיא בודקת את התמונות שלה. הפעלה שולחת לעצמאית
+// הסבר מפורט (למה ואיך זה עובד מעכשיו) - כיבוי לא שולח כלום, כי זה חוזר להתנהגות הרגילה.
+route("POST", "/admin/freelancer/:id/toggle-gallery-approval", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  f.galleryRequiresApproval = !f.galleryRequiresApproval;
+  if (f.galleryRequiresApproval) {
+    notify(f, {
+      pushTitle: "עדכון לגבי הגלריה שלך ב-SheCan 🔒", pushBody: "הגלריה שלך תוצג מעכשיו רק לאחר אישור אישי שלך לכל לקוחה", url: "/freelancer-dashboard",
+      emailSubject: "עדכון לגבי הגלריה שלך ב-SheCan",
+      emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>רצינו לעדכן אותך - כדי שנימנע מהצגת תמונות מסוימות באתר לכל המשתמשים, קבענו שהגלריה שלך ב-SheCan תוצג מעכשיו רק ללקוחות שאת אישרת אישית, ולא באופן אוטומטי לכולן.</p><p>איך זה עובד: לקוחה שנכנסת לפרופיל שלך תראה כפתור "בקשת צפייה בגלריה". ברגע שהיא מבקשת, תקבלי על כך הודעה, ותוכלי לראות בדשבורד שלך מי ביקשה ולהחליט אם לאשר לה או לא - לכל לקוחה בנפרד.</p><p>שאר הפרופיל שלך (כולל תמונת הפרופיל וההטבה) ממשיך להיות מוצג לכולן כרגיל כמו היום - זה נוגע רק לתמונות הגלריה.</p><p>אם יש לך שאלות, אפשר תמיד לפנות אלינו 💛</p></div>`,
+    }).catch(() => {});
+  }
+  db.save();
+  redirect(res, `/admin/freelancer/${f.id}/photos?ok=${encodeURIComponent(f.galleryRequiresApproval ? "הגלריה עודכנה למצב 'דורש אישור פר-לקוחה', והעצמאית קיבלה הסבר." : "הגלריה חזרה להצגה רגילה לכולן.")}`);
 });
 
 route("POST", "/admin/freelancer/:id/photo/remove", async (req, res, params, query, ctx) => {
@@ -11809,6 +12156,7 @@ route("POST", "/admin/freelancer/:id/delete", async (req, res, params, query, ct
   d.reviews = (d.reviews || []).filter((r) => !(r.type === "freelancer" && r.targetId === fid));
   d.stories = (d.stories || []).filter((s) => s.freelancerId !== fid);
   d.chatMessages = (d.chatMessages || []).filter((m) => m.freelancerId !== fid);
+  d.customerReports = (d.customerReports || []).filter((r) => r.freelancerId !== fid);
   d.couponRevealEvents = (d.couponRevealEvents || []).filter((e) => e.freelancerId !== fid);
   d.deals = (d.deals || []).filter((x) => x.freelancerId !== fid);
   d.adminMessages = (d.adminMessages || []).filter((m) => m.freelancerId !== fid);
@@ -11882,6 +12230,46 @@ route("GET", "/about", async (req, res, params, query, ctx) => {
   const d = db.load();
   const body = `<h1 class="section-title">מי אנחנו</h1><div class="panel" style="text-align:right;max-width:680px;margin:0 auto;">${renderRichText(d.settings.aboutText)}</div><p class="muted" style="text-align:center;margin-top:18px;">יש לך שאלה או רצית לספר לנו משהו? <a href="/contact" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">בואי נדבר</a> ❤️</p>`;
   sendHtml(res, 200, page({ title: "מי אנחנו", session: ctx.session, body, query }));
+});
+
+// "מפת האתר" ללקוחות חדשות (נוסף לפי בקשה מפורשת 2026-09-21) - הסבר קליל אבל לא שטחי על מה זה
+// SheCan, איך משתמשים באתר, ומה ה"חוקים" של מירוץ המייסדות - בלי להיכנס לפרטים המשפטיים
+// המלאים (אלה נשארים ב-/terms וב-/privacy, עם קישור מכאן).
+route("GET", "/how-it-works", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const raceGoal = d.settings.freelancerRaceGoal || 700;
+  const body = `
+  <h1 class="section-title">איך SheCan עובד</h1>
+  <p class="muted" style="text-align:center;max-width:640px;margin:0 auto 24px;">הצצה קצרה וקלילה - מה זה בעצם SheCan, איך משתמשים באתר, ומה כל ה"חוקים" שרואים כאן ושם. בלי הפתעות.</p>
+
+  <div class="panel" style="max-width:680px;margin:0 auto 18px;text-align:right;">
+    <h3 style="margin-top:0;">💛 קודם כל - מה זה SheCan</h3>
+    <p>SheCan היא קהילה של עצמאיות בישראל - כל אחת עם עסק משלה, מכל תחום שאפשר לחשוב עליו (איפור, טיפוח, עיצוב, ייעוץ, צילום ועוד המון). האתר נותן לכל עצמאית פרופיל משלה, עם הטבה ללקוחות חדשות, וללקוחות הוא נותן דרך אחת ונוחה למצוא ולהכיר עצמאיות באמת.</p>
+  </div>
+
+  <div class="panel" style="max-width:680px;margin:0 auto 18px;text-align:right;">
+    <h3 style="margin-top:0;">🔍 מה אפשר לעשות כלקוחה</h3>
+    <p>לגלוש בין העצמאיות לפי תחום ועיר (או שירות אונליין/עד הבית), לשמור מועדפות, לצפות בקוד הטבה, לשלוח הודעה ישירה לעצמאית ולשאול כל מה שמעניין, ולכתוב המלצה אחרי שהכרתן. חלק מהפעולות (כמו שליחת הודעה או צפייה בקוד הטבה) דורשות הרשמה קצרה ופשוטה - זה כדי שההטבות באמת יגיעו למי שמתכוונת להשתמש בהן, לא לבוטים.</p>
+  </div>
+
+  <div class="panel" style="max-width:680px;margin:0 auto 18px;text-align:right;">
+    <h3 style="margin-top:0;">✅ מה עומד מאחורי כל פרופיל</h3>
+    <p>כל עצמאית שנרשמת עוברת בדיקה ואישור ידני שלנו לפני שהיא בכלל עולה לאתר - אף אחת לא מתפרסמת אוטומטית. גם ביקורות והמלצות אפשר תמיד לדווח עליהן אם משהו לא נראה תקין, ואנחנו בודקות ידנית. המטרה היא שכל מה שאת רואה כאן - אמיתי.</p>
+  </div>
+
+  <div class="panel" style="max-width:680px;margin:0 auto 18px;text-align:right;">
+    <h3 style="margin-top:0;">🏆 "מירוץ ${esc(String(raceGoal))} המייסדות" - מה זה בעצם</h3>
+    <p>עד שנגיע ל-${esc(String(raceGoal))} עצמאיות באתר, ההרשמה חינמית לגמרי לכל עצמאית - וכל מי שנרשמת בתקופה הזו (ה"מייסדות") ממשיכה בחינם גם אחרי שנגיע ליעד. התשלום, כשהוא יתחיל, יחול רק על עצמאית מספר ${esc(String(raceGoal + 1))} ואילך. זו הסיבה שהמספר הזה מוצג בכל מקום באתר - זה לא גימיק שיווקי, זה פשוט השקיפות שלנו לגבי מתי ואיך המודל העסקי משתנה. אפשר לקרוא עוד על זה, כולל על "מירוץ ההפניות" והפרסים, <a href="/race" style="color:var(--rose-dark);font-weight:800;">בעמוד הזה</a>.</p>
+  </div>
+
+  <div class="panel" style="max-width:680px;margin:0 auto 18px;text-align:right;">
+    <h3 style="margin-top:0;">🔒 פרטיות ותנאים</h3>
+    <p>יש לנו תקנון ומדיניות פרטיות מפורטים - איך אוספים מידע, איך משתמשים בו, ומה הזכויות שלך. אפשר לקרוא הכל ב<a href="/terms" style="color:var(--rose-dark);font-weight:800;">תקנון</a> וב<a href="/privacy" style="color:var(--rose-dark);font-weight:800;">מדיניות הפרטיות</a>.</p>
+  </div>
+
+  <p class="muted" style="text-align:center;margin-top:24px;">נשארה שאלה? <a href="/contact" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">בואי נדבר</a> ❤️</p>
+  `;
+  sendHtml(res, 200, page({ title: "איך SheCan עובד", session: ctx.session, body, query }));
 });
 // נקודת קצה קטנה שמחזירה JSON בלבד עם המספרים העדכניים (עצמאיות מאושרות ופעילות + סה"כ לקוחות
 // רשומות) - נוספה כדי שבלוקי "המירוץ" בדף הבית יוכלו לרענן את עצמם אוטומטית תוך כדי גלישה, בלי

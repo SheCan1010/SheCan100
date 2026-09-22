@@ -223,7 +223,7 @@ function footer() {
   <footer class="site-footer" role="contentinfo">
     <div class="container footer-inner">
       <div>SheCan <span aria-hidden="true" style="color:var(--danger);">♥</span> הבית של העצמאיות בישראל</div>
-      <nav class="footer-links" aria-label="קישורי תחתית"><a href="/about">מי אנחנו</a> · <a href="/reviews">מה אומרות עלינו</a> · <a href="/contact">דברו איתנו</a> · <a href="/coming-soon">COMING SOON</a> · <a href="/terms">תקנון</a> · <a href="/privacy">מדיניות פרטיות</a> · <a href="/accessibility">הצהרת נגישות</a></nav>
+      <nav class="footer-links" aria-label="קישורי תחתית"><a href="/about">מי אנחנו</a> · <a href="/how-it-works">איך זה עובד</a> · <a href="/reviews">מה אומרות עלינו</a> · <a href="/contact">דברו איתנו</a> · <a href="/coming-soon">COMING SOON</a> · <a href="/terms">תקנון</a> · <a href="/privacy">מדיניות פרטיות</a> · <a href="/accessibility">הצהרת נגישות</a></nav>
     </div>
   </footer>`;
 }
