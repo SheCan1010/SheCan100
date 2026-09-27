@@ -1585,6 +1585,17 @@ function zoomableImage(photoDataUri, name, cssClass, galleryList) {
   return `<div class="${cssClass} sc-zoomable" style="background-image:url(${safe});background-size:cover;background-position:center;" data-src="${safe}"${galleryAttr} onclick="${onclickCall}" title="להגדלה"></div>`;
 }
 
+// "הטבה מאומתת" (נוסף לפי בקשה מפורשת 2026-09-27) - לא סומכת על מה שהעצמאית "אומרת" שהיא נותנת,
+// אלא על אותות אמינים בלבד: עסקה שהעצמאית עצמה סימנה כ"נסגרה" (ר' POST
+// /freelancer-dashboard/deal/close) *וגם* הלקוחה אישרה אותה בעצמה (status==="confirmed", ר'
+// dealStatusLabel/POST /deal-confirm/:token) - בדיוק אותו אות שכבר משמש היום את
+// "עסקאות שנסגרו" בטבלת הניהול. המטרה: תמריץ אמיתי לעצמאיות לתת את ההטבה בפועל, כי זה בעצמו
+// מוכר אותן טוב יותר ללקוחות פוטנציאליות - לא רק "תג לכבוד".
+function hasVerifiedDeal(d, freelancerId) {
+  return (d.deals || []).some((x) => x.freelancerId === freelancerId && x.status === "confirmed");
+}
+const VERIFIED_DEAL_BADGE_TITLE = "יש כבר לקוחות שסגרו עם העסק הזה דרך SheCan ומימשו את ההטבה בפועל";
+
 function freelancerCard(f, d, opts = {}) {
   // Only badges that still make sense on the compact grid card - the delivery-method and
   // whatsapp badges moved to live below the contact details on the full profile page
@@ -1594,6 +1605,7 @@ function freelancerCard(f, d, opts = {}) {
   if (f.availableNow) badges.push(`<span class="badge badge-available">🟢 זמינה כרגע</span>`);
   if (f.isLeadingBusiness) badges.push(`<span class="badge badge-leading">👑 עסק מוביל</span>`);
   if (f.tier === "premium") badges.push(`<span class="badge">מומלצת</span>`);
+  if (hasVerifiedDeal(d, f.id)) badges.push(`<span class="badge badge-verified" title="${esc(VERIFIED_DEAL_BADGE_TITLE)}">✅ הטבה מאומתת</span>`);
   const cardClass = "card" + (f.isLeadingBusiness ? " card-leading" : "") + (isFreelancerCurrentlyAdvertised(f) ? " card-ad" : "");
   // Search by name should match either her business name or her own personal name, not
   // just whichever one happens to be shown - a customer typing the freelancer's own name
@@ -2963,6 +2975,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     f.offersOnline ? `<span class="badge badge-outline">💻 שירות אונליין</span>` : "",
     f.offersHomeVisit ? `<span class="badge badge-outline">🚗 מגיעה אלייך</span>` : "",
     isFeaturedStoryThisWeek ? `<a href="/stories/${currentStory.id}" class="badge badge-leading" style="text-decoration:none;">📖 הסיפור שלה מככב השבוע</a>` : "",
+    hasVerifiedDeal(d, f.id) ? `<span class="badge badge-verified" title="${esc(VERIFIED_DEAL_BADGE_TITLE)}">✅ הטבה מאומתת</span>` : "",
   ].filter(Boolean).join(" ");
 
   const profileReviewCount = reviewCountFor(d, f.id);
@@ -3134,6 +3147,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     l.tier === "premium" ? `<span class="badge">מומלצת</span>` : "",
     l.offersOnline ? `<span class="badge badge-outline">💻 שירות אונליין</span>` : "",
     l.offersHomeVisit ? `<span class="badge badge-outline">🚗 מגיעה אלייך</span>` : "",
+    hasVerifiedDeal(d, f.id) ? `<span class="badge badge-verified" title="${esc(VERIFIED_DEAL_BADGE_TITLE)}">✅ הטבה מאומתת</span>` : "",
   ].filter(Boolean).join(" ");
 
   const listingReviewCount = reviewCountFor(d, f.id, l.id);
@@ -8115,6 +8129,14 @@ route("POST", "/freelancer-dashboard/deal/close", async (req, res, params, query
   const customer = d.customers.find((c) => (c.email || "").toLowerCase() === email);
   if (!customer) {
     return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("לא מצאנו לקוחה רשומה עם המייל הזה - חשוב לוודא שהיא נרשמה לאתר עם המייל הזה.")}`);
+  }
+  // מניעת "עסקה" מול עצמה (נוסף לפי בקשה מפורשת 2026-09-27) - עצמאית שנרשמה גם כלקוחה עם אותו
+  // מייל (אופציה קיימת ומתועדת באתר) לא יכולה לסמן עסקה מול חשבון הלקוחה של עצמה ואז לאשר אותה
+  // בעצמה כדי "לזכות" בתגית "הטבה מאומתת" (ר' hasVerifiedDeal) בלי לקוחה אמיתית בכלל. נבדק לפי
+  // השוואת מייל בלבד, בדיוק כמו matchingCustomer בדשבורד שלה - זו אותה הגדרת "זה אני" בשני
+  // המקומות.
+  if ((f.email || "").toLowerCase() === email) {
+    return redirect(res, `/freelancer-dashboard?err=${encodeURIComponent("אי אפשר לסמן עסקה מול חשבון לקוחה שרשום עם אותו מייל שלך כעצמאית - צריך להיות מייל של לקוחה אמיתית שקיבלה ממך שירות.")}`);
   }
   d.deals = d.deals || [];
   const id = db.nextId("deal");

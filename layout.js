@@ -164,6 +164,30 @@ function pendingAdminCount() {
   return pendingFreelancers + pendingReviews + pendingStories + pendingArenaQuestions + pendingConsultations + unreadMessages + openSupportMessages + pendingListings + pendingCommunityListings;
 }
 
+// "באנר הטבות" נע (נוסף לפי בקשה מפורשת 2026-09-27) - כל עסק מאושר ופעיל עם הטבה מוצג בשורה
+// אחת "העסק: <שם> נותנת הטבה של: <ההטבה>", ושם העסק לחיץ למעבר לפרופיל שלו. הסדר מוגרל מחדש
+// בכל טעינת עמוד (Fisher-Yates) כדי שלא תמיד אותם עסקים "יזכו" להיות ראשונים בפס - מתוך כוונה
+// לתת חשיפה שווה יותר. הרשימה מוכפלת פעם אחת (deals-ticker-content פעמיים) כדי לאפשר לופ אינסופי
+// וחלק לגמרי בלי קפיצה כשה-CSS-אנימציה חוזרת להתחלה (טכניקת "seamless marquee" סטנדרטית).
+function dealsTickerHtml() {
+  const d = db.load();
+  const withDeals = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (f.dealText || "").trim());
+  if (!withDeals.length) return "";
+  const shuffled = withDeals.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const itemsHtml = shuffled.map((f) => `<span class="deals-ticker-item">העסק: <a href="/freelancer/${f.id}">${esc(f.businessName || f.name)}</a> נותנת הטבה של: ${esc(f.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
+  return `
+  <div class="deals-ticker-wrap" aria-label="הטבות מהעסקים באתר">
+    <div class="deals-ticker-track">
+      <div class="deals-ticker-content">${itemsHtml}</div>
+      <div class="deals-ticker-content" aria-hidden="true">${itemsHtml}</div>
+    </div>
+  </div>`;
+}
+
 function nav(session) {
   const d = db.load();
   const settings = d.settings;
@@ -282,6 +306,16 @@ a{color:inherit;text-decoration:none;}
 .chat-msg .chat-meta{display:block;font-size:11px;opacity:.75;margin-top:4px;}
 .chat-target-label{display:block;font-size:11px;font-weight:700;opacity:.85;margin-bottom:4px;}
 .badge-available{background:#5C7A5A;}
+.badge-verified{background:#3B6E91;cursor:help;}
+.deals-ticker-wrap{background:var(--cream);border-bottom:1px solid rgba(0,0,0,.06);overflow:hidden;white-space:nowrap;padding:9px 0;}
+.deals-ticker-track{display:flex;width:max-content;animation:sc-deals-ticker-scroll 45s linear infinite;}
+.deals-ticker-content{display:flex;align-items:center;}
+.deals-ticker-item{display:inline-flex;align-items:center;gap:4px;font-size:13.5px;white-space:nowrap;padding:0 4px;}
+.deals-ticker-item a{color:var(--rose-dark);font-weight:800;text-decoration:none;}
+.deals-ticker-item a:hover{text-decoration:underline;}
+.deals-ticker-sep{margin:0 16px;opacity:.4;}
+@keyframes sc-deals-ticker-scroll{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+@media (prefers-reduced-motion: reduce){.deals-ticker-track{animation:none;overflow-x:auto;}}
 .review-response{background:var(--cream);border-radius:8px;padding:10px 14px;margin-top:10px;font-size:14px;}
 .sc-zoomable{cursor:zoom-in;}
 .gallery-thumb{width:150px;height:150px;border-radius:10px;flex-shrink:0;background-color:var(--cream);background-repeat:no-repeat;}
@@ -1207,6 +1241,7 @@ ${d.settings.siteBackgroundImageDataUri ? `<style>body{background-image:url('${d
 <body>
 <a href="#main-content" class="skip-link">דלגי לתוכן הראשי</a>
 ${nav(session)}
+${dealsTickerHtml()}
 <main id="main-content" tabindex="-1">
 <div class="container">
 ${mainHtml}
