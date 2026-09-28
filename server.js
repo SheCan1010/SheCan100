@@ -1153,12 +1153,15 @@ function detailLine(icon, html, extraStyle = "") {
 }
 
 // Fixed-size deal badge for grid cards (used by both freelancerCard and
-// additionalListingCard) - replaces the previous variable-length deal text so every card in
-// a row stays the same height regardless of how long any one freelancer's real deal text is.
-// The real deal text is stashed in a data-deal attribute and revealed in a small floating
-// tooltip on hover/tap by scSetupDealBadges() in layout.js's client script (a JS-positioned
-// tooltip, not a CSS-only one, so it isn't clipped by .card's own overflow:hidden). Admin can
-// optionally show her site logo next to the label via settings.showLogoOnDealBadge.
+// additionalListingCard) - a short fixed label instead of the variable-length deal text
+// itself, so cards that DO show it stay a consistent height regardless of how long any one
+// freelancer's real deal text is. The real deal text is stashed in a data-deal attribute and
+// revealed in a small floating tooltip on hover/tap by scSetupDealBadges() in layout.js's
+// client script (a JS-positioned tooltip, not a CSS-only one, so it isn't clipped by .card's
+// own overflow:hidden). Admin can optionally show her site logo next to the label via
+// settings.showLogoOnDealBadge. Only ever called when dealVisibleToCustomers() is true (see
+// both call sites) - per explicit request, a card with no approved deal shows no badge at all
+// instead of a generic "הטבה בלעדית" placeholder, so card heights do vary a bit row to row now.
 // בדיקה משותפת: יש בכלל הטבה, וגם היא לא סומנה כ"הסתירי הטבה זו" (bannerHidden - ר'
 // /admin#banner-management) - bannerHidden לא מסתיר רק מהבאנר הנע אלא מכל מקום שנראה
 // ללקוחות (כרטיסייה, עמוד פרופיל מלא) - לפי בקשה מפורשת: הטבה שלא אושרה לא אמורה להשאיר
@@ -1671,7 +1674,7 @@ function freelancerCard(f, d, opts = {}) {
         ${d.settings.showProfileViewCount ? `<p class="card-reviewcount">👁️ ${f.viewCount || 0} צפיות</p>` : ""}
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${f.description ? `<div class="card-desc">${detailLine("📝", esc(f.description), "justify-content:center;")}</div>` : ""}
-        ${dealBadgeHtml(d, dealVisibleToCustomers(f) ? f.dealText : "")}
+        ${dealVisibleToCustomers(f) ? dealBadgeHtml(d, f.dealText) : ""}
         <span class="btn btn-small card-view-btn">לצפייה בפרופיל</span>
       </div>
     </div>
@@ -1713,7 +1716,7 @@ function additionalListingCard(f, listing, d) {
       <div class="card-info">
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${listing.description ? `<div class="card-desc">${detailLine("📝", esc(listing.description), "justify-content:center;")}</div>` : ""}
-        ${dealBadgeHtml(d, dealVisibleToCustomers(listing) ? listing.dealText : "")}
+        ${dealVisibleToCustomers(listing) ? dealBadgeHtml(d, listing.dealText) : ""}
         <span class="btn btn-small card-view-btn">לצפייה בפרופיל</span>
       </div>
     </div>
@@ -10177,9 +10180,15 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <h3>📢 ניהול הבאנר הנע (${bannerCandidates.length})</h3>
     <p class="muted">הבאנר הנע בראש כל עמוד מציג את כל ההטבות של עצמאיות מאושרות ופעילות שכתבו הטבה - וגם באיזה תת-תחום היא מסווגת שם. כאן אפשר לערוך איך ההטבה תוצג בבאנר בלי לגעת במה שכתוב בפרופיל עצמו (למשל לנסח מחדש), או להסתיר הטבה מסוימת - וזה משפיע גם על הבאנר וגם על הכרטיסייה/עמוד הפרופיל שלה (שום זכר להטבה לא יוצג ללקוחות במקרה כזה) - למשל אם מישהי כתבה שם משהו שלא מתאים להצגה, בלי הטבה ממשית מאחוריו. השאירי את שדה הטקסט ריק כדי להציג את הטקסט המקורי שהיא כתבה. אפשר לערוך כמה שורות שרוצים ואז ללחוץ על "שמירת כל השינויים" פעם אחת בתחתית - אין צורך לשמור שורה-שורה.${bannerReapprovalCount ? ` <strong>${bannerReapprovalCount} מחכות לאישור מחדש (מסומנות 📬 למטה, ומוצגות ראשונות).</strong>` : ""}</p>
     ${bannerCandidates.length ? `
+    <div style="display:flex;gap:8px;margin-bottom:14px;max-width:420px;flex-wrap:wrap;">
+      <input type="text" id="scBannerSearch" placeholder="חיפוש לפי שם עסק..." oninput="scFilterBannerRows()" onkeydown="if(event.key==='Enter'){event.preventDefault();scFilterBannerRows();}" autocomplete="off" style="flex:1;min-width:180px;" />
+      <button type="button" class="btn btn-small" onclick="scFilterBannerRows()">חיפוש</button>
+      <button type="button" class="btn btn-small btn-outline" onclick="document.getElementById('scBannerSearch').value='';scFilterBannerRows();">ניקוי</button>
+    </div>
+    <p id="scBannerNoResults" class="muted" style="display:none;">אין עסק שתואם את החיפוש.</p>
     <form method="post" action="/admin/banner/save-all">
       ${bannerCandidates.map((c) => `
-      <div class="panel" style="background:${c.reapprovalRequestedAt ? "#FBEAEA" : "var(--cream)"};">
+      <div class="panel sc-banner-row" data-search="${esc(c.label.toLowerCase())}" style="background:${c.reapprovalRequestedAt ? "#FBEAEA" : "var(--cream)"};">
         <p style="margin:0 0 4px;"><strong>${esc(c.label)}</strong> <a href="${esc(c.profileHref)}" target="_blank" rel="noopener">(לפרופיל)</a>${!c.liveInBanner ? ` <span class="muted">- לא מוצגת כרגע (העצמאית לא מאושרת/פעילה)</span>` : ""}</p>
         ${c.reapprovalRequestedAt ? `<p style="margin:0 0 8px;font-weight:700;">📬 ביקשה אישור מחדש ב-${esc(new Date(c.reapprovalRequestedAt).toLocaleString("he-IL"))} - כדאי לבדוק את הטקסט העדכני למטה ולאשר (להסיר את הסימון "הסתירי") אם זו הטבה ממשית.</p>` : ""}
         <p class="muted" style="margin:0 0 10px;">הטקסט שהיא כתבה בפרופיל: ${esc(c.originalText)}</p>
@@ -10190,7 +10199,21 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         </div>
       </div>`).join("")}
       <button class="btn" type="submit" style="margin-top:10px;">שמירת כל השינויים</button>
-    </form>` : `<p class="muted">אף עצמאית עוד לא כתבה הטבה בפרופיל שלה.</p>`}
+    </form>
+    <script>
+    function scFilterBannerRows(){
+      var q = (document.getElementById("scBannerSearch").value || "").trim().toLowerCase();
+      var rows = document.querySelectorAll("#banner-management .sc-banner-row");
+      var visibleCount = 0;
+      rows.forEach(function(row){
+        var match = !q || (row.getAttribute("data-search") || "").indexOf(q) !== -1;
+        row.style.display = match ? "" : "none";
+        if (match) visibleCount++;
+      });
+      var noResults = document.getElementById("scBannerNoResults");
+      if (noResults) noResults.style.display = visibleCount === 0 ? "" : "none";
+    }
+    </script>` : `<p class="muted">אף עצמאית עוד לא כתבה הטבה בפרופיל שלה.</p>`}
   </div>
 
   <div class="panel" data-badge="${unreadMessages}">
