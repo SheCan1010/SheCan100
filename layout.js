@@ -380,7 +380,14 @@ a{color:inherit;text-decoration:none;}
 .deals-ticker-subcat{font-size:11px;opacity:.65;font-weight:600;}
 .deals-ticker-sep{margin:0 16px;opacity:.4;}
 @media (max-width:720px){.deals-ticker-label{font-size:11px;padding:9px 9px;} .deals-ticker-item{font-size:12.5px;}}
-@keyframes sc-deals-ticker-scroll{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+/* translateX חיובי (לא שלילי!) בכוונה - זה אתר RTL, אז הבלוק של הסרט "צמוד" מטבעו לקצה
+   הימני של המכולה ומתפשט שמאלה (הפוך מ-LTR, ששם הבלוק צמוד לקצה השמאלי ומתפשט ימינה). כדי
+   שהטריק של "שני עותקים זהים + הזזה בדיוק ברוחב עותק אחד = לופ חלק בלי קפיצה" יישאר גם ללא
+   רווח ריק באמצע האנימציה, ההזזה צריכה ללכת לכיוון ההפוך מ-LTR - ימינה (חיובי), לא שמאלה
+   (שלילי). עם translateX שלילי (כמו שהיה) הסרט "נגמר" בהדרגה מהצד הימני (ליד התווית) ונחשף שם
+   רקע ריק - בדיוק התקלה שדווחה. אומת בפועל עם מדידת רוחב אמיתי בדפדפן בכמה נקודות זמן
+   באנימציה (0%, 25%, 50%) - עם translateX(50%) המכולה מכוסה לגמרי בכל נקודת זמן. */
+@keyframes sc-deals-ticker-scroll{from{transform:translateX(0);}to{transform:translateX(50%);}}
 @media (prefers-reduced-motion: reduce){.deals-ticker-track{animation:none;overflow-x:auto;}}
 .review-response{background:var(--cream);border-radius:8px;padding:10px 14px;margin-top:10px;font-size:14px;}
 .sc-zoomable{cursor:zoom-in;}
