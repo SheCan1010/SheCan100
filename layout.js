@@ -169,19 +169,34 @@ function pendingAdminCount() {
 // בכל טעינת עמוד (Fisher-Yates) כדי שלא תמיד אותם עסקים "יזכו" להיות ראשונים בפס - מתוך כוונה
 // לתת חשיפה שווה יותר. הרשימה מוכפלת פעם אחת (deals-ticker-content פעמיים) כדי לאפשר לופ אינסופי
 // וחלק לגמרי בלי קפיצה כשה-CSS-אנימציה חוזרת להתחלה (טכניקת "seamless marquee" סטנדרטית).
+// כולל את כל ההטבות שקיימות (נוסף לפי בקשה מפורשת 2026-09-27, בלי שום סינון לפי עסקאות מאומתות
+// - זה תמיד היה כך, ר' hasVerifiedDeal שמשמש רק לתגית הנפרדת) - גם ההטבה הראשית של כל עצמאית
+// וגם ההטבות של "תחומים נוספים" שלה (additionalListings, עד 3 לכל עצמאית) שיש להן דף פרופיל
+// נפרד משלהן. מהירות התנועה נקבעת לפי מספר הפריטים (לא זמן קבוע) כדי שהיא תישאר קריאה ונוחה
+// גם כשמצטרפות עוד ועוד עסקים עם הטבות, ולא תואץ ככל שיש יותר פריטים לדחוס לאותו זמן.
 function dealsTickerHtml() {
   const d = db.load();
-  const withDeals = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (f.dealText || "").trim());
-  if (!withDeals.length) return "";
-  const shuffled = withDeals.slice();
+  const entries = [];
+  d.freelancers.forEach((f) => {
+    if (f.status !== "approved" || f.active === false) return;
+    if ((f.dealText || "").trim()) entries.push({ label: f.businessName || f.name, dealText: f.dealText, href: `/freelancer/${f.id}` });
+    (f.additionalListings || []).forEach((l) => {
+      if (l.status === "approved" && (l.dealText || "").trim()) entries.push({ label: l.businessName || f.businessName || f.name, dealText: l.dealText, href: `/freelancer/${f.id}/listing/${l.id}` });
+    });
+  });
+  if (!entries.length) return "";
+  const shuffled = entries.slice();
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  const itemsHtml = shuffled.map((f) => `<span class="deals-ticker-item">העסק: <a href="/freelancer/${f.id}">${esc(f.businessName || f.name)}</a> נותנת הטבה של: ${esc(f.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
+  const itemsHtml = shuffled.map((e) => `<span class="deals-ticker-item">העסק: <a href="${e.href}">${esc(e.label)}</a> נותנת הטבה של: ${esc(e.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
+  // קצב איטי ונוח לקריאה (כ-16 שניות לפריט, מינימום 50 שניות ללופ שלם) - לא זמן קבוע לכל האתר,
+  // כדי שהמהירות בפועל (כמה זמן כל פריט "נשאר על המסך") תישאר דומה גם כשמצטרפות עוד עצמאיות.
+  const durationSeconds = Math.max(50, shuffled.length * 16);
   return `
   <div class="deals-ticker-wrap" aria-label="הטבות מהעסקים באתר">
-    <div class="deals-ticker-track">
+    <div class="deals-ticker-track" style="animation-duration:${durationSeconds}s;">
       <div class="deals-ticker-content">${itemsHtml}</div>
       <div class="deals-ticker-content" aria-hidden="true">${itemsHtml}</div>
     </div>
@@ -239,6 +254,7 @@ function nav(session) {
         <nav class="nav-side" aria-label="חשבון">${right}</nav>
       </div>
     </header>
+    ${dealsTickerHtml()}
   </div>`;
 }
 
@@ -1241,7 +1257,6 @@ ${d.settings.siteBackgroundImageDataUri ? `<style>body{background-image:url('${d
 <body>
 <a href="#main-content" class="skip-link">דלגי לתוכן הראשי</a>
 ${nav(session)}
-${dealsTickerHtml()}
 <main id="main-content" tabindex="-1">
 <div class="container">
 ${mainHtml}
