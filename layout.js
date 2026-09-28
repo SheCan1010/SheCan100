@@ -183,6 +183,18 @@ function shuffleArray(arr) {
   return a;
 }
 
+// שם תת-התחום שיוצג בסוגריים קטנות אחרי שם העסק בבאנר (למשל "(איפור כלות)") - נופל חזרה לשם
+// התחום הראשי אם לא סומן תת-תחום ספציפי, ולמחרוזת ריקה (בלי סוגריים בכלל) אם גם זה חסר.
+// תומך גם במערך תתי-תחום (subcategoryIds, כמו שיש לעצמאית עצמה) וגם בערך יחיד (subcategoryId,
+// כמו שיש לליסטינג נוסף).
+function tickerSubcatLabel(d, categoryId, subcategoryIdsOrId) {
+  const cat = (d.categories || []).find((c) => c.id === categoryId);
+  if (!cat) return "";
+  const ids = Array.isArray(subcategoryIdsOrId) ? subcategoryIdsOrId : (subcategoryIdsOrId ? [subcategoryIdsOrId] : []);
+  const names = ids.map((id) => (((cat.subcategories || []).find((s) => s.id === id)) || {}).name).filter(Boolean);
+  return names.join(", ") || cat.name || "";
+}
+
 function dealsTickerHtml() {
   const d = db.load();
   const entries = [];
@@ -192,11 +204,21 @@ function dealsTickerHtml() {
     // מותאם לבאנר משתמשים בו במקום ב-dealText המקורי, וכש-bannerHidden מסומן מדלגים על ההטבה
     // הזו לגמרי, בלי לגעת בפרופיל של העצמאית עצמה.
     if ((f.dealText || "").trim() && !f.bannerHidden) {
-      entries.push({ label: f.businessName || f.name, dealText: (f.bannerText || "").trim() || f.dealText, href: `/freelancer/${f.id}` });
+      entries.push({
+        label: f.businessName || f.name,
+        subcat: tickerSubcatLabel(d, f.categoryId, f.subcategoryIds),
+        dealText: (f.bannerText || "").trim() || f.dealText,
+        href: `/freelancer/${f.id}`,
+      });
     }
     (f.additionalListings || []).forEach((l) => {
       if (l.status === "approved" && (l.dealText || "").trim() && !l.bannerHidden) {
-        entries.push({ label: l.businessName || f.businessName || f.name, dealText: (l.bannerText || "").trim() || l.dealText, href: `/freelancer/${f.id}/listing/${l.id}` });
+        entries.push({
+          label: l.businessName || f.businessName || f.name,
+          subcat: tickerSubcatLabel(d, l.categoryId, l.subcategoryId),
+          dealText: (l.bannerText || "").trim() || l.dealText,
+          href: `/freelancer/${f.id}/listing/${l.id}`,
+        });
       }
     });
   });
@@ -210,7 +232,7 @@ function dealsTickerHtml() {
   const rounds = Math.max(1, Math.ceil(MIN_ITEMS / entries.length));
   let padded = [];
   for (let r = 0; r < rounds; r++) padded = padded.concat(shuffleArray(entries));
-  const itemsHtml = padded.map((e) => `<span class="deals-ticker-item">העסק: <a href="${e.href}">${esc(e.label)}</a> נותנת הטבה של: ${esc(e.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
+  const itemsHtml = padded.map((e) => `<span class="deals-ticker-item">העסק: <a href="${e.href}">${esc(e.label)}</a>${e.subcat ? ` <span class="deals-ticker-subcat">(${esc(e.subcat)})</span>` : ""} נותנת הטבה של: ${esc(e.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
   // קצב איטי ונוח לקריאה (כ-16 שניות לפריט, מינימום 50 שניות ללופ שלם) - לא זמן קבוע לכל האתר,
   // כדי שהמהירות בפועל (כמה זמן כל פריט "נשאר על המסך") תישאר דומה גם כשמצטרפות עוד עצמאיות
   // וגם כשהרשימה מרופדת בסיבובים נוספים.
@@ -355,6 +377,7 @@ a{color:inherit;text-decoration:none;}
 .deals-ticker-item{display:inline-flex;align-items:center;gap:4px;font-size:13.5px;white-space:nowrap;padding:0 4px;}
 .deals-ticker-item a{color:var(--rose-dark);font-weight:800;text-decoration:none;}
 .deals-ticker-item a:hover{text-decoration:underline;}
+.deals-ticker-subcat{font-size:11px;opacity:.65;font-weight:600;}
 .deals-ticker-sep{margin:0 16px;opacity:.4;}
 @media (max-width:720px){.deals-ticker-label{font-size:11px;padding:9px 9px;} .deals-ticker-item{font-size:12.5px;}}
 @keyframes sc-deals-ticker-scroll{from{transform:translateX(0);}to{transform:translateX(-50%);}}
