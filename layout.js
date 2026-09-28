@@ -239,7 +239,7 @@ function dealsTickerHtml() {
   const durationSeconds = Math.max(50, padded.length * 16);
   return `
   <div class="deals-ticker-wrap" aria-label="הטבות מהעסקים באתר">
-    <div class="deals-ticker-label">הטבות SheCan בלעדיות</div>
+    <div class="deals-ticker-label">הטבות<br>SheCan<br>בלעדיות</div>
     <div class="deals-ticker-scroll">
     <div class="deals-ticker-track" style="animation-duration:${durationSeconds}s;">
       <div class="deals-ticker-content">${itemsHtml}</div>
@@ -370,7 +370,7 @@ a{color:inherit;text-decoration:none;}
 .badge-available{background:#5C7A5A;}
 .badge-verified{background:#3B6E91;cursor:help;}
 .deals-ticker-wrap{background:var(--cream);border-bottom:1px solid rgba(0,0,0,.06);display:flex;align-items:stretch;}
-.deals-ticker-label{flex:0 0 auto;display:flex;align-items:center;background:var(--rose-dark);color:var(--white);font-weight:800;font-size:12.5px;padding:9px 14px;white-space:nowrap;}
+.deals-ticker-label{flex:0 0 auto;display:flex;align-items:center;justify-content:center;text-align:center;background:var(--rose-dark);color:var(--white);font-weight:800;font-size:11px;line-height:1.3;padding:4px 9px;}
 .deals-ticker-scroll{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;padding:9px 0;}
 .deals-ticker-track{display:flex;width:max-content;animation:sc-deals-ticker-scroll 45s linear infinite;}
 .deals-ticker-content{display:flex;align-items:center;}
@@ -379,7 +379,7 @@ a{color:inherit;text-decoration:none;}
 .deals-ticker-item a:hover{text-decoration:underline;}
 .deals-ticker-subcat{font-size:11px;opacity:.65;font-weight:600;}
 .deals-ticker-sep{margin:0 16px;opacity:.4;}
-@media (max-width:720px){.deals-ticker-label{font-size:11px;padding:9px 9px;} .deals-ticker-item{font-size:12.5px;}}
+@media (max-width:720px){.deals-ticker-label{font-size:9.5px;padding:4px 7px;} .deals-ticker-item{font-size:12.5px;}}
 /* translateX חיובי (לא שלילי!) בכוונה - זה אתר RTL, אז הבלוק של הסרט "צמוד" מטבעו לקצה
    הימני של המכולה ומתפשט שמאלה (הפוך מ-LTR, ששם הבלוק צמוד לקצה השמאלי ומתפשט ימינה). כדי
    שהטריק של "שני עותקים זהים + הזזה בדיוק ברוחב עותק אחד = לופ חלק בלי קפיצה" יישאר גם ללא
