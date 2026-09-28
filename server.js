@@ -8743,6 +8743,39 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     };
   });
 
+  // ניהול ידני של הבאנר הנע בראש האתר (לפי בקשה מפורשת) - הבאנר עצמו (ר' dealsTickerHtml
+  // ב-layout.js) לוקח כברירת מחדל את ה-dealText שכל עצמאית/ליסטינג נוסף כתבה בפרופיל שלה, אבל
+  // כאן אפשר לדרוס את הטקסט שיוצג בבאנר בלי לגעת במה שכתוב בפרופיל עצמו, וגם להסתיר לגמרי
+  // הטבה מהבאנר (בלי למחוק אותה מהפרופיל) - למשל כשמישהי כתבה שם משהו שלא ראוי להצגה בבאנר
+  // הראשי. רק הטבות שבאמת יש להן טקסט (dealText לא ריק) הן בכלל מועמדות לניהול כאן.
+  const bannerCandidates = [];
+  d.freelancers.forEach((f) => {
+    if ((f.dealText || "").trim()) {
+      bannerCandidates.push({
+        updateAction: `/admin/banner/freelancer/${f.id}/update`,
+        label: f.businessName || f.name,
+        profileHref: `/freelancer/${f.id}`,
+        originalText: f.dealText,
+        overrideText: f.bannerText || "",
+        hidden: !!f.bannerHidden,
+        liveInBanner: f.status === "approved" && f.active !== false,
+      });
+    }
+    (f.additionalListings || []).forEach((l) => {
+      if ((l.dealText || "").trim()) {
+        bannerCandidates.push({
+          updateAction: `/admin/banner/freelancer/${f.id}/listing/${l.id}/update`,
+          label: `${l.businessName || f.businessName || f.name} (ליסטינג נוסף)`,
+          profileHref: `/freelancer/${f.id}/listing/${l.id}`,
+          originalText: l.dealText,
+          overrideText: l.bannerText || "",
+          hidden: !!l.bannerHidden,
+          liveInBanner: f.status === "approved" && f.active !== false && l.status === "approved",
+        });
+      }
+    });
+  });
+
   const revealEvents = (d.couponRevealEvents || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
   const revealsByCategory = {};
   revealEvents.forEach((ev) => {
@@ -10072,6 +10105,22 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td>${x.customerConfirmedAt ? esc(new Date(x.customerConfirmedAt).toLocaleString("he-IL")) : "-"}</td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין לא דווחה אף עסקה באתר.</p>`}
+  </div>
+
+  <div class="panel" id="banner-management" style="scroll-margin-top:90px;">
+    <h3>📢 ניהול הבאנר הנע (${bannerCandidates.length})</h3>
+    <p class="muted">הבאנר הנע בראש כל עמוד מציג את כל ההטבות של עצמאיות מאושרות ופעילות שכתבו הטבה. כאן אפשר לערוך איך ההטבה תוצג בבאנר בלי לגעת במה שכתוב בפרופיל עצמו (למשל לנסח מחדש), או להסתיר הטבה מסוימת מהבאנר בלי למחוק אותה מהפרופיל - למשל אם מישהי כתבה שם משהו שלא מתאים להצגה. השאירי את השדה ריק כדי להציג את הטקסט המקורי שהיא כתבה.</p>
+    ${bannerCandidates.length ? bannerCandidates.map((c) => `
+      <div class="panel" style="background:var(--cream);">
+        <p style="margin:0 0 4px;"><strong>${esc(c.label)}</strong> <a href="${esc(c.profileHref)}" target="_blank" rel="noopener">(לפרופיל)</a>${!c.liveInBanner ? ` <span class="muted">- לא מוצגת כרגע בבאנר (העצמאית לא מאושרת/פעילה)</span>` : ""}</p>
+        <p class="muted" style="margin:0 0 10px;">הטקסט שהיא כתבה בפרופיל: ${esc(c.originalText)}</p>
+        <form method="post" action="${esc(c.updateAction)}" style="display:flex;flex-direction:column;gap:8px;max-width:480px;">
+          <label style="font-size:13px;font-weight:700;">טקסט לתצוגה בבאנר (ריק = יוצג הטקסט המקורי שלמעלה)</label>
+          <input type="text" name="bannerText" value="${esc(c.overrideText)}" placeholder="${esc(c.originalText)}" />
+          <label style="display:flex;align-items:center;gap:8px;font-weight:700;"><input type="checkbox" name="bannerHidden" value="1" ${c.hidden ? "checked" : ""} style="width:auto;" /> הסתירי הטבה זו מהבאנר</label>
+          <button class="btn btn-small" type="submit" style="align-self:flex-start;">שמירה</button>
+        </form>
+      </div>`).join("") : `<p class="muted">אף עצמאית עוד לא כתבה הטבה בפרופיל שלה.</p>`}
   </div>
 
   <div class="panel" data-badge="${unreadMessages}">
@@ -12087,6 +12136,33 @@ route("POST", "/admin/freelancer/:id/toggle-gallery-approval", async (req, res, 
   }
   db.save();
   redirect(res, `/admin/freelancer/${f.id}/photos?ok=${encodeURIComponent(f.galleryRequiresApproval ? "הגלריה עודכנה למצב 'דורש אישור פר-לקוחה', והעצמאית קיבלה הסבר." : "הגלריה חזרה להצגה רגילה לכולן.")}`);
+});
+
+// ניהול ידני של הבאנר הנע (ר' bannerCandidates ב-GET /admin ופאנל "ניהול הבאנר הנע") - עורכת
+// את הטקסט שיוצג בבאנר בלי לגעת בפרופיל עצמו, ו/או מסתירה הטבה ספציפית מהבאנר בלי למחוק אותה.
+route("POST", "/admin/banner/freelancer/:id/update", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}#banner-management`);
+  f.bannerText = (body.get("bannerText") || "").trim();
+  f.bannerHidden = body.get("bannerHidden") === "1";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הבאנר עודכן.")}#banner-management`);
+});
+
+route("POST", "/admin/banner/freelancer/:id/listing/:lid/update", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  const l = f && (f.additionalListings || []).find((x) => String(x.id) === String(params.lid));
+  if (!f || !l) return redirect(res, `/admin?err=${encodeURIComponent("הליסטינג לא נמצא.")}#banner-management`);
+  l.bannerText = (body.get("bannerText") || "").trim();
+  l.bannerHidden = body.get("bannerHidden") === "1";
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הבאנר עודכן.")}#banner-management`);
 });
 
 route("POST", "/admin/freelancer/:id/photo/remove", async (req, res, params, query, ctx) => {

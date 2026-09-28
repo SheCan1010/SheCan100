@@ -188,9 +188,16 @@ function dealsTickerHtml() {
   const entries = [];
   d.freelancers.forEach((f) => {
     if (f.status !== "approved" || f.active === false) return;
-    if ((f.dealText || "").trim()) entries.push({ label: f.businessName || f.name, dealText: f.dealText, href: `/freelancer/${f.id}` });
+    // bannerText/bannerHidden: עריכה ידנית מהאדמין (ר' /admin#banner-management) - כשיש טקסט
+    // מותאם לבאנר משתמשים בו במקום ב-dealText המקורי, וכש-bannerHidden מסומן מדלגים על ההטבה
+    // הזו לגמרי, בלי לגעת בפרופיל של העצמאית עצמה.
+    if ((f.dealText || "").trim() && !f.bannerHidden) {
+      entries.push({ label: f.businessName || f.name, dealText: (f.bannerText || "").trim() || f.dealText, href: `/freelancer/${f.id}` });
+    }
     (f.additionalListings || []).forEach((l) => {
-      if (l.status === "approved" && (l.dealText || "").trim()) entries.push({ label: l.businessName || f.businessName || f.name, dealText: l.dealText, href: `/freelancer/${f.id}/listing/${l.id}` });
+      if (l.status === "approved" && (l.dealText || "").trim() && !l.bannerHidden) {
+        entries.push({ label: l.businessName || f.businessName || f.name, dealText: (l.bannerText || "").trim() || l.dealText, href: `/freelancer/${f.id}/listing/${l.id}` });
+      }
     });
   });
   if (!entries.length) return "";
@@ -210,9 +217,12 @@ function dealsTickerHtml() {
   const durationSeconds = Math.max(50, padded.length * 16);
   return `
   <div class="deals-ticker-wrap" aria-label="הטבות מהעסקים באתר">
+    <div class="deals-ticker-label">הטבות SheCan בלעדיות</div>
+    <div class="deals-ticker-scroll">
     <div class="deals-ticker-track" style="animation-duration:${durationSeconds}s;">
       <div class="deals-ticker-content">${itemsHtml}</div>
       <div class="deals-ticker-content" aria-hidden="true">${itemsHtml}</div>
+    </div>
     </div>
   </div>`;
 }
@@ -337,13 +347,16 @@ a{color:inherit;text-decoration:none;}
 .chat-target-label{display:block;font-size:11px;font-weight:700;opacity:.85;margin-bottom:4px;}
 .badge-available{background:#5C7A5A;}
 .badge-verified{background:#3B6E91;cursor:help;}
-.deals-ticker-wrap{background:var(--cream);border-bottom:1px solid rgba(0,0,0,.06);overflow:hidden;white-space:nowrap;padding:9px 0;}
+.deals-ticker-wrap{background:var(--cream);border-bottom:1px solid rgba(0,0,0,.06);display:flex;align-items:stretch;}
+.deals-ticker-label{flex:0 0 auto;display:flex;align-items:center;background:var(--rose-dark);color:var(--white);font-weight:800;font-size:12.5px;padding:9px 14px;white-space:nowrap;}
+.deals-ticker-scroll{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;padding:9px 0;}
 .deals-ticker-track{display:flex;width:max-content;animation:sc-deals-ticker-scroll 45s linear infinite;}
 .deals-ticker-content{display:flex;align-items:center;}
 .deals-ticker-item{display:inline-flex;align-items:center;gap:4px;font-size:13.5px;white-space:nowrap;padding:0 4px;}
 .deals-ticker-item a{color:var(--rose-dark);font-weight:800;text-decoration:none;}
 .deals-ticker-item a:hover{text-decoration:underline;}
 .deals-ticker-sep{margin:0 16px;opacity:.4;}
+@media (max-width:720px){.deals-ticker-label{font-size:11px;padding:9px 9px;} .deals-ticker-item{font-size:12.5px;}}
 @keyframes sc-deals-ticker-scroll{from{transform:translateX(0);}to{transform:translateX(-50%);}}
 @media (prefers-reduced-motion: reduce){.deals-ticker-track{animation:none;overflow-x:auto;}}
 .review-response{background:var(--cream);border-radius:8px;padding:10px 14px;margin-top:10px;font-size:14px;}
