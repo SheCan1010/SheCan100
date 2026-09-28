@@ -1159,6 +1159,14 @@ function detailLine(icon, html, extraStyle = "") {
 // tooltip on hover/tap by scSetupDealBadges() in layout.js's client script (a JS-positioned
 // tooltip, not a CSS-only one, so it isn't clipped by .card's own overflow:hidden). Admin can
 // optionally show her site logo next to the label via settings.showLogoOnDealBadge.
+// בדיקה משותפת: יש בכלל הטבה, וגם היא לא סומנה כ"הסתירי הטבה זו" (bannerHidden - ר'
+// /admin#banner-management) - bannerHidden לא מסתיר רק מהבאנר הנע אלא מכל מקום שנראה
+// ללקוחות (כרטיסייה, עמוד פרופיל מלא) - לפי בקשה מפורשת: הטבה שלא אושרה לא אמורה להשאיר
+// שום עקבות בפני לקוחה. entity יכולה להיות עצמאית (f) או ליסטינג נוסף (l) - לשניהם אותם שדות.
+function dealVisibleToCustomers(entity) {
+  return !!(entity && (entity.dealText || "").trim() && !entity.bannerHidden);
+}
+
 function dealBadgeHtml(d, dealText) {
   const logoImg = (d.settings.showLogoOnDealBadge && d.settings.siteLogoDataUri)
     ? `<img src="${d.settings.siteLogoDataUri}" alt="" class="card-deal-badge-logo" />`
@@ -1663,7 +1671,7 @@ function freelancerCard(f, d, opts = {}) {
         ${d.settings.showProfileViewCount ? `<p class="card-reviewcount">👁️ ${f.viewCount || 0} צפיות</p>` : ""}
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${f.description ? `<div class="card-desc">${detailLine("📝", esc(f.description), "justify-content:center;")}</div>` : ""}
-        ${dealBadgeHtml(d, f.dealText)}
+        ${dealBadgeHtml(d, dealVisibleToCustomers(f) ? f.dealText : "")}
         <span class="btn btn-small card-view-btn">לצפייה בפרופיל</span>
       </div>
     </div>
@@ -1705,7 +1713,7 @@ function additionalListingCard(f, listing, d) {
       <div class="card-info">
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${listing.description ? `<div class="card-desc">${detailLine("📝", esc(listing.description), "justify-content:center;")}</div>` : ""}
-        ${dealBadgeHtml(d, listing.dealText)}
+        ${dealBadgeHtml(d, dealVisibleToCustomers(listing) ? listing.dealText : "")}
         <span class="btn btn-small card-view-btn">לצפייה בפרופיל</span>
       </div>
     </div>
@@ -3025,6 +3033,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     ${heroBadges ? `<div style="margin-top:10px;">${heroBadges}</div>` : ""}
     ${f.description ? `<p class="profile-header-desc">${esc(f.description)}</p>` : ""}
 
+    ${dealVisibleToCustomers(f) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(f.dealText || ""))}
       ${f.dealCode ? (
@@ -3034,7 +3043,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
           ? youCanGateBoxHtml(`scYouCanGate-${f.id}`, `/freelancer/${f.id}`, d)
           : `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this)">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(f.dealCode)}</div>`
       ) : ""}
-    </div>
+    </div>` : ""}
   </div>
 
   ${(f.galleryPhotos && f.galleryPhotos.length) ? (
@@ -3089,7 +3098,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const profileCatLabel = subcatNames(d, f.categoryId, f.subcategoryIds) || catName(d, f.categoryId);
   const profileCityLabel = f.cityId ? cityName(d, f.cityId) : "";
   const profileDescription = clip((f.description || "").trim(), 160) ||
-    `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}. ${f.dealText ? `הטבה: ${f.dealText}. ` : ""}מצאי עוד עצמאיות ב-SheCan.`;
+    `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}. ${dealVisibleToCustomers(f) ? `הטבה: ${f.dealText}. ` : ""}מצאי עוד עצמאיות ב-SheCan.`;
   const profileTitle = `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}`;
   const profileCanonical = `${getOrigin(req)}/freelancer/${f.id}`;
   const profileAvatar = avatarUri(f, d);
@@ -3181,6 +3190,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     ${heroBadges ? `<div style="margin-top:10px;">${heroBadges}</div>` : ""}
     ${l.description ? `<p class="profile-header-desc">${esc(l.description)}</p>` : ""}
 
+    ${dealVisibleToCustomers(l) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(l.dealText || ""))}
       ${l.dealCode ? (
@@ -3190,7 +3200,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
           ? youCanGateBoxHtml(`scYouCanGate-${f.id}-${l.id}`, `/freelancer/${f.id}/listing/${l.id}`, d)
           : `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this, '${l.id}')">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}-${l.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(l.dealCode)}</div>`
       ) : ""}
-    </div>
+    </div>` : ""}
   </div>
 
   ${(l.galleryPhotos && l.galleryPhotos.length) ? `
@@ -5995,12 +6005,12 @@ route("POST", "/account/favorite-note", async (req, res, params, query, ctx) => 
 route("GET", "/deals", async (req, res, params, query, ctx) => {
   const d = db.load();
   const withDeals = d.freelancers
-    .filter((f) => f.status === "approved" && f.active !== false && (f.dealText || "").trim());
+    .filter((f) => f.status === "approved" && f.active !== false && dealVisibleToCustomers(f));
   const listingDeals = [];
   d.freelancers.forEach((f) => {
     if (f.status !== "approved" || f.active === false) return;
     (f.additionalListings || []).forEach((l) => {
-      if (l.status === "approved" && (l.dealText || "").trim()) listingDeals.push({ f, l });
+      if (l.status === "approved" && dealVisibleToCustomers(l)) listingDeals.push({ f, l });
     });
   });
   const combined = withDeals.map((f) => ({ createdAt: f.createdAt, reviewCount: reviewCountFor(d, f.id), html: freelancerCard(f, d) }))
@@ -6042,11 +6052,11 @@ route("GET", "/deals", async (req, res, params, query, ctx) => {
 // בדיוק כמו /api/community-counts שכבר קיים למונים בדף הבית: JSON קטן, בלי לרענן את כל העמוד.
 route("GET", "/api/deals-count", async (req, res) => {
   const d = db.load();
-  const freelancerDeals = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (f.dealText || "").trim()).length;
+  const freelancerDeals = d.freelancers.filter((f) => f.status === "approved" && f.active !== false && dealVisibleToCustomers(f)).length;
   let listingDeals = 0;
   d.freelancers.forEach((f) => {
     if (f.status !== "approved" || f.active === false) return;
-    (f.additionalListings || []).forEach((l) => { if (l.status === "approved" && (l.dealText || "").trim()) listingDeals++; });
+    (f.additionalListings || []).forEach((l) => { if (l.status === "approved" && dealVisibleToCustomers(l)) listingDeals++; });
   });
   res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify({ count: freelancerDeals + listingDeals }));
@@ -7312,10 +7322,32 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
       ? `<p class="muted">לקוחות שמחפשות בדיוק את מה שאת נותנת - אפשר לפנות אליהן ישירות.</p>${matchingServiceRequests.map((r) => serviceRequestCard(r, d)).join("")}`
       : `<p class="muted">יש ${matchingServiceRequests.length} בקשות פתוחות בתחום שלך כרגע - זמין רק למנויות "מומלצת". אפשר לפנות להנהלת SheCan כדי לשדרג.</p>`}
   </div>` : "";
+  // ההטבה שלה (הראשית ו/או של ליסטינג נוסף) סומנה ע"י הצוות כ"הסתירי הטבה זו" (ר' bannerHidden,
+  // /admin#banner-management) - כלומר לא אושרה כהטבה ממשית, ולכן לא מוצגת בשום מקום ללקוחות
+  // (לא בבאנר, לא בכרטיסייה, לא בפרופיל - ר' dealVisibleToCustomers). מציגים לה על כך הודעה
+  // מודגשת כאן בדשבורד - לפי בקשה מפורשת - עם קישור ישיר לעדכון ההטבה, ואפשרות לשלוח לאישור
+  // מחדש אחרי שהיא מעדכנת את הטקסט.
+  const hiddenMainDeal = !!(f.bannerHidden && (f.dealText || "").trim());
+  const hiddenListings = (f.additionalListings || []).filter((l) => l.bannerHidden && (l.dealText || "").trim());
+  const hiddenDealNoticeHtml = (hiddenMainDeal || hiddenListings.length) ? `
+  <div class="panel" style="background:#FBEAEA;border:1.5px solid #E0435B;">
+    <h3 style="margin-top:0;">⚠️ ההטבה שלך לא אושרה להצגה</h3>
+    ${hiddenMainDeal ? `<p style="margin:6px 0;">לצערנו ההטבה שכתבת - <strong>"${esc(f.dealText)}"</strong> - לא אושרה, ולכן היא לא מוצגת כרגע באתר (לא בבאנר הנע ולא בכרטיסייה או בפרופיל שלך).</p>` : ""}
+    ${hiddenListings.length ? hiddenListings.map((l) => `<p style="margin:6px 0;">גם ההטבה שכתבת עבור "${esc(l.businessName || "")}" - <strong>"${esc(l.dealText)}"</strong> - לא אושרה ולא מוצגת כרגע.</p>`).join("") : ""}
+    <p style="margin:6px 0;">אנחנו רוצות לשמור על אזור ההטבות שלנו משתלם ומקצועי לכל הלקוחות, ולכן ההטבה המוצגת צריכה להיות הטבה ממשית (זה יכול להיות גם מוצר מתנה או שירות מסוים - לא חייב להיות הנחה כספית). מוזמנת לעדכן את ההטבה שלך ולשלוח אותה לאישור מחדש - ברגע שנאשר, היא תופיע שוב מיד.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn btn-small" href="#scDealEditSection">לעדכון ההטבה שלי</a>
+      <form method="post" action="/freelancer-dashboard/deal/request-reapproval">
+        <button class="btn btn-small btn-outline" type="submit">שליחת ההטבה המעודכנת לאישור מחדש</button>
+      </form>
+    </div>
+    ${(f.dealReapprovalRequestedAt) ? `<p class="muted" style="margin-top:8px;">🔔 שלחת בקשה לאישור מחדש ב-${esc(new Date(f.dealReapprovalRequestedAt).toLocaleString("he-IL"))} - אנחנו נבדוק בקרוב.</p>` : ""}
+  </div>` : "";
   const body = `
   ${welcomePopupHtml}
   ${dealReminderPopupHtml}
   <h1 class="section-title">היי ${esc(f.name.split(" ")[0])}, בואי נעדכן קצת</h1>
+  ${hiddenDealNoticeHtml}
 
   <p class="muted" style="text-align:center;max-width:640px;margin:0 auto 20px;">כעצמאית יש לך גם אופציה להירשם גם כלקוחה - שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים.</p>
 
@@ -7461,7 +7493,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     `}
   </div>` : ""}
 
-  <form class="panel" method="post" action="/freelancer-dashboard" enctype="multipart/form-data">
+  <form class="panel" id="scDealEditSection" style="scroll-margin-top:90px;" method="post" action="/freelancer-dashboard" enctype="multipart/form-data">
     <h3>הפרופיל שלך</h3>
     ${avatarUri(f) ? `<div style="margin-bottom:10px;">${photoOrInitials(avatarUri(f), f.businessName, "profile-photo")}</div>` : ""}
     <label>תמונת פרופיל ${f.photoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="photo" accept="image/*" /></label>
@@ -8120,6 +8152,27 @@ function dealStatusLabel(status) {
   return "⏳ ממתינה לאישור הלקוחה";
 }
 
+// עצמאית שההטבה שלה סומנה כ"הסתירי" (ר' bannerHidden, /admin#banner-management) מעדכנת את
+// הטקסט דרך הטופס הרגיל ("הפרופיל שלך") ואז לוחצת כאן במפורש כדי לבקש בדיקה מחדש - עדכון
+// הטקסט לבדו לא מחזיר את ההטבה לתצוגה אוטומטית (bannerHidden נשאר עד שהצוות מסיר את הסימון
+// בפועל ב-/admin#banner-management), בדיוק כמו שהתבקש: "שולחות לאישור ואנחנו נאשר".
+route("POST", "/freelancer-dashboard/deal/request-reapproval", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === ctx.session.id);
+  if (!f) return redirect(res, "/login");
+  f.dealReapprovalRequestedAt = new Date().toISOString();
+  db.save();
+  const admin = d.admins[0];
+  const notifyTo = d.settings.contactEmail || admin.email;
+  sendPushToUser(admin, { title: "בקשה לאישור מחדש של הטבה", body: `${f.businessName || f.name} עדכנה את ההטבה שלה ומבקשת בדיקה מחדש.`, url: "/admin#banner-management" })
+    .then((pushed) => { if (!pushed) sendEmail(notifyTo, `בקשה לאישור הטבה מחדש - ${f.businessName || f.name}`,
+      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(f.businessName || f.name || "")} עדכנה את ההטבה שלה וביקשה בדיקה ואישור מחדש.</p><p>אפשר לעבור על זה בפאנל הניהול, בפאנל "ניהול הבאנר הנע".</p></div>`
+    ).catch(() => {}); })
+    .catch(() => {});
+  redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("הבקשה לאישור מחדש נשלחה - נבדוק בקרוב.")}#scDealEditSection`);
+});
+
 route("POST", "/freelancer-dashboard/deal/close", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "freelancer")) return redirect(res, "/login");
   const body = await readBody(req);
@@ -8752,29 +8805,42 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   d.freelancers.forEach((f) => {
     if ((f.dealText || "").trim()) {
       bannerCandidates.push({
-        updateAction: `/admin/banner/freelancer/${f.id}/update`,
+        // fieldKey מזהה כל שורה בטופס המאוחד (ר' פאנל "ניהול הבאנר הנע" ו-POST
+        // /admin/banner/save-all) - "f-<freelancerId>" להטבה הראשית, "l-<freelancerId>-<listingId>"
+        // לליסטינג נוסף (ר' למטה).
+        fieldKey: `f-${f.id}`,
         label: f.businessName || f.name,
         profileHref: `/freelancer/${f.id}`,
         originalText: f.dealText,
         overrideText: f.bannerText || "",
         hidden: !!f.bannerHidden,
         liveInBanner: f.status === "approved" && f.active !== false,
+        reapprovalRequestedAt: f.dealReapprovalRequestedAt || null,
       });
     }
     (f.additionalListings || []).forEach((l) => {
       if ((l.dealText || "").trim()) {
         bannerCandidates.push({
-          updateAction: `/admin/banner/freelancer/${f.id}/listing/${l.id}/update`,
+          fieldKey: `l-${f.id}-${l.id}`,
           label: `${l.businessName || f.businessName || f.name} (ליסטינג נוסף)`,
           profileHref: `/freelancer/${f.id}/listing/${l.id}`,
           originalText: l.dealText,
           overrideText: l.bannerText || "",
           hidden: !!l.bannerHidden,
           liveInBanner: f.status === "approved" && f.active !== false && l.status === "approved",
+          reapprovalRequestedAt: l.dealReapprovalRequestedAt || null,
         });
       }
     });
   });
+  // מי שביקשה אישור מחדש (ר' POST /freelancer-dashboard/deal/request-reapproval) עולה קודם -
+  // כדי שאת תראי מיד מי מחכה לך, בלי לגלול על כל הרשימה בכל פעם.
+  bannerCandidates.sort((a, b) => {
+    const ar = a.reapprovalRequestedAt ? new Date(a.reapprovalRequestedAt).getTime() : 0;
+    const br = b.reapprovalRequestedAt ? new Date(b.reapprovalRequestedAt).getTime() : 0;
+    return br - ar;
+  });
+  const bannerReapprovalCount = bannerCandidates.filter((c) => c.reapprovalRequestedAt).length;
 
   const revealEvents = (d.couponRevealEvents || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
   const revealsByCategory = {};
@@ -10107,20 +10173,24 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </table></div>` : `<p class="muted">עדיין לא דווחה אף עסקה באתר.</p>`}
   </div>
 
-  <div class="panel" id="banner-management" style="scroll-margin-top:90px;">
+  <div class="panel" id="banner-management" style="scroll-margin-top:90px;" data-badge="${bannerReapprovalCount}">
     <h3>📢 ניהול הבאנר הנע (${bannerCandidates.length})</h3>
-    <p class="muted">הבאנר הנע בראש כל עמוד מציג את כל ההטבות של עצמאיות מאושרות ופעילות שכתבו הטבה. כאן אפשר לערוך איך ההטבה תוצג בבאנר בלי לגעת במה שכתוב בפרופיל עצמו (למשל לנסח מחדש), או להסתיר הטבה מסוימת מהבאנר בלי למחוק אותה מהפרופיל - למשל אם מישהי כתבה שם משהו שלא מתאים להצגה. השאירי את השדה ריק כדי להציג את הטקסט המקורי שהיא כתבה.</p>
-    ${bannerCandidates.length ? bannerCandidates.map((c) => `
-      <div class="panel" style="background:var(--cream);">
-        <p style="margin:0 0 4px;"><strong>${esc(c.label)}</strong> <a href="${esc(c.profileHref)}" target="_blank" rel="noopener">(לפרופיל)</a>${!c.liveInBanner ? ` <span class="muted">- לא מוצגת כרגע בבאנר (העצמאית לא מאושרת/פעילה)</span>` : ""}</p>
+    <p class="muted">הבאנר הנע בראש כל עמוד מציג את כל ההטבות של עצמאיות מאושרות ופעילות שכתבו הטבה - וגם באיזה תת-תחום היא מסווגת שם. כאן אפשר לערוך איך ההטבה תוצג בבאנר בלי לגעת במה שכתוב בפרופיל עצמו (למשל לנסח מחדש), או להסתיר הטבה מסוימת - וזה משפיע גם על הבאנר וגם על הכרטיסייה/עמוד הפרופיל שלה (שום זכר להטבה לא יוצג ללקוחות במקרה כזה) - למשל אם מישהי כתבה שם משהו שלא מתאים להצגה, בלי הטבה ממשית מאחוריו. השאירי את שדה הטקסט ריק כדי להציג את הטקסט המקורי שהיא כתבה. אפשר לערוך כמה שורות שרוצים ואז ללחוץ על "שמירת כל השינויים" פעם אחת בתחתית - אין צורך לשמור שורה-שורה.${bannerReapprovalCount ? ` <strong>${bannerReapprovalCount} מחכות לאישור מחדש (מסומנות 📬 למטה, ומוצגות ראשונות).</strong>` : ""}</p>
+    ${bannerCandidates.length ? `
+    <form method="post" action="/admin/banner/save-all">
+      ${bannerCandidates.map((c) => `
+      <div class="panel" style="background:${c.reapprovalRequestedAt ? "#FBEAEA" : "var(--cream)"};">
+        <p style="margin:0 0 4px;"><strong>${esc(c.label)}</strong> <a href="${esc(c.profileHref)}" target="_blank" rel="noopener">(לפרופיל)</a>${!c.liveInBanner ? ` <span class="muted">- לא מוצגת כרגע (העצמאית לא מאושרת/פעילה)</span>` : ""}</p>
+        ${c.reapprovalRequestedAt ? `<p style="margin:0 0 8px;font-weight:700;">📬 ביקשה אישור מחדש ב-${esc(new Date(c.reapprovalRequestedAt).toLocaleString("he-IL"))} - כדאי לבדוק את הטקסט העדכני למטה ולאשר (להסיר את הסימון "הסתירי") אם זו הטבה ממשית.</p>` : ""}
         <p class="muted" style="margin:0 0 10px;">הטקסט שהיא כתבה בפרופיל: ${esc(c.originalText)}</p>
-        <form method="post" action="${esc(c.updateAction)}" style="display:flex;flex-direction:column;gap:8px;max-width:480px;">
+        <div style="display:flex;flex-direction:column;gap:8px;max-width:480px;">
           <label style="font-size:13px;font-weight:700;">טקסט לתצוגה בבאנר (ריק = יוצג הטקסט המקורי שלמעלה)</label>
-          <input type="text" name="bannerText" value="${esc(c.overrideText)}" placeholder="${esc(c.originalText)}" />
-          <label style="display:flex;align-items:center;gap:8px;font-weight:700;"><input type="checkbox" name="bannerHidden" value="1" ${c.hidden ? "checked" : ""} style="width:auto;" /> הסתירי הטבה זו מהבאנר</label>
-          <button class="btn btn-small" type="submit" style="align-self:flex-start;">שמירה</button>
-        </form>
-      </div>`).join("") : `<p class="muted">אף עצמאית עוד לא כתבה הטבה בפרופיל שלה.</p>`}
+          <input type="text" name="bannerText__${esc(c.fieldKey)}" value="${esc(c.overrideText)}" placeholder="${esc(c.originalText)}" />
+          <label style="display:flex;align-items:center;gap:8px;font-weight:700;"><input type="checkbox" name="bannerHidden__${esc(c.fieldKey)}" value="1" ${c.hidden ? "checked" : ""} style="width:auto;" /> הסתירי הטבה זו (מהבאנר, מהכרטיסייה ומהפרופיל)</label>
+        </div>
+      </div>`).join("")}
+      <button class="btn" type="submit" style="margin-top:10px;">שמירת כל השינויים</button>
+    </form>` : `<p class="muted">אף עצמאית עוד לא כתבה הטבה בפרופיל שלה.</p>`}
   </div>
 
   <div class="panel" data-badge="${unreadMessages}">
@@ -10443,6 +10513,35 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </form>
   </div>
   </div>
+  <script>
+  (function(){
+    // כל פעולה בעמוד הניהול (כל טופס) גורמת ל-POST ואז ל-redirect חזרה לכאן - בלי זה, כל
+    // עדכון (למשל שורה עמוק ברשימה ארוכה) מקפיץ בחזרה לראש העמוד. במקום להוסיף עוגן ידני לכל
+    // טופס בנפרד (ויש עשרות), שומרים כאן באופן גורף את מיקום הגלילה הנוכחי בכל שליחת טופס
+    // כלשהי בעמוד, ומשחזרים אותו בדיוק אחרי הטעינה הבאה של העמוד.
+    var SCROLL_KEY = "scAdminScrollY";
+    document.addEventListener("submit", function (e) {
+      if (!e.target || e.target.tagName !== "FORM") return;
+      // אם הטופס בוטל (למשל לחיצה על "ביטול" בתיבת אישור מהסוג confirm()) האירוע עדיין מגיע
+      // לכאן אבל defaultPrevented יהיה true - לא שומרים מיקום במקרה הזה כי בפועל לא נשלח כלום.
+      if (e.defaultPrevented) return;
+      try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY || window.pageYOffset || 0)); } catch (err) {}
+    });
+    try {
+      var saved = sessionStorage.getItem(SCROLL_KEY);
+      if (saved !== null) {
+        sessionStorage.removeItem(SCROLL_KEY);
+        var y = parseInt(saved, 10);
+        if (!isNaN(y)) {
+          var restore = function () { window.scrollTo(0, y); };
+          restore();
+          requestAnimationFrame(restore);
+          setTimeout(restore, 50);
+        }
+      }
+    } catch (err) {}
+  })();
+  </script>
   `;
   sendHtml(res, 200, page({ title: "ניהול", session: ctx.session, body, query, noSidebars: true }));
 });
@@ -12138,31 +12237,52 @@ route("POST", "/admin/freelancer/:id/toggle-gallery-approval", async (req, res, 
   redirect(res, `/admin/freelancer/${f.id}/photos?ok=${encodeURIComponent(f.galleryRequiresApproval ? "הגלריה עודכנה למצב 'דורש אישור פר-לקוחה', והעצמאית קיבלה הסבר." : "הגלריה חזרה להצגה רגילה לכולן.")}`);
 });
 
-// ניהול ידני של הבאנר הנע (ר' bannerCandidates ב-GET /admin ופאנל "ניהול הבאנר הנע") - עורכת
-// את הטקסט שיוצג בבאנר בלי לגעת בפרופיל עצמו, ו/או מסתירה הטבה ספציפית מהבאנר בלי למחוק אותה.
-route("POST", "/admin/banner/freelancer/:id/update", async (req, res, params, query, ctx) => {
+// שמירה מאוחדת של כל השורות בפאנל "ניהול הבאנר הנע" בבת אחת (POST יחיד, שדות עם fieldKey
+// ייחודי לכל שורה - ר' bannerCandidates ופאנל "ניהול הבאנר הנע" ב-GET /admin) - במקום טופס
+// נפרד לכל שורה עם כפתור שמירה משלה (לפי בקשה מפורשת: "לבצע שינויים בכל האזור ... וללחוץ
+// שמור פעם אחת"). עוברת על כל המועמדות בדיוק כמו bannerCandidates למעלה וקוראת את השדות שלה
+// לפי fieldKey. כשהטבה עוברת מ"מוסתרת" ל"מוצגת" (כלומר עכשיו אושרה), מנקה גם את בקשת האישור
+// מחדש (dealReapprovalRequestedAt, ר' POST /freelancer-dashboard/deal/request-reapproval)
+// ומודיעה לעצמאית שההטבה שלה אושרה - עם דה-דופ לפי עצמאית כדי שלא תקבל שתי הודעות אם גם
+// ההטבה הראשית וגם ליסטינג נוסף שלה אושרו באותה שמירה.
+route("POST", "/admin/banner/save-all", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const body = await readBody(req);
   const d = db.load();
-  const f = d.freelancers.find((x) => x.id === params.id);
-  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}#banner-management`);
-  f.bannerText = (body.get("bannerText") || "").trim();
-  f.bannerHidden = body.get("bannerHidden") === "1";
+  const approvedNotifyTargets = new Map();
+  d.freelancers.forEach((f) => {
+    if ((f.dealText || "").trim()) {
+      const key = `f-${f.id}`;
+      const wasHidden = !!f.bannerHidden;
+      f.bannerText = (body.get(`bannerText__${key}`) || "").trim();
+      f.bannerHidden = body.get(`bannerHidden__${key}`) === "1";
+      if (wasHidden && !f.bannerHidden) {
+        f.dealReapprovalRequestedAt = null;
+        approvedNotifyTargets.set(f.id, f);
+      }
+    }
+    (f.additionalListings || []).forEach((l) => {
+      if ((l.dealText || "").trim()) {
+        const key = `l-${f.id}-${l.id}`;
+        const wasHidden = !!l.bannerHidden;
+        l.bannerText = (body.get(`bannerText__${key}`) || "").trim();
+        l.bannerHidden = body.get(`bannerHidden__${key}`) === "1";
+        if (wasHidden && !l.bannerHidden) {
+          l.dealReapprovalRequestedAt = null;
+          approvedNotifyTargets.set(f.id, f);
+        }
+      }
+    });
+  });
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent("הבאנר עודכן.")}#banner-management`);
-});
-
-route("POST", "/admin/banner/freelancer/:id/listing/:lid/update", async (req, res, params, query, ctx) => {
-  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
-  const body = await readBody(req);
-  const d = db.load();
-  const f = d.freelancers.find((x) => x.id === params.id);
-  const l = f && (f.additionalListings || []).find((x) => String(x.id) === String(params.lid));
-  if (!f || !l) return redirect(res, `/admin?err=${encodeURIComponent("הליסטינג לא נמצא.")}#banner-management`);
-  l.bannerText = (body.get("bannerText") || "").trim();
-  l.bannerHidden = body.get("bannerHidden") === "1";
-  db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent("הבאנר עודכן.")}#banner-management`);
+  approvedNotifyTargets.forEach((f) => {
+    notify(f, {
+      pushTitle: "ההטבה שלך אושרה! 🎉", pushBody: "ההטבה שלך מוצגת עכשיו שוב באתר - בבאנר ובכרטיסייה שלך.", url: "/freelancer-dashboard",
+      emailSubject: "ההטבה שלך ב-SheCan אושרה",
+      emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p><p>יש לנו חדשות טובות - ההטבה שכתבת אושרה, והיא מוצגת עכשיו שוב באתר, גם בבאנר הנע וגם בכרטיסייה ובפרופיל שלך.</p><p>תודה שעדכנת! 💛</p></div>`,
+    }).catch(() => {});
+  });
+  redirect(res, `/admin?ok=${encodeURIComponent("כל השינויים בבאנר נשמרו.")}#banner-management`);
 });
 
 route("POST", "/admin/freelancer/:id/photo/remove", async (req, res, params, query, ctx) => {
