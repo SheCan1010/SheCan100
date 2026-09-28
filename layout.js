@@ -174,6 +174,15 @@ function pendingAdminCount() {
 // וגם ההטבות של "תחומים נוספים" שלה (additionalListings, עד 3 לכל עצמאית) שיש להן דף פרופיל
 // נפרד משלהן. מהירות התנועה נקבעת לפי מספר הפריטים (לא זמן קבוע) כדי שהיא תישאר קריאה ונוחה
 // גם כשמצטרפות עוד ועוד עסקים עם הטבות, ולא תואץ ככל שיש יותר פריטים לדחוס לאותו זמן.
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 function dealsTickerHtml() {
   const d = db.load();
   const entries = [];
@@ -185,15 +194,20 @@ function dealsTickerHtml() {
     });
   });
   if (!entries.length) return "";
-  const shuffled = entries.slice();
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  const itemsHtml = shuffled.map((e) => `<span class="deals-ticker-item">העסק: <a href="${e.href}">${esc(e.label)}</a> נותנת הטבה של: ${esc(e.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
+  // כשיש מעט מדי הטבות כדי למלא את רוחב המסך, הבאנר היה משאיר "חור" ריק בזמן שהוא רץ (רואים
+  // רגע של רקע ריק לפני שהוא חוזר ללופ). כדי למנוע את זה, חוזרים על הרשימה המלאה כמה "סיבובים"
+  // ברצף - כל סיבוב בסדר רנדומלי חדש משלו - עד שיש מספיק פריטים כדי למלא גם מסכים רחבים.
+  // מכיוון שכל סיבוב מכיל את כל העסקים בלי יוצא מן הכלל, לכל עצמאית תמיד יוצא בדיוק אותו מספר
+  // הופעות כמו לכל האחרות - זה מה ששומר על ייצוג שווה בין כל העסקים בבאנר, גם עם ריפוד.
+  const MIN_ITEMS = 16;
+  const rounds = Math.max(1, Math.ceil(MIN_ITEMS / entries.length));
+  let padded = [];
+  for (let r = 0; r < rounds; r++) padded = padded.concat(shuffleArray(entries));
+  const itemsHtml = padded.map((e) => `<span class="deals-ticker-item">העסק: <a href="${e.href}">${esc(e.label)}</a> נותנת הטבה של: ${esc(e.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
   // קצב איטי ונוח לקריאה (כ-16 שניות לפריט, מינימום 50 שניות ללופ שלם) - לא זמן קבוע לכל האתר,
-  // כדי שהמהירות בפועל (כמה זמן כל פריט "נשאר על המסך") תישאר דומה גם כשמצטרפות עוד עצמאיות.
-  const durationSeconds = Math.max(50, shuffled.length * 16);
+  // כדי שהמהירות בפועל (כמה זמן כל פריט "נשאר על המסך") תישאר דומה גם כשמצטרפות עוד עצמאיות
+  // וגם כשהרשימה מרופדת בסיבובים נוספים.
+  const durationSeconds = Math.max(50, padded.length * 16);
   return `
   <div class="deals-ticker-wrap" aria-label="הטבות מהעסקים באתר">
     <div class="deals-ticker-track" style="animation-duration:${durationSeconds}s;">
