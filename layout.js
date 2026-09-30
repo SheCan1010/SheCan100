@@ -223,6 +223,12 @@ function dealsTickerHtml() {
     });
   });
   if (!entries.length) return "";
+  // המפריד בין ההטבות - לפי בקשה מפורשת, כשיש לוגו מותאם מועלה (ר' settings.siteLogoDataUri,
+  // אותו לוגו בדיוק כמו בסרגל העליון) מציגים אותו מוקטן במקום הנקודה "•"; בלי לוגו מועלה
+  // (ברירת המחדל) נשארים עם הנקודה הרגילה, כדי שהבאנר לעולם לא יישאר בלי מפריד כלשהו.
+  const tickerSep = d.settings.siteLogoDataUri
+    ? `<span class="deals-ticker-sep deals-ticker-sep-logo"><img src="${d.settings.siteLogoDataUri}" alt="" /></span>`
+    : `<span class="deals-ticker-sep">•</span>`;
   // כשיש מעט מדי הטבות כדי למלא את רוחב המסך, הבאנר היה משאיר "חור" ריק בזמן שהוא רץ (רואים
   // רגע של רקע ריק לפני שהוא חוזר ללופ). כדי למנוע את זה, חוזרים על הרשימה המלאה כמה "סיבובים"
   // ברצף - כל סיבוב בסדר רנדומלי חדש משלו - עד שיש מספיק פריטים כדי למלא גם מסכים רחבים.
@@ -232,7 +238,7 @@ function dealsTickerHtml() {
   const rounds = Math.max(1, Math.ceil(MIN_ITEMS / entries.length));
   let padded = [];
   for (let r = 0; r < rounds; r++) padded = padded.concat(shuffleArray(entries));
-  const itemsHtml = padded.map((e) => `<span class="deals-ticker-item">העסק: <a href="${e.href}">${esc(e.label)}</a>${e.subcat ? ` <span class="deals-ticker-subcat">(${esc(e.subcat)})</span>` : ""} נותנת הטבה של: ${esc(e.dealText)}</span><span class="deals-ticker-sep">•</span>`).join("");
+  const itemsHtml = padded.map((e) => `<span class="deals-ticker-item">העסק: <a href="${e.href}">${esc(e.label)}</a>${e.subcat ? ` <span class="deals-ticker-subcat">(${esc(e.subcat)})</span>` : ""} נותנת הטבה של: ${esc(e.dealText)}</span>${tickerSep}`).join("");
   // קצב איטי ונוח לקריאה (כ-16 שניות לפריט, מינימום 50 שניות ללופ שלם) - לא זמן קבוע לכל האתר,
   // כדי שהמהירות בפועל (כמה זמן כל פריט "נשאר על המסך") תישאר דומה גם כשמצטרפות עוד עצמאיות
   // וגם כשהרשימה מרופדת בסיבובים נוספים.
@@ -379,6 +385,8 @@ a{color:inherit;text-decoration:none;}
 .deals-ticker-item a:hover{text-decoration:underline;}
 .deals-ticker-subcat{font-size:11px;opacity:.65;font-weight:600;}
 .deals-ticker-sep{margin:0 16px;opacity:.4;}
+.deals-ticker-sep-logo{opacity:.7;display:inline-flex;align-items:center;}
+.deals-ticker-sep-logo img{height:13px;width:auto;display:block;}
 @media (max-width:720px){.deals-ticker-label{font-size:9.5px;padding:4px 7px;} .deals-ticker-item{font-size:12.5px;}}
 /* translateX חיובי (לא שלילי!) בכוונה - זה אתר RTL, אז הבלוק של הסרט "צמוד" מטבעו לקצה
    הימני של המכולה ומתפשט שמאלה (הפוך מ-LTR, ששם הבלוק צמוד לקצה השמאלי ומתפשט ימינה). כדי

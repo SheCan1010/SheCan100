@@ -2973,7 +2973,14 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   // message) brings her back HERE after logging in, instead of dumping her on the generic
   // customer dashboard and losing the thing she actually came to do.
   const loginUrl = `/login?next=${encodeURIComponent(`/freelancer/${f.id}`)}`;
-  const loginUrlToMessage = `/login?next=${encodeURIComponent(`/freelancer/${f.id}#scMessageBox`)}`;
+  // הודעה מוכנה-מראש בתיבת "שליחת הודעה" (ר' #scMessageBox למטה) כשמגיעים לכאן מקישור "ליצירת
+  // קשר" בעמוד "✂️ מודליסטיות" (ר' patternmakerCard) - לפי בקשה מפורשת, כדי שלא תצטרך לחשוב
+  // מה לכתוב, אבל עדיין תוכל להשלים/לערוך את ההודעה לפני השליחה. ה-next של ההתחברות שומר על
+  // ה-msg= כדי שהמילוי המוכן-מראש לא ילך לאיבוד אם היא לא מחוברת עדיין וצריכה להתחבר קודם.
+  const messagePrefills = { patternmaker: "היי, בקשר למודעת המודליסטית שפרסמת" };
+  const messagePrefill = messagePrefills[query.get("msg")] || "";
+  const messageAnchorPath = `/freelancer/${f.id}${messagePrefill ? `?msg=${encodeURIComponent(query.get("msg"))}` : ""}#scMessageBox`;
+  const loginUrlToMessage = `/login?next=${encodeURIComponent(messageAnchorPath)}`;
 
   const currentStory = getCurrentStory(d);
   const isFeaturedStoryThisWeek = currentStory && currentStory.freelancerId === f.id;
@@ -3079,9 +3086,10 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     ${isCustomer ? `
       ${myThread.length ? `<div class="chat-thread" style="text-align:right;">${myThread.map((m) => `<div class="chat-msg from-${m.fromRole}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>` : `<p class="muted">עדיין לא כתבתן - זו ההזדמנות לשאול אותה כל מה שמעניין אותך, ישירות.</p>`}
       <form method="post" action="/freelancer/${f.id}/message">
-        <textarea name="text" placeholder="כתבי הודעה ל ${esc(f.businessName || f.name)}..." style="min-height:80px;" required></textarea>
+        <textarea name="text" id="scMessageText" placeholder="כתבי הודעה ל ${esc(f.businessName || f.name)}..." style="min-height:80px;" required>${esc(messagePrefill ? `${messagePrefill} - ` : "")}</textarea>
         <button class="btn" style="margin-top:10px;" type="submit">שליחת הודעה</button>
       </form>
+      ${messagePrefill ? `<script>(function(){var t=document.getElementById("scMessageText");if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length);}})();</script>` : ""}
     ` : customerOnlyPrompt(ctx, loginUrlToMessage, "לשלוח הודעה ישירה לעצמאית")}
   </div>
 
@@ -4332,7 +4340,7 @@ function patternmakerCard(r, d) {
       <p style="margin:0 0 10px;font-size:16px;font-weight:800;">מאת: ${name}</p>
       <div style="margin-top:auto;">
         ${f && f.status === "approved" && f.active !== false
-          ? `<a class="btn btn-small" style="text-align:center;display:block;" href="/freelancer/${f.id}#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
+          ? `<a class="btn btn-small" style="text-align:center;display:block;" href="/freelancer/${f.id}?msg=patternmaker#scMessageBox">לצפייה בפרופיל וליצירת קשר</a>`
           : `<p class="muted" style="font-size:12px;margin:0;">הפרופיל שפרסם/ה את הבקשה כרגע לא זמין.</p>`}
       </div>
     </div>
@@ -8844,6 +8852,12 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     return br - ar;
   });
   const bannerReapprovalCount = bannerCandidates.filter((c) => c.reapprovalRequestedAt).length;
+  // כמה הטבות "פעילות" ממש כרגע באתר (כלומר גם מוצגות ללקוחות בפועל - מאושרת+פעילה+לא
+  // מוסתרת), לא רק כמה נכתבו בסך הכל (ר' bannerCandidates.length למעלה, שכולל גם הטבות
+  // מוסתרות/של עצמאיות לא פעילות) - לפי בקשה מפורשת. אותו תנאי בדיוק כמו liveInBanner+!hidden
+  // בכל שורה למעלה, ואותה הגדרה בדיוק כמו GET /api/deals-count (dealVisibleToCustomers) כדי
+  // שהמספר תמיד יתאים למה שבאמת מוצג באתר.
+  const activeDealsCount = bannerCandidates.filter((c) => c.liveInBanner && !c.hidden).length;
 
   const revealEvents = (d.couponRevealEvents || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
   const revealsByCategory = {};
@@ -9395,11 +9409,18 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
           </div>
         </div>
         ${f.description ? `<p style="margin-top:10px;"><strong>על העסק:</strong> ${esc(f.description)}</p>` : ""}
-        ${f.dealText ? `<p style="margin-top:6px;"><strong>ההטבה:</strong> ${esc(f.dealText)}</p>` : ""}
+        ${f.dealText ? `
+        <form method="post" action="/admin/freelancer/${f.id}/approve" style="margin-top:10px;max-width:480px;">
+          <label style="font-weight:700;">ההטבה שהיא כתבה - אפשר לתקן את הניסוח לפני האישור (עד 200 תווים):
+            <textarea name="dealText" maxlength="200" style="margin-top:4px;min-height:60px;">${esc(f.dealText)}</textarea>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-weight:700;margin-top:8px;"><input type="checkbox" name="bannerHidden" value="1" style="width:auto;" /> להסתיר את ההטבה הזו (זה לא באמת הטבה - לא יוצג בבאנר, בכרטיסייה או בפרופיל שלה)</label>
+          <button class="btn btn-small" type="submit" style="margin-top:8px;">שמירה ואישור העצמאית</button>
+        </form>` : ""}
         ${(f.galleryPhotos && f.galleryPhotos.length) ? `<div class="gallery-scroll" style="margin-top:10px;">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" class="gallery-thumb" style="object-fit:cover;" />`).join("")}</div>` : ""}
         ${customSubcategoryNoteHtml(f, d)}
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
-          <form method="post" action="/admin/freelancer/${f.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>
+          ${!f.dealText ? `<form method="post" action="/admin/freelancer/${f.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>` : ""}
           <form method="post" action="/admin/freelancer/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
           ${snoozeButtonHtml(`freelancer:${f.id}`, "freelancer", `עצמאית: ${f.businessName || f.name}`)}
           ${messageFreelancerButtonHtml(f.id, "ההצטרפות שלך ל-SheCan שממתינה לאישור", `newFreelancer-${f.id}`)}
@@ -10178,6 +10199,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   <div class="panel" id="banner-management" style="scroll-margin-top:90px;" data-badge="${bannerReapprovalCount}">
     <h3>📢 ניהול הבאנר הנע (${bannerCandidates.length})</h3>
+    <p style="margin:0 0 10px;font-weight:700;">🟢 כרגע ${activeDealsCount} הטבות פעילות ומוצגות באתר (בבאנר, בכרטיסיות ובפרופילים) - מתוך ${bannerCandidates.length} שנכתבו בסך הכל.</p>
     <p class="muted">הבאנר הנע בראש כל עמוד מציג את כל ההטבות של עצמאיות מאושרות ופעילות שכתבו הטבה - וגם באיזה תת-תחום היא מסווגת שם. כאן אפשר לערוך איך ההטבה תוצג בבאנר בלי לגעת במה שכתוב בפרופיל עצמו (למשל לנסח מחדש), או להסתיר הטבה מסוימת - וזה משפיע גם על הבאנר וגם על הכרטיסייה/עמוד הפרופיל שלה (שום זכר להטבה לא יוצג ללקוחות במקרה כזה) - למשל אם מישהי כתבה שם משהו שלא מתאים להצגה, בלי הטבה ממשית מאחוריו. השאירי את שדה הטקסט ריק כדי להציג את הטקסט המקורי שהיא כתבה. אפשר לערוך כמה שורות שרוצים ואז ללחוץ על "שמירת כל השינויים" פעם אחת בתחתית - אין צורך לשמור שורה-שורה.${bannerReapprovalCount ? ` <strong>${bannerReapprovalCount} מחכות לאישור מחדש (מסומנות 📬 למטה, ומוצגות ראשונות).</strong>` : ""}</p>
     ${bannerCandidates.length ? `
     <div style="display:flex;gap:8px;margin-bottom:14px;max-width:420px;flex-wrap:wrap;">
@@ -11857,9 +11879,18 @@ route("POST", "/admin/city", async (req, res, params, query, ctx) => {
 
 route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
   if (f) {
+    // אפשרות לתקן את ניסוח ההטבה, וגם להסתיר אותה מיד (bannerHidden - אותו שדה בדיוק שמשמש
+    // את "ניהול הבאנר הנע", ר' dealVisibleToCustomers), ממש ברגע האישור (ר' פאנל "מחכות לאישור
+    // שלך" למעלה) - לפי בקשה מפורשת: שני השדות מגיעים בטופס רק כשלעצמאית הזו יש הטבה בכלל (ר'
+    // התנאי ${f.dealText ? ... : ""} בתבנית), כך שעצמאית בלי הטבה ממשיכה כרגיל בלי לגעת בשום שדה.
+    if (typeof body.get("dealText") === "string") {
+      f.dealText = clip(body.get("dealText"), 200);
+      f.bannerHidden = body.get("bannerHidden") === "1";
+    }
     f.status = "approved";
     if (f.paymentStatus === "pending_payment") f.paymentStatus = "active";
     const profileUrl = `${getOrigin(req)}/freelancer/${f.id}`;
