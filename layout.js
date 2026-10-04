@@ -2471,6 +2471,8 @@ function scLiveFilter(){
   var homeInput = document.getElementById("scHomeVisitFilter");
   var q = qInput ? qInput.value.trim().toLowerCase() : "";
   var homeOnly = homeInput ? homeInput.checked : false;
+  var dealInput = document.getElementById("scWithDealFilter");
+  var dealOnly = dealInput ? dealInput.checked : false;
   var cards = document.querySelectorAll(".card[data-name]");
   var anyVisible = false;
   cards.forEach(function(card){
@@ -2479,12 +2481,13 @@ function scLiveFilter(){
     var homeVisit = card.getAttribute("data-home-visit") === "1";
     var textMatch = !q || name.indexOf(q) !== -1 || category.indexOf(q) !== -1;
     var homeMatch = !homeOnly || homeVisit;
-    var match = textMatch && homeMatch;
+    var dealMatch = !dealOnly || card.getAttribute("data-has-deal") === "1";
+    var match = textMatch && homeMatch && dealMatch;
     card.style.display = match ? "" : "none";
     if (match) anyVisible = true;
   });
   var noMatchMsg = document.getElementById("scNoLiveMatch");
-  if (noMatchMsg) noMatchMsg.style.display = ((q || homeOnly) && !anyVisible) ? "" : "none";
+  if (noMatchMsg) noMatchMsg.style.display = ((q || homeOnly || dealOnly) && !anyVisible) ? "" : "none";
 }
 // /search results view-mode switcher (מורחבת/בינונית/קומפקטית) - remembers her last choice
 // in this browser via localStorage, so it stays put next time she searches, not just for

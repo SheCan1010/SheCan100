@@ -1415,8 +1415,27 @@ function getWeeklyFeature(d) {
 // changes the sort order of an existing queue, so right after this ships, whichever story was
 // "current"/"next" can shift once as everything re-settles into approval order - that's a
 // one-time side effect of fixing the ordering, not a bug.
+// סיפור נכנס לטור ברגע שהוא מאושר - בלי קשר להטבה (2026-10-04: הקשר בין הסיפור להטבה בוטל
+// לפי החלטה; הטבה מזכה בבאנר ובסינון "עם הטבה" בחיפוש, והסיפור נשמר כאפשרות נפרדת).
+function storyInColumn(d, s) { return !!s && s.status === "approved"; }
+function notifyStoryLive(f, s, origin) {
+  if (!f || !f.email) return Promise.resolve();
+  const storyUrl = `${origin}/stories/${s.id}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(storyUrl)}`;
+  return notify(f, {
+    pushTitle: "הסיפור שלך עלה לאוויר ב-SheCan!", pushBody: "מוזמנת לשתף אותו עם הלקוחות שלך.", url: `/stories/${s.id}`,
+    emailSubject: "הסיפור שלך עלה לאוויר ב-SheCan!",
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;">
+      <p>היי ${esc(f.name || "")},</p>
+      <p>הסיפור שלך אושר והוא כבר באוויר! מוזמנת לשתף אותו עם הלקוחות שלך:</p>
+      <p><a href="${storyUrl}">${esc(storyUrl)}</a></p>
+      <p style="text-align:center;"><img src="${qrUrl}" alt="QR לסיפור שלך" width="180" height="180" /></p>
+      ${f.dealText ? `<p>ותזכורת - זו גם הזדמנות נהדרת להזכיר את ההטבה שלך: <strong>${esc(f.dealText)}</strong>${f.dealCode ? ` (קוד: ${esc(f.dealCode)})` : ""}</p>` : ""}
+    </div>`,
+  }).catch(() => {});
+}
 function getCurrentStory(d) {
-  const approved = (d.stories || []).filter((s) => s.status === "approved");
+  const approved = (d.stories || []).filter((st) => storyInColumn(d, st));
   if (!approved.length) return null;
   const sorted = approved.slice().sort((a, b) => new Date(a.approvedAt || a.createdAt) - new Date(b.approvedAt || b.createdAt));
   // NOTE (2026-08-23): this used to pass a 4th "onAdvance" callback to tickRotation that
@@ -1645,7 +1664,7 @@ function freelancerCard(f, d, opts = {}) {
   // view-mode toggle via the [data-view] CSS rules) - only location/years moved out of that
   // gated block since they're now part of the base card look.
   const cardHtml = `
-  <a class="${cardClass}" href="/freelancer/${f.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${f.offersHomeVisit ? "1" : "0"}" style="${featuredStoryBadge ? "position:relative;" : ""}">
+  <a class="${cardClass}" href="/freelancer/${f.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${f.offersHomeVisit ? "1" : "0"}" data-has-deal="${dealVisibleToCustomers(f) ? "1" : "0"}" style="${featuredStoryBadge ? "position:relative;" : ""}">
     ${featuredStoryBadge}
     ${cardPhotoHtml(f.photoDataUri, f.logoDataUri, f.businessName || f.name, "card-photo", d.settings.defaultBusinessLogoDataUri)}
     <div class="card-body">
@@ -1689,7 +1708,7 @@ function additionalListingCard(f, listing, d) {
   const listingLocation = locationLabel(d, f.cityId, listing.offersOnline, listing.offersHomeVisit);
   const listingLocationIcon = locationIcon(d, f.cityId, listing.offersOnline, listing.offersHomeVisit);
   return `
-  <a class="${cardClass}" href="/freelancer/${f.id}/listing/${listing.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${listing.offersHomeVisit ? "1" : "0"}">
+  <a class="${cardClass}" href="/freelancer/${f.id}/listing/${listing.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${listing.offersHomeVisit ? "1" : "0"}" data-has-deal="${dealVisibleToCustomers(listing) ? "1" : "0"}">
     ${cardPhotoHtml(null, listing.logoDataUri, listing.businessName, "card-photo", d.settings.defaultBusinessLogoDataUri)}
     <div class="card-body">
       <div class="card-top">
@@ -2422,6 +2441,9 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0;">
             <input type="checkbox" name="homeVisit" value="1" style="width:auto;margin:0;" /><span>🚗 מגיעה עד הבית</span>
           </label>
+          <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0;">
+            <input type="checkbox" name="withDeal" value="1" style="width:auto;margin:0;" /><span>🎁 עם הטבה</span>
+          </label>
           <div class="view-toggle" role="group" aria-label="בחירת תצוגה">
             <span class="view-toggle-label">תצוגה</span>
             <button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')" title="תצוגה מורחבת" aria-label="תצוגה מורחבת"><span class="view-icon view-icon-expanded"><i></i><i></i><i></i><i></i></span></button>
@@ -2772,6 +2794,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   const subcategory = query.get("subcategory") || "";
   const city = query.get("city") || "";
   const homeVisit = query.get("homeVisit") === "1";
+  const withDeal = query.get("withDeal") === "1";
   const q = (query.get("q") || "").trim().toLowerCase();
   // sortQuality מגיע רק מהחיפוש החכם (ר' POST /search/ai + smartSearchHeuristic למעלה) כשהלקוחה
   // ציינה שהיא מחפשת "רמה גבוהה"/איכות - ממיין לפי דירוג ממוצע (avgRatingFor) בתוך כל קבוצת tier,
@@ -2788,6 +2811,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     if (subcategory && !freelancerSubcatMatches(f, subcategory)) return false;
     if (city && f.cityId !== city) return false;
     if (homeVisit && !f.offersHomeVisit) return false;
+    if (withDeal && !dealVisibleToCustomers(f)) return false;
     if (q) {
       // Matches her business name AND her own personal name, not just whichever one
       // happens to be displayed - searching "רוני" should find her even if the card
@@ -2818,6 +2842,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       if (subcategory && l.subcategoryId !== subcategory) return;
       if (city && lf.cityId !== city) return;
       if (homeVisit && !l.offersHomeVisit) return;
+      if (withDeal && !dealVisibleToCustomers(l)) return;
       if (q) {
         const nameMatch = (l.businessName || "").toLowerCase().includes(q);
         const categoryMatch = catName(d, l.categoryId).toLowerCase().includes(q);
@@ -2862,6 +2887,9 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
         <div class="search-row" style="margin-top:10px;justify-content:center;">
           <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0;">
             <input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} style="width:auto;margin:0;" onchange="scLiveFilter()" /><span>🚗 מגיעה עד הבית</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0 16px 0 0;">
+            <input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${withDeal ? "checked" : ""} style="width:auto;margin:0;" onchange="scLiveFilter()" /><span>🎁 עם הטבה</span>
           </label>
         </div>
         <div class="search-row" style="margin-top:10px;justify-content:center;">
@@ -3657,7 +3685,7 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
   // as the featured story (s.featuredAt set by getCurrentStory) - NOT every approved story,
   // which used to also leak future stories still waiting in the automatic rotation queue.
   const featuredStories = (d.stories || [])
-    .filter((s) => s.status === "approved" && s.featuredAt)
+    .filter((s) => storyInColumn(d, s) && s.featuredAt)
     .slice()
     .sort((a, b) => new Date(b.featuredAt) - new Date(a.featuredAt));
   const previousStories = current ? featuredStories.filter((s) => s.id !== current.id) : featuredStories;
@@ -3753,7 +3781,7 @@ route("POST", "/stories/:id/comment", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
   const text = (body.get("text") || "").trim();
   const d = db.load();
-  const s = (d.stories || []).find((x) => x.id === params.id && x.status === "approved");
+  const s = (d.stories || []).find((x) => x.id === params.id && storyInColumn(d, x));
   if (!s || !text) return redirect(res, `/stories/${params.id}`);
   const customer = d.customers.find((c) => c.id === ctx.session.id);
   s.comments = s.comments || [];
@@ -3772,7 +3800,7 @@ route("POST", "/stories/:id/comment", async (req, res, params, query, ctx) => {
 // plain 204.
 route("POST", "/stories/:id/like", async (req, res, params, query, ctx) => {
   const d = db.load();
-  const s = (d.stories || []).find((x) => x.id === params.id && x.status === "approved");
+  const s = (d.stories || []).find((x) => x.id === params.id && storyInColumn(d, x));
   if (s) {
     s.likeCount = (s.likeCount || 0) + 1;
     db.save();
@@ -6213,9 +6241,12 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery4" accept="image/*" />
     <label>🌸 תארי את השירות שאת נותנת (עד 500 תווים)<textarea name="description" maxlength="500" placeholder="כאן את מתארת את השירות שאת נותנת - מה את עושה ואיך את עוזרת ללקוחות שלך. כתבי בגוף ראשון, בצורה אישית וחמימה, כאילו את מספרת לחברה - זה מה שיזמין לקוחות לקרוא ולהתחבר אלייך.">${esc(p.description || "")}</textarea></label>
-    <label>🌸 תני ללקוחות סיבה טובה לבחור בך (עד 200 תווים) *</label>
-    <p class="muted" style="margin:0 0 6px;font-size:13px;">* עסק בלי הטבה ללקוחות לא יאושר לפרסום - זה בדיוק מה שמושך אליך לקוחות חדשות.</p>
-    <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן." required>${esc(p.dealText || "")}</textarea>
+    <label>🌸 תני ללקוחות סיבה טובה לבחור בך (עד 200 תווים)</label>
+    <div style="background:#fff4e8;border:1px dashed var(--rose-dark);border-radius:10px;padding:10px 14px;margin:0 0 8px;font-size:14px;line-height:1.6;">
+      <strong>למה משתלם לתת הטבה? 🎁</strong><br />
+      עצמאית שנותנת הטבה ללקוחות (אחרי שאישרנו אותה) <strong>מופיעה למעלה בבאנר ההטבות</strong> בכל עמוד באתר - וזו חשיפה מטורפת ללקוחות שמחפשות הטבות! בנוסף היא מופיעה כשלקוחה מסמנת בחיפוש <strong>"🎁 עם הטבה"</strong>. ההטבה לא חובה והפרופיל שלך יאושר גם בלעדיה, אבל בלי הטבה העסק לא יופיע בבאנר ובסינון הזה.
+    </div>
+    <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן.">${esc(p.dealText || "")}</textarea>
     <label>🌸 איזו רמה מתאימה לך?
     <select name="tier"><option value="basic" ${p.tier !== "premium" ? "selected" : ""}>בסיסית</option><option value="premium" ${p.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
     ${charging ? `
@@ -7555,8 +7586,8 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <label>קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(f.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="availableNow" value="1" ${f.availableNow ? "checked" : ""} style="width:auto;" /> 🟢 זמינה כרגע לעבודה - הראי את זה בכרטיסייה שלי</label>
     <label>קצת עלייך (עד 500 תווים)<textarea name="description" maxlength="500">${esc(f.description || "")}</textarea></label>
-    <label>ההטבה שלך (עד 200 תווים) *<textarea name="dealText" maxlength="200">${esc(f.dealText || "")}</textarea></label>
-    <p class="muted" style="margin-top:-4px;font-size:13px;">* עסק בלי הטבה ללקוחות לא יופיע באתר.</p>
+    <label>ההטבה שלך (עד 200 תווים)<textarea name="dealText" maxlength="200">${esc(f.dealText || "")}</textarea></label>
+    <p class="muted" style="margin-top:-4px;font-size:13px;">הטבה לא חובה, אבל עצמאית עם הטבה שאושרה מופיעה למעלה בבאנר ובסינון "🎁 עם הטבה" בחיפוש - חשיפה מטורפת ללקוחות.</p>
     <label>כמה שנים את בתחום?
     <select name="yearsInField"><option value="">בחרי</option>${yearsInFieldOptionsHtml(f.yearsInField || "")}</select></label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="wantsPushNotifications" value="1" ${f.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
@@ -8741,7 +8772,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   }).filter((x) => x.sentences.length > 0)
     .sort((a, b) => (a.freelancer.businessName || a.freelancer.name || "").localeCompare(b.freelancer.businessName || b.freelancer.name || "", "he"));
   // Used both for the delete table and the "story of the week" manual-pick dropdown below.
-  const approvedStoriesForAdmin = (d.stories || []).filter((s) => s.status === "approved").map((s) => {
+  const approvedStoriesForAdmin = (d.stories || []).filter((s) => storyInColumn(d, s)).map((s) => {
     const sf = d.freelancers.find((x) => x.id === s.freelancerId);
     return { id: s.id, title: s.title || (sf ? `הסיפור של ${sf.businessName || sf.name}` : "סיפור השראה") };
   });
@@ -11479,21 +11510,7 @@ route("POST", "/admin/story/:id/approve", async (req, res, params, query, ctx) =
     s.status = "approved";
     s.approvedAt = new Date().toISOString();
     const f = d.freelancers.find((x) => x.id === s.freelancerId);
-    if (f && f.email) {
-      const storyUrl = `${getOrigin(req)}/stories/${s.id}`;
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(storyUrl)}`;
-      notify(f, {
-        pushTitle: "הסיפור שלך עלה לאוויר ב-SheCan!", pushBody: "מוזמנת לשתף אותו עם הלקוחות שלך.", url: `/stories/${s.id}`,
-        emailSubject: "הסיפור שלך עלה לאוויר ב-SheCan!",
-        emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;">
-          <p>היי ${esc(f.name || "")},</p>
-          <p>הסיפור שלך אושר והוא כבר באוויר! מוזמנת לשתף אותו עם הלקוחות שלך:</p>
-          <p><a href="${storyUrl}">${esc(storyUrl)}</a></p>
-          <p style="text-align:center;"><img src="${qrUrl}" alt="QR לסיפור שלך" width="180" height="180" /></p>
-          ${f.dealText ? `<p>ותזכורת - זו גם הזדמנות נהדרת להזכיר את ההטבה שלך: <strong>${esc(f.dealText)}</strong>${f.dealCode ? ` (קוד: ${esc(f.dealCode)})` : ""}</p>` : ""}
-        </div>`,
-      }).catch(() => {});
-    }
+    notifyStoryLive(f, s, getOrigin(req));
   }
   db.save();
   redirect(res, `/admin?ok=${encodeURIComponent("הסיפור אושר ופורסם!")}`);
