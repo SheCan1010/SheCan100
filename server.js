@@ -9217,17 +9217,20 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       const grp = (list) => ({
         n: list.length, v7: list.reduce((x, r) => x + r.v7, 0), v30: list.reduce((x, r) => x + r.v30, 0),
         avg7: list.length ? list.reduce((x, r) => x + r.v7, 0) / list.length : 0, avg30: list.length ? list.reduce((x, r) => x + r.v30, 0) / list.length : 0,
+        life: list.reduce((x, r) => x + r.lifetime, 0), avgLife: list.length ? list.reduce((x, r) => x + r.lifetime, 0) / list.length : 0,
       });
       const A = grp(ads), B = grp(others);
       const fmt = (n) => (Math.round(n * 10) / 10).toLocaleString("he-IL");
       const ratio30 = B.avg30 > 0 && A.n ? fmt(A.avg30 / B.avg30) : null;
+      const ratioLife = B.avgLife > 0 && A.n ? fmt(A.avgLife / B.avgLife) : null;
       return `
       <p class="muted">כמה פעמים נכנסו לעמוד הפרופיל של כל עצמאית פעילה, בחלוקה לעצמאיות שהמודעה שלהן פעילה כרגע (📣) מול כל השאר. הנתונים חיים - מתעדכנים בכל כניסה לפרופיל. לא נספרות כניסות של בעלת העסק עצמה ושל המנהלת. הפירוט היומי מתחיל מ-${esc(d.settings.profileViewsTrackingSince || "היום")} (הנתונים לפני כן קיימים רק כמצטבר בעמודה "סה\"כ מצטבר").</p>
       <div class="table-scroll"><table class="table-simple">
-        <tr><th>קבוצה</th><th>עצמאיות</th><th>צפיות 7 ימים</th><th>ממוצע לעצמאית (7 י')</th><th>צפיות 30 ימים</th><th>ממוצע לעצמאית (30 י')</th></tr>
-        <tr><td><strong>📣 מפורסמות כרגע</strong></td><td>${A.n}</td><td>${A.v7}</td><td>${fmt(A.avg7)}</td><td>${A.v30}</td><td>${fmt(A.avg30)}</td></tr>
-        <tr><td><strong>שאר העצמאיות</strong></td><td>${B.n}</td><td>${B.v7}</td><td>${fmt(B.avg7)}</td><td>${B.v30}</td><td>${fmt(B.avg30)}</td></tr>
+        <tr><th>קבוצה</th><th>עצמאיות</th><th>צפיות 7 ימים</th><th>ממוצע לעצמאית (7 י')</th><th>צפיות 30 ימים</th><th>ממוצע לעצמאית (30 י')</th><th>סה"כ צפיות מצטבר (מכל הזמנים)</th><th>ממוצע לעצמאית (מצטבר)</th></tr>
+        <tr><td><strong>📣 מפורסמות כרגע</strong></td><td>${A.n}</td><td>${A.v7}</td><td>${fmt(A.avg7)}</td><td>${A.v30}</td><td>${fmt(A.avg30)}</td><td><strong>${A.life.toLocaleString("he-IL")}</strong></td><td>${fmt(A.avgLife)}</td></tr>
+        <tr><td><strong>שאר העצמאיות</strong></td><td>${B.n}</td><td>${B.v7}</td><td>${fmt(B.avg7)}</td><td>${B.v30}</td><td>${fmt(B.avg30)}</td><td><strong>${B.life.toLocaleString("he-IL")}</strong></td><td>${fmt(B.avgLife)}</td></tr>
       </table></div>
+      ${ratioLife ? `<p style="font-weight:800;color:var(--rose-dark);margin:10px 0 4px;">מצטבר מכל הזמנים: עצמאית מפורסמת קיבלה בממוצע פי ${ratioLife} צפיות מעצמאית רגילה.</p><p class="muted" style="margin:0 0 6px;font-size:12px;">"מצטבר" כולל את כל הצפיות שנספרו לכל עצמאית מאז שהאתר קיים (לא מתחיל מאפס), לפי הסטטוס הנוכחי שלה - חלק מהצפיות הישנות נצברו לפני שהמודעה הופעלה. פירוט 7/30 ימים נספר מ-${esc(d.settings.profileViewsTrackingSince ? String(d.settings.profileViewsTrackingSince).slice(0, 10) : "היום")}.</p>` : ""}
       ${ratio30 ? `<p style="font-weight:800;color:var(--rose-dark);margin:10px 0;">עצמאית מפורסמת מקבלת בממוצע פי ${ratio30} צפיות מעצמאית רגילה (ב-30 הימים האחרונים).</p>` : `<p class="muted" style="margin:10px 0;">ההשוואה תופיע ברגע שיהיו גם עצמאיות מפורסמות וגם צפיות מתועדות.</p>`}
       <div style="display:flex;gap:8px;margin:10px 0;max-width:420px;"><input type="text" id="scAdStatsSearch" placeholder="חיפוש עצמאית לפי שם..." oninput="(function(q){document.querySelectorAll('#ad-stats-panel .sc-adstat-row').forEach(function(r){r.style.display=(!q||r.getAttribute('data-name').indexOf(q)!==-1)?'':'none';});})(this.value.trim().toLowerCase())" autocomplete="off" style="flex:1;" /></div>
       <div class="table-scroll"><table class="table-simple">

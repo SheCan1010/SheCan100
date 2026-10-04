@@ -1021,14 +1021,22 @@ form .field{margin-bottom:6px;}
    scroll up and out of view like any other content. Only a real paid ad ("מודעה") stays
    pinned in place, via position:sticky on that specific card below (.side-ad-card-pinned),
    not on the whole column, per explicit request. */
-.page-with-sidebars .side-col{width:200px;flex-shrink:0;align-self:flex-start;}
+.page-with-sidebars .side-col{width:200px;flex-shrink:0;align-self:stretch;}
+/* 2026-10-04: העמודות נמתחות לכל אורך הדף, וכל המודעות יושבות בתוך .side-stack שנדבק לחלון בזמן
+   הגלילה - כך תמיד רואים מודעות לכל אורך העמוד. אם יש יותר מודעות ממה שנכנס בגובה המסך,
+   סקריפט קטן מחליף בין "עמודים" של מודעות כל כמה שניות (ר' scSideAdsRotate בתחתית העמוד). */
+.side-stack{position:sticky;top:90px;max-height:calc(100vh - 110px);overflow-y:auto;scrollbar-width:none;transition:opacity .45s ease;}
+.side-stack::-webkit-scrollbar{display:none;}
+.side-stack.sc-fade{opacity:0;}
+.side-stack .sc-side-hidden{display:none !important;}
+.side-mini-mark{display:none;}
 .page-with-sidebars .side-col-right{order:1;}
 .page-with-sidebars .side-col-left{order:3;}
 .side-ad-card{background:var(--white);border-radius:10px;padding:14px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,.05);border:1.5px dashed var(--rose-dark);}
 .side-ad-card .badge-ad{margin-bottom:4px;}
 .side-ad-card h4{margin:6px 0 2px;font-size:15px;font-weight:700;}
 .side-ad-card .muted{font-size:13px;}
-.side-ad-card-pinned{position:sticky;top:96px;}
+.side-ad-card-pinned{position:static;}
 /* Tiny business photo shown on the sponsor/ad sidebar cards, per explicit request - a small
    round thumbnail sitting beside the text (first in DOM order so it lands on the RIGHT side
    of the text in this RTL layout). Falls back to the default business logo when the business
@@ -1036,17 +1044,30 @@ form .field{margin-bottom:6px;}
    fallback used elsewhere) - the row is skipped entirely only in the rare case neither exists.
    background-size:contain (not cover) so a squarish logo never gets awkwardly cropped. */
 .side-ad-card-row{display:flex;align-items:center;gap:10px;}
+.side-ad-photo-initial{width:38px;height:38px;border-radius:50%;flex-shrink:0;background:var(--rose);color:var(--rose-dark);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;}
 .side-ad-photo{width:38px;height:38px;border-radius:50%;flex-shrink:0;background-color:var(--cream);background-size:contain;background-repeat:no-repeat;background-position:center;}
 .side-ad-card-text{flex:1;min-width:0;}
 .side-ad-card-text h4{margin:0 0 2px;}
 @media (max-width:960px){
-  .page-with-sidebars{flex-direction:column;}
-  .page-with-sidebars .main-col,.page-with-sidebars .side-col-right,.page-with-sidebars .side-col-left{order:initial;width:100%;}
-  .page-with-sidebars .side-col{display:flex;gap:14px;overflow-x:auto;position:static;}
-  .page-with-sidebars .side-col .side-ad-card{min-width:200px;}
-  /* Pinning only makes sense in the desktop vertical column - in this mobile horizontal
-     scroller the ad card scrolls sideways with the rest, same as sponsors. */
-  .page-with-sidebars .side-col .side-ad-card-pinned{position:static;}
+  /* טלפון/טאבלט: המודעות נשארות בצדדים (לא יורדות למטה) כסמל קטן עם שם העסק מתחתיו */
+  .page-with-sidebars{flex-direction:row;gap:6px;}
+  .page-with-sidebars .side-col{width:58px;}
+  .side-stack{top:70px;max-height:calc(100vh - 90px);}
+  .side-ad-card{padding:7px 2px 6px;margin-bottom:8px;border-radius:12px;border-width:1px;box-shadow:0 1px 4px rgba(0,0,0,.05);text-align:center;}
+  .side-ad-card .badge,.side-ad-card .muted{display:none;}
+  .side-ad-card-row{flex-direction:column;gap:3px;}
+  .side-ad-photo{width:34px;height:34px;box-shadow:0 0 0 1.5px var(--rose-dark);}
+  .side-ad-photo-initial{width:34px;height:34px;font-size:15px;}
+  .side-ad-card-text{width:100%;}
+  .side-ad-card h4,.side-ad-card-text h4{font-size:9.5px;line-height:1.2;font-weight:700;margin:0;padding:0 2px;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .side-ad-card{position:relative;}
+  .side-mini-mark{display:block;position:absolute;top:2px;right:6px;font-size:10px;line-height:1;}
+}
+@media (max-width:480px){
+  .page-with-sidebars{gap:4px;}
+  .page-with-sidebars .side-col{width:50px;}
+  .side-ad-photo,.side-ad-photo-initial{width:30px;height:30px;}
+  .side-ad-card h4,.side-ad-card-text h4{font-size:9px;}
 }
 .tabs{display:flex;gap:10px;margin-bottom:18px;}
 .tab{padding:8px 18px;border-radius:20px;background:var(--white);font-size:14px;}
@@ -1129,16 +1150,18 @@ function sidebarCatName(d, id) {
 // sitewide default business logo, otherwise no image at all (text-only, same as before this
 // feature existed). photoUri/logoUri come from whichever record (freelancer or listing) is
 // actually being advertised - a listing only ever has its own logoDataUri, never a photo.
-function sideAdPhotoHtml(photoUri, logoUri, d) {
+function sideAdPhotoHtml(photoUri, logoUri, d, name) {
   const uri = photoUri || logoUri || (d.settings && d.settings.defaultBusinessLogoDataUri) || null;
-  return uri ? `<div class="side-ad-photo" style="background-image:url('${esc(uri)}');"></div>` : "";
+  if (uri) return `<div class="side-ad-photo" style="background-image:url('${esc(uri)}');"></div>`;
+  const initial = String(name || "").trim().charAt(0);
+  return initial ? `<div class="side-ad-photo-initial">${esc(initial)}</div>` : "";
 }
 
 function sponsorCardHtml(f, d) {
   return `
     <a class="side-ad-card" href="/freelancer/${f.id}" style="display:block;">
       <div class="side-ad-card-row">
-        ${sideAdPhotoHtml(f.photoDataUri, f.logoDataUri, d)}
+        ${sideAdPhotoHtml(f.photoDataUri, f.logoDataUri, d, f.businessName || f.name)}<span class="side-mini-mark">👑</span>
         <div class="side-ad-card-text">
           <span class="badge badge-leading">👑 עסק מוביל</span>
           <h4>${esc(f.businessName || f.name)}</h4>
@@ -1158,7 +1181,7 @@ function adCardHtml(f, d, listing) {
   return `
     <a class="side-ad-card side-ad-card-pinned" href="${href}" style="display:block;">
       <div class="side-ad-card-row">
-        ${sideAdPhotoHtml(listing ? null : f.photoDataUri, target.logoDataUri, d)}
+        ${sideAdPhotoHtml(listing ? null : f.photoDataUri, target.logoDataUri, d, target.businessName || target.name)}<span class="side-mini-mark">📣</span>
         <div class="side-ad-card-text">
           <span class="badge badge-ad">${!listing && f.adSource === "race" ? "📣 נותנת חסות" : "📣 מודעה"}</span>
           <h4>${esc(target.businessName || target.name)}</h4>
@@ -1200,13 +1223,13 @@ function sidebarColumnsHtml(d) {
       if (l.status === "approved" && l.isAdvertised) listingAds.push({ f, listing: l, kind: "ad" });
     });
   });
-  const combined = [...sponsors, ...freelancerAds, ...listingAds].slice(0, 6);
+  const combined = [...sponsors, ...freelancerAds, ...listingAds];
   const right = combined.filter((_, i) => i % 2 === 0);
   const left = combined.filter((_, i) => i % 2 === 1);
   const cardHtml = (item) => (item.kind === "sponsor" ? sponsorCardHtml(item.f, d) : adCardHtml(item.f, d, item.listing));
   const col = (list, cls) => `
   <div class="side-col ${cls}">
-    ${list.length ? list.map(cardHtml).join("") : ""}
+    <div class="side-stack">${list.length ? list.map(cardHtml).join("") : ""}</div>
   </div>`;
   return col(right, "side-col-right") + col(left, "side-col-left");
 }
@@ -2866,6 +2889,40 @@ function scArenaCopyLink(id, btn){
 <div class="sc-support-widget">
   <a href="/support" class="sc-support-widget-btn"><span aria-hidden="true">💬</span><span>לתמיכה לחצי</span></a>
 </div>
+<script>
+/* סיבוב מודעות בצדדים - מציג כל פעם "עמוד" של מודעות שנכנס בגובה המסך, ומחליף כל כמה שניות */
+(function(){
+  var timers=[];
+  function build(){
+    timers.forEach(clearInterval); timers=[];
+    document.querySelectorAll('.side-stack').forEach(function(st){
+      var cards=[].slice.call(st.children);
+      cards.forEach(function(c){c.classList.remove('sc-side-hidden');});
+      if(cards.length<2) return;
+      var avail=st.clientHeight||(window.innerHeight-110), pages=[], cur=[], h=0;
+      cards.forEach(function(c){
+        var ch=c.offsetHeight+14;
+        if(cur.length&&h+ch>avail){pages.push(cur);cur=[];h=0;}
+        cur.push(c);h+=ch;
+      });
+      if(cur.length) pages.push(cur);
+      if(pages.length<2) return;
+      var i=0, paused=false;
+      function show(n){pages.forEach(function(pg,k){pg.forEach(function(c){c.classList.toggle('sc-side-hidden',k!==n);});});}
+      show(0);
+      st.addEventListener('mouseenter',function(){paused=true;});
+      st.addEventListener('mouseleave',function(){paused=false;});
+      timers.push(setInterval(function(){
+        if(paused||document.hidden) return;
+        st.classList.add('sc-fade');
+        setTimeout(function(){i=(i+1)%pages.length;show(i);st.classList.remove('sc-fade');},450);
+      },7000));
+    });
+  }
+  var rt; window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(build,250);});
+  if(document.readyState==='complete') build(); else window.addEventListener('load',build);
+})();
+</script>
 </body>
 </html>`;
 }
