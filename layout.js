@@ -1160,7 +1160,7 @@ function adCardHtml(f, d, listing) {
       <div class="side-ad-card-row">
         ${sideAdPhotoHtml(listing ? null : f.photoDataUri, target.logoDataUri, d)}
         <div class="side-ad-card-text">
-          <span class="badge badge-ad">📣 מודעה</span>
+          <span class="badge badge-ad">${!listing && f.adSource === "race" ? "📣 נותנת חסות" : "📣 מודעה"}</span>
           <h4>${esc(target.businessName || target.name)}</h4>
           <div class="muted">${esc(sidebarCatName(d, categoryId))}</div>
         </div>

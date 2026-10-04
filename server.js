@@ -1387,19 +1387,8 @@ function getWeeklyFeature(d) {
   const autoId = tickRotation(d, withQuotes, (f) => f.id, WEEKLY_TIP_BOUNDARY, {
     currentIdKey: "weeklyTipCurrentFreelancerId", lastBoundaryKey: "weeklyTipLastBoundary", manualIdKey: "freelancerOfWeekId",
   });
-  // "זכיית מרוץ ההפניות" - פרס אמיתי של חשיפה בדף הבית למשך פרק זמן שהיא קובעת (למשל חודש
-  // שלם), לא רק מחזור שבועי אחד כמו הפין הידני freelancerOfWeekId למטה - לפי בקשה מפורשת
-  // 2026-08-30 ("רוצה שההבטחה בפועל תתקיים בלי מאמץ נוסף ממך"). עדיפות עליונה על הפין הרגיל
-  // ועל הרוטציה האוטומטית, כל עוד freelancerReferralWinnerUntil (תאריך "YYYY-MM-DD", לפי
-  // israelDayKeyOffset) עדיין היום או בעתיד - נבדק בכל טעינה, בלי צורך "לנקות" אותו בעצמה
-  // כשהוא פג: הוא פשוט מפסיק להתאים מעצמו וחוזרים לפין הרגיל/לרוטציה האוטומטית.
-  if (d.settings.freelancerReferralWinnerId && d.settings.freelancerReferralWinnerUntil && israelDayKeyOffset(0) <= d.settings.freelancerReferralWinnerUntil) {
-    const winner = d.freelancers.find((x) => x.id === d.settings.freelancerReferralWinnerId && x.status === "approved" && x.active !== false);
-    if (winner) {
-      if ((winner.inspirationQuote || "").trim() && !winner.weeklyTipPublished) { winner.weeklyTipPublished = true; db.save(); notifyWeeklyTipFeatured(winner); }
-      return { text: winner.inspirationQuote || d.settings.weeklyMessage, freelancer: winner, isReferralWinner: true };
-    }
-  }
+  // 2026-10-04: מנצחת מרוץ העצמאיות כבר לא מחליפה את משפט השבוע - לפי בקשה מפורשת היא מקבלת
+  // מקום כמו מודעה רגילה (תג "נותנת חסות"), ר' POST /admin/referral-settings/set-winner.
   if (d.settings.freelancerOfWeekId) {
     const picked = d.freelancers.find((x) => x.id === d.settings.freelancerOfWeekId && x.status === "approved" && x.active !== false);
     if (picked) {
@@ -1802,6 +1791,8 @@ function customerRacePrizeSponsorHtml(d, i) {
 }
 // נשלח אוטומטית (פוש אם יש, אחרת מייל) לעצמאית ברגע שהמודעה שלה מופעלת מהניהול - גם כפרס מרוץ
 // ההפניות (until = תאריך תפוגה) וגם כהפעלה ידנית רגילה.
+// תג המודעה: מודעה שהגיעה מפרס מרוץ ההפניות (adSource === "race") מקבלת תג "נותנת חסות"
+function adBadgeLabel(f) { return f && f.adSource === "race" ? "📣 נותנת חסות" : "📣 מודעה"; }
 function notifyAdActivated(f, { until, businessName, prizeLabel } = {}) {
   const name = businessName || f.businessName || f.name || "";
   const untilLine = until ? `המודעה תהיה פעילה עד ${until}.` : "המודעה פעילה ותישאר באתר עד שנעדכן אותך אחרת.";
@@ -1811,7 +1802,7 @@ function notifyAdActivated(f, { until, businessName, prizeLabel } = {}) {
     emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;">
       <p>היי ${esc(f.name || "")},</p>
       ${prizeLabel ? `<p>מזל טוב! ${esc(prizeLabel)} 🏆</p>` : ""}
-      <p>המודעה של <strong>${esc(name)}</strong> פעילה עכשיו באתר SheCan - העסק שלך מוצג בתג "📣 מודעה" בראש התוצאות ובעסקים הממומנים.</p>
+      <p>המודעה של <strong>${esc(name)}</strong> פעילה עכשיו באתר SheCan - העסק שלך מוצג בתג "${adBadgeLabel(f).replace("📣 ", "")}" בראש התוצאות ובעסקים הממומנים.</p>
       <p>${esc(untilLine)}</p>
       <p><a href="https://shecan.co.il/freelancer/${esc(f.id)}">לצפייה בעמוד העסק שלך</a></p>
     </div>`,
@@ -2408,7 +2399,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
 
       ${weekly.text ? `
       <div class="weekly-tip">
-        <span class="weekly-tip-kicker">${weekly.isReferralWinner ? "🏆 העסק המוביל של מרוץ ההפניות" : "From the Pros | טיפ שבועי מהמומחית"}</span>
+        <span class="weekly-tip-kicker">From the Pros | טיפ שבועי מהמומחית</span>
         <p class="weekly-tip-quote">${esc(weekly.text)}</p>
         <button type="button" class="weekly-tip-like" id="scWeeklyLike" data-like-key="${esc(weeklyLikeKey)}" onclick="scLikeWeeklyQuote(this)" aria-label="סמני לייק למשפט השבוע">
           <span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${weeklyLikeCount}</span>
@@ -2965,6 +2956,22 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   }
 
   f.viewCount = (f.viewCount || 0) + 1;
+  // צפיות לפי יום (שעון ישראל) - בסיס לסטטיסטיקה "מפורסמות מול שאר העצמאיות" בניהול (ר' פאנל
+  // adStatsPanel). t = כל הצפיות באותו יום, a = כמה מהן קרו בזמן שהמודעה שלה הייתה פעילה. לא סופרים
+  // צפייה של בעלת העסק עצמה או של המנהלת, כדי שהנתונים שמוצגים לנותנות חסות פוטנציאליות יהיו נקיים.
+  const viewerIsOwnerOrAdmin = ctx.session && ((ctx.session.role === "freelancer" && ctx.session.id === f.id) || ctx.session.role === "admin");
+  if (!viewerIsOwnerOrAdmin) {
+    f.viewsByDay = f.viewsByDay || {};
+    const todayKey = israelDateKey(new Date());
+    if (!f.viewsByDay[todayKey]) {
+      f.viewsByDay[todayKey] = { t: 0, a: 0 };
+      const cutoff = israelDayKeyOffset(180);
+      Object.keys(f.viewsByDay).forEach((k) => { if (k < cutoff) delete f.viewsByDay[k]; });
+    }
+    f.viewsByDay[todayKey].t++;
+    if (isFreelancerCurrentlyAdvertised(f)) f.viewsByDay[todayKey].a++;
+    if (!d.settings.profileViewsTrackingSince) d.settings.profileViewsTrackingSince = todayKey;
+  }
   // This route (a single freelancer's public profile) is the single most-visited page type on
   // the whole site - every card click from the home page, search, or a category page lands
   // here. An unthrottled db.save() here means a full JSON.stringify + synchronous
@@ -3007,7 +3014,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const heroBadges = [
     f.availableNow ? `<span class="badge badge-available">🟢 זמינה כרגע</span>` : "",
     f.isLeadingBusiness ? `<span class="badge badge-leading">👑 עסק מוביל</span>` : "",
-    isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">📣 מודעה</span>` : "",
+    isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">${adBadgeLabel(f)}</span>` : "",
     f.tier === "premium" ? `<span class="badge">מומלצת</span>` : "",
     f.offersOnline ? `<span class="badge badge-outline">💻 שירות אונליין</span>` : "",
     f.offersHomeVisit ? `<span class="badge badge-outline">🚗 מגיעה אלייך</span>` : "",
@@ -7384,7 +7391,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   <div class="panel">
     ${f.joinType === "founding" ? `<span class="founding-badge">מייסדת ✦</span> ` : ""}
     ${f.isLeadingBusiness ? `<span class="badge badge-leading">👑 נותנת חסות</span> ` : ""}
-    ${isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">📣 מודעה פעילה${f.isAdvertisedUntil ? ` (פרס מרוץ ההפניות, עד ${esc(f.isAdvertisedUntil)})` : ""}</span> ` : ""}
+    ${isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">${f.adSource === "race" ? "📣 נותנת חסות פעילה" : "📣 מודעה פעילה"}${f.isAdvertisedUntil ? ` (פרס מרוץ ההפניות, עד ${esc(f.isAdvertisedUntil)})` : ""}</span> ` : ""}
     <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"} · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}</span>
     ${f.paymentStatus === "pending_payment" ? `
     <form method="post" action="/freelancer-dashboard/redeem-vip-code" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
@@ -9195,6 +9202,41 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <p class="muted" style="margin-top:8px;font-size:12px;">שימי לב: כל אחוז מעוגל בנפרד, אז לפעמים סכום העמודה יוצא 99% או 101% במקום 100% בדיוק - זה טבעי ולא טעות בספירה עצמה.</p>` : `<p class="muted" style="margin-top:10px;">עדיין אין נתוני מקור - יופיעו כאן ברגע שיהיו כניסות חדשות לאתר.</p>`}
   </div>
 
+  <div class="panel" id="ad-stats-panel" style="scroll-margin-top:90px;">
+    <h3>📣 צפיות בפרופיל: עצמאיות מפורסמות מול שאר העצמאיות</h3>
+    ${(() => {
+      const keys7 = new Set(Array.from({ length: 7 }, (_, i) => israelDayKeyOffset(i)));
+      const keys30 = new Set(Array.from({ length: 30 }, (_, i) => israelDayKeyOffset(i)));
+      const sumDays = (f, keys, field) => Object.keys(f.viewsByDay || {}).filter((k) => keys.has(k)).reduce((acc, k) => acc + (f.viewsByDay[k][field] || 0), 0);
+      const rows = activeFreelancers.filter((f) => f.active !== false).map((f) => ({
+        f, name: f.businessName || f.name, advertised: isFreelancerCurrentlyAdvertised(f),
+        v7: sumDays(f, keys7, "t"), v30: sumDays(f, keys30, "t"), a30: sumDays(f, keys30, "a"), lifetime: f.viewCount || 0,
+      })).sort((a, b) => b.v30 - a.v30 || b.lifetime - a.lifetime);
+      const ads = rows.filter((r) => r.advertised);
+      const others = rows.filter((r) => !r.advertised);
+      const grp = (list) => ({
+        n: list.length, v7: list.reduce((x, r) => x + r.v7, 0), v30: list.reduce((x, r) => x + r.v30, 0),
+        avg7: list.length ? list.reduce((x, r) => x + r.v7, 0) / list.length : 0, avg30: list.length ? list.reduce((x, r) => x + r.v30, 0) / list.length : 0,
+      });
+      const A = grp(ads), B = grp(others);
+      const fmt = (n) => (Math.round(n * 10) / 10).toLocaleString("he-IL");
+      const ratio30 = B.avg30 > 0 && A.n ? fmt(A.avg30 / B.avg30) : null;
+      return `
+      <p class="muted">כמה פעמים נכנסו לעמוד הפרופיל של כל עצמאית פעילה, בחלוקה לעצמאיות שהמודעה שלהן פעילה כרגע (📣) מול כל השאר. הנתונים חיים - מתעדכנים בכל כניסה לפרופיל. לא נספרות כניסות של בעלת העסק עצמה ושל המנהלת. הפירוט היומי מתחיל מ-${esc(d.settings.profileViewsTrackingSince || "היום")} (הנתונים לפני כן קיימים רק כמצטבר בעמודה "סה\"כ מצטבר").</p>
+      <div class="table-scroll"><table class="table-simple">
+        <tr><th>קבוצה</th><th>עצמאיות</th><th>צפיות 7 ימים</th><th>ממוצע לעצמאית (7 י')</th><th>צפיות 30 ימים</th><th>ממוצע לעצמאית (30 י')</th></tr>
+        <tr><td><strong>📣 מפורסמות כרגע</strong></td><td>${A.n}</td><td>${A.v7}</td><td>${fmt(A.avg7)}</td><td>${A.v30}</td><td>${fmt(A.avg30)}</td></tr>
+        <tr><td><strong>שאר העצמאיות</strong></td><td>${B.n}</td><td>${B.v7}</td><td>${fmt(B.avg7)}</td><td>${B.v30}</td><td>${fmt(B.avg30)}</td></tr>
+      </table></div>
+      ${ratio30 ? `<p style="font-weight:800;color:var(--rose-dark);margin:10px 0;">עצמאית מפורסמת מקבלת בממוצע פי ${ratio30} צפיות מעצמאית רגילה (ב-30 הימים האחרונים).</p>` : `<p class="muted" style="margin:10px 0;">ההשוואה תופיע ברגע שיהיו גם עצמאיות מפורסמות וגם צפיות מתועדות.</p>`}
+      <div style="display:flex;gap:8px;margin:10px 0;max-width:420px;"><input type="text" id="scAdStatsSearch" placeholder="חיפוש עצמאית לפי שם..." oninput="(function(q){document.querySelectorAll('#ad-stats-panel .sc-adstat-row').forEach(function(r){r.style.display=(!q||r.getAttribute('data-name').indexOf(q)!==-1)?'':'none';});})(this.value.trim().toLowerCase())" autocomplete="off" style="flex:1;" /></div>
+      <div class="table-scroll"><table class="table-simple">
+        <tr><th>עצמאית</th><th>מודעה</th><th>7 ימים</th><th>30 ימים</th><th>מתוכן בזמן מודעה (30 י')</th><th>סה"כ מצטבר</th></tr>
+        ${rows.map((r) => `<tr class="sc-adstat-row" data-name="${esc(r.name.toLowerCase())}"><td><a href="/freelancer/${esc(r.f.id)}" target="_blank" rel="noopener">${esc(r.name)}</a></td><td>${r.advertised ? `📣 פעילה${r.f.isAdvertisedUntil ? ` (עד ${esc(r.f.isAdvertisedUntil)})` : ""}` : "-"}</td><td>${r.v7}</td><td>${r.v30}</td><td>${r.a30}</td><td>${r.lifetime}</td></tr>`).join("")}
+      </table></div>`;
+    })()}
+  </div>
+
   <div class="panel" id="category-stats-panel">
     <h3>עצמאיות וצפיות לפי תחום 📊</h3>
     <p class="muted">כמה עצמאיות (מאושרות ופעילות) יש בכל תחום, וכמה צפיות בסך הכל צברו הפרופילים שלהן (👁️ f.viewCount - אותו מונה שסופר כל כניסה לעמוד הפרופיל של עצמאית, ר' "הצגת מספר הצפיות" בפאנל ההגדרות למטה). ממוין מהתחום עם הכי הרבה עצמאיות להכי מעט.</p>
@@ -9856,14 +9898,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
          "התוכן השבועי" למעלה) - זה פין שמחזיק מעצמו עד תאריך שהיא בוחרת (למשל חודש שלם), לא
          רק מחזור שבועי אחד. ר' getWeeklyFeature למעלה בקובץ ל-override עצמו. -->
     <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
-      <h4 style="margin:0 0 6px;">🏆 הכרזת מנצחת ופרסום בדף הבית</h4>
+      <h4 style="margin:0 0 6px;">🏆 הכרזת מנצחת - פרסום אוטומטי כנותנת חסות</h4>
       ${(() => {
         const currentWinner = d.settings.freelancerReferralWinnerId && d.settings.freelancerReferralWinnerUntil && israelDayKeyOffset(0) <= d.settings.freelancerReferralWinnerUntil
           ? d.freelancers.find((x) => x.id === d.settings.freelancerReferralWinnerId) : null;
         return currentWinner
-          ? `<p class="muted">מוצגת כרגע כ"העסק המוביל" בדף הבית: <strong>${esc(currentWinner.businessName || currentWinner.name)}</strong>, עד ה-${esc(d.settings.freelancerReferralWinnerUntil)}.</p>
+          ? `<p class="muted">מוצגת כרגע כמודעה עם תג "נותנת חסות" בכל מקום שמודעות מוצגות באתר: <strong>${esc(currentWinner.businessName || currentWinner.name)}</strong>, עד ה-${esc(d.settings.freelancerReferralWinnerUntil)}. (משפט השבוע בדף הבית לא מושפע.)</p>
              <form method="post" action="/admin/referral-settings/clear-winner" style="margin-bottom:10px;"><button class="btn btn-small btn-outline" type="submit">ביטול הפרסום</button></form>`
-          : `<p class="muted">אין כרגע מנצחת מוכרזת - כשתבחרי אחת, היא תוצג בדף הבית (בלוק "טיפ שבועי") עד התאריך שתקבעי, בלי תלות ברוטציה השבועית הרגילה.</p>`;
+          : `<p class="muted">אין כרגע מנצחת מוכרזת - כשתבחרי אחת, היא תקבל אוטומטית פרסום כמו מודעה רגילה (עם תג "נותנת חסות") עד התאריך שתקבעי, ותקבל מייל. משפט השבוע בדף הבית לא משתנה.</p>`;
       })()}
       <form method="post" action="/admin/referral-settings/set-winner" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
         <label style="flex:2;min-width:200px;">המנצחת
@@ -9875,7 +9917,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <label style="flex:1;min-width:150px;">מוצגת עד תאריך
           <input type="date" name="until" value="${esc(israelDateKey(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))}" required />
         </label>
-        <button class="btn btn-small" type="submit">פרסום כמנצחת</button>
+        <button class="btn btn-small" type="submit">הכרזה ופרסום כנותנת חסות</button>
       </form>
     </div>
     <!-- פרס "פרסום חינם" ל-3 המקומות הראשונים במרוץ (נוסף 2026-09-09, לפי בקשה מפורשת: "מי
@@ -11134,19 +11176,33 @@ route("POST", "/admin/referral-settings/set-winner", async (req, res, params, qu
   if (!f || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
     return redirect(res, `/admin?err=${encodeURIComponent("יש לבחור עצמאית ותאריך תקין.")}#freelancer-referral-race`);
   }
+  // אם הייתה מנצחת קודמת עם פרס מרוץ - מכבים לה את המודעה לפני שעוברים לחדשה
+  const prevId = d.settings.freelancerReferralWinnerId;
+  if (prevId && prevId !== f.id) {
+    const prev = d.freelancers.find((x) => x.id === prevId);
+    if (prev && prev.adSource === "race") { prev.isAdvertised = false; prev.isAdvertisedUntil = null; prev.adPaymentStatus = "none"; prev.adSource = null; }
+  }
   d.settings.freelancerReferralWinnerId = f.id;
   d.settings.freelancerReferralWinnerUntil = until;
+  // המנצחת מקבלת אוטומטית מודעה רגילה עם תג "נותנת חסות" (לא מחליפה את משפט השבוע)
+  f.isAdvertised = true;
+  f.isAdvertisedUntil = until;
+  f.adPaymentStatus = "paid";
+  f.adSource = "race";
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent(`${f.businessName || f.name} תוצג כ"העסק המוביל" בדף הבית עד ה-${until}!`)}#freelancer-referral-race`);
+  notifyAdActivated(f, { until, prizeLabel: "זכית במרוץ ההפניות של העצמאיות, והפרס שלך הוא פרסום באתר כנותנת חסות" });
+  redirect(res, `/admin?ok=${encodeURIComponent(`${f.businessName || f.name} מפורסמת עכשיו כנותנת חסות עד ה-${until} ונשלח לה מייל.`)}#freelancer-referral-race`);
 });
 
 route("POST", "/admin/referral-settings/clear-winner", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
+  const prev = d.freelancers.find((x) => x.id === d.settings.freelancerReferralWinnerId);
+  if (prev && prev.adSource === "race") { prev.isAdvertised = false; prev.isAdvertisedUntil = null; prev.adPaymentStatus = "none"; prev.adSource = null; }
   d.settings.freelancerReferralWinnerId = null;
   d.settings.freelancerReferralWinnerUntil = null;
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent("הפרסום בוטל - חוזרים לרוטציה הרגילה.")}#freelancer-referral-race`);
+  redirect(res, `/admin?ok=${encodeURIComponent("הפרסום כנותנת חסות בוטל.")}#freelancer-referral-race`);
 });
 
 // הענקת פרס "פרסום חינם" ל-3 המקומות הראשונות במרוץ ההפניות של העצמאיות (ר' ההערה המלאה ליד
@@ -11168,6 +11224,7 @@ route("POST", "/admin/referral-settings/grant-ad-prizes", async (req, res, param
     f.isAdvertised = true;
     f.isAdvertisedUntil = until;
     f.adPaymentStatus = "paid";
+    f.adSource = "race";
     granted.push(`${f.businessName || f.name} (עד ${until})`);
     const placeNum = key.replace("place", "");
     notifyAdActivated(f, { until, prizeLabel: `זכית במקום ${placeNum} במרוץ ההפניות של SheCan, והפרס שלך הוא פרסום חינם באתר` });
@@ -12275,6 +12332,7 @@ route("POST", "/admin/freelancer/:id/toggle-ad", async (req, res, params, query,
     // "on" here means a regular paid ad that stays on until manually turned off, not a
     // self-expiring prize, and a manual "off" should fully reset the state either way.
     f.isAdvertisedUntil = null;
+    f.adSource = null;
     if (f.isAdvertised) notifyAdActivated(f);
   }
   db.save();
