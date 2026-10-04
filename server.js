@@ -1558,8 +1558,8 @@ function raceOdometerHtml(value) {
   }).join("");
 }
 
-function publicReferralLeaders(entities, refField, nameOf, n) {
-  const counts = referralCounts(entities, refField);
+function publicReferralLeaders(entities, refField, nameOf, n, countList) {
+  const counts = referralCounts(countList || entities, refField);
   return entities
     .map((e) => ({ id: e.id, name: nameOf(e), count: counts[e.id] || 0 }))
     .filter((r) => r.count > 0)
@@ -1765,6 +1765,59 @@ function referralCounts(list, refField) {
   return counts;
 }
 
+// ---- מירוץ הלקוחות - מספר מירוץ ונקודת התחלה (נוסף לפי בקשה מפורשת: כשמסיימים מירוץ בניהול
+// נפתח מירוץ מס' 2, 3... שמנוהל מאותו מקום). מירוץ מס' 1 (ברירת מחדל, בלי customerRaceStartedAt)
+// סופר כל הלקוחות כמו תמיד; מירוץ מס' 2 ואילך סופר רק לקוחות שנרשמו אחרי נקודת ההתחלה שלו, כך
+// שההפניות הישנות לא "דולפות" למירוץ החדש. ----
+const DEFAULT_CUSTOMER_RACE_PRIZES = [
+  "מסאז' מפנק",
+  "מארז קינוחים מושחת וטעים",
+  "איפור ערב מתנה לפעם הבאה שתצטרכי",
+  "מגש פירות מפנק וצבעוני",
+];
+function customerRaceNumber(d) { return d.settings.customerRaceNumber || 1; }
+function customersInCurrentRace(d) {
+  const since = d.settings.customerRaceStartedAt;
+  if (!since) return d.customers;
+  const sinceMs = new Date(since).getTime();
+  return d.customers.filter((c) => c.createdAt && new Date(c.createdAt).getTime() >= sinceMs);
+}
+function customerRacePrizes(d) {
+  const saved = Array.isArray(d.settings.customerRacePrizes) ? d.settings.customerRacePrizes : [];
+  return DEFAULT_CUSTOMER_RACE_PRIZES.map((def, i) => (saved[i] || "").trim() || def);
+}
+// נותנת החסות של כל פרס (עצמאית שנבחרה בניהול, d.settings.customerRacePrizeSponsors[i] = id) -
+// מוצגת בכל מקום שבו הפרס מוצג, עם שם העסק כקישור לפרופיל שלה. אם העצמאית כבר לא מאושרת/פעילה
+// הקישור לא מוצג (אין לאן להפנות) והפרס מוצג בלי "בחסות".
+function customerRacePrizeSponsor(d, i) {
+  const ids = Array.isArray(d.settings.customerRacePrizeSponsors) ? d.settings.customerRacePrizeSponsors : [];
+  const id = ids[i];
+  if (!id) return null;
+  return d.freelancers.find((f) => f.id === id && f.status === "approved" && f.active !== false) || null;
+}
+function customerRacePrizeSponsorHtml(d, i) {
+  const f = customerRacePrizeSponsor(d, i);
+  if (!f) return "";
+  return ` <span class="muted">- בחסות <a href="/freelancer/${esc(f.id)}" style="color:var(--rose-dark);font-weight:800;">${esc(f.businessName || f.name)}</a></span>`;
+}
+// נשלח אוטומטית (פוש אם יש, אחרת מייל) לעצמאית ברגע שהמודעה שלה מופעלת מהניהול - גם כפרס מרוץ
+// ההפניות (until = תאריך תפוגה) וגם כהפעלה ידנית רגילה.
+function notifyAdActivated(f, { until, businessName, prizeLabel } = {}) {
+  const name = businessName || f.businessName || f.name || "";
+  const untilLine = until ? `המודעה תהיה פעילה עד ${until}.` : "המודעה פעילה ותישאר באתר עד שנעדכן אותך אחרת.";
+  return notify(f, {
+    pushTitle: "המודעה שלך פעילה באתר 📣", pushBody: `${name} מוצגת עכשיו כמודעה ב-SheCan. ${untilLine}`, url: "/freelancer-dashboard",
+    emailSubject: "המודעה שלך ב-SheCan פעילה 📣",
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;">
+      <p>היי ${esc(f.name || "")},</p>
+      ${prizeLabel ? `<p>מזל טוב! ${esc(prizeLabel)} 🏆</p>` : ""}
+      <p>המודעה של <strong>${esc(name)}</strong> פעילה עכשיו באתר SheCan - העסק שלך מוצג בתג "📣 מודעה" בראש התוצאות ובעסקים הממומנים.</p>
+      <p>${esc(untilLine)}</p>
+      <p><a href="https://shecan.co.il/freelancer/${esc(f.id)}">לצפייה בעמוד העסק שלך</a></p>
+    </div>`,
+  }).catch(() => {});
+}
+
 // A one-line "who's leading and by how much" callout above an admin referral-ranking table
 // (see freelancerReferralRanking/customerReferralRanking in /admin) - per explicit request
 // 2026-08-30. `ranking` is already sorted highest-first and filtered to count > 0.
@@ -1780,8 +1833,8 @@ function leaderGapSummaryHtml(ranking, noun) {
 // (in /account) or freelancer (in /freelancer-dashboard) - same ranking/leaderboard logic for
 // both, driven by small role-specific labels so the copy reads naturally in each context.
 function referralStatusHtml(opts) {
-  const { entities, refField, selfId, nameOf, firstNameOf, endDateLabel, goalLabel, noun, rivalNoun } = opts;
-  const counts = referralCounts(entities, refField);
+  const { entities, refField, selfId, nameOf, firstNameOf, endDateLabel, goalLabel, noun, rivalNoun, countList } = opts;
+  const counts = referralCounts(countList || entities, refField);
   const ranked = entities.map((e) => ({ id: e.id, name: nameOf(e), firstName: firstNameOf(e), count: counts[e.id] || 0 }))
     .sort((a, b) => b.count - a.count);
   const selfIdx = ranked.findIndex((r) => r.id === selfId);
@@ -2282,7 +2335,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const approvedActiveFreelancersCount = d.freelancers.filter((f) => f.status === "approved" && f.active !== false).length;
   const registeredCustomersCount = d.customers.length;
   const freelancerRaceLeader = publicReferralLeaders(d.freelancers, "referredByFreelancerId", (f) => f.businessName || f.name, 1)[0] || null;
-  const customerRaceLeaders = publicReferralLeaders(d.customers, "referredByCustomerId", (c) => c.name, 4);
+  const customerRaceLeaders = publicReferralLeaders(d.customers, "referredByCustomerId", (c) => c.name, 4, customersInCurrentRace(d));
   const isFreelancerSession = ctx.session && ctx.session.role === "freelancer";
   const isCustomerSession = ctx.session && ctx.session.role === "customer";
   // כל עצמאית מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל - ר' update120), ולכן ברגע שהיא
@@ -2407,9 +2460,11 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         <section class="panel race-panel" id="scCustomerRaceSection" ${customerRoundMilestone ? `data-milestone="${customerRoundMilestone}"` : ""} style="text-align:center;position:relative;overflow:hidden;">
           <div class="race-number" id="scRaceNumCustomer" data-real="${registeredCustomersCount}">${raceOdometerHtml(customerRaceStartCount)}</div>
           <div class="race-number-label">לקוחות רשומות כבר איתנו</div>
+          ${customerRaceNumber(d) > 1 ? `<p style="margin:6px 0 0;font-weight:800;color:var(--rose-dark);">🏁 מירוץ ההפניות מס' ${customerRaceNumber(d)} יצא לדרך!</p>` : ""}
           ${customerRoundMilestone ? `<p style="margin:10px 0 0;font-weight:800;font-size:15px;color:var(--arena);">🎉 כבר עברנו את ה-${customerRoundMilestone}!</p>` : ""}
           <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> ${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות! <span class="race-goal-label">מירוץ ${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות בעיצומו!</span> 🚀</p>
           <p class="muted">שתפי את SheCan עם חברות והגדילי את הסיכוי שלך לזכות. 4 פרסים שווים מחכים למובילות!</p>
+          ${[0, 1, 2, 3].map((i) => customerRacePrizeSponsor(d, i)).filter(Boolean).length ? `<p class="muted" style="font-size:13px;">🎁 הפרסים בחסות: ${[0, 1, 2, 3].map((i) => customerRacePrizeSponsor(d, i)).filter(Boolean).filter((f, idx, arr) => arr.findIndex((x) => x.id === f.id) === idx).map((f) => `<a href="/freelancer/${esc(f.id)}" style="color:var(--rose-dark);font-weight:800;">${esc(f.businessName || f.name)}</a>`).join(" · ")}</p>` : ""}
           <div style="margin-top:10px;">${customerRaceCtaHtml}</div>
           ${customerRaceLeaders.length ? `
           <div style="display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin:12px 0;">
@@ -2800,24 +2855,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     breadcrumbItems.push({ label: catName(d, category), href: `/search?category=${category}` });
     if (subcategory) breadcrumbItems.push({ label: subcatName(d, category, subcategory), href: `/search?category=${category}&subcategory=${subcategory}` });
   }
-  // תיבת "חיפוש חכם" - שולחת לראוט נפרד (POST /search/ai) שמפרש את הטקסט בעצמו (בלי AI חיצוני,
-  // ר' smartSearchHeuristic למעלה) ומפנה בחזרה לעמוד הזה עם פרמטרים מובנים. aiUsed מציג הודעת
-  // שקיפות קטנה מעל התוצאות עם מה שהובן מהבקשה, כדי שהלקוחה תדע שהחיפוש אכן "הבין" אותה
-  // ותוכל לתקן בקלות דרך טופס הסינון הרגיל למטה אם משהו לא היה מדויק.
-  const aiSearchBoxHtml = `
-  <form method="post" action="/search/ai" class="panel" style="max-width:640px;margin:0 auto 20px;text-align:center;">
-    <h3 style="margin-top:0;">🤖 חיפוש חכם</h3>
-    <p class="muted" style="font-size:13px;margin-top:-6px;">ספרי לנו במילים שלך מה את מחפשת - לדוגמה: "מאפרת באזור ירושלים ברמה גבוהה ומחיר טוב"</p>
-    <textarea name="q" required maxlength="300" placeholder="תארי כאן מה את מחפשת..." style="min-height:60px;"></textarea>
-    <button class="btn" style="margin-top:10px;" type="submit">חיפוש חכם</button>
-  </form>`;
-  const aiUsedBannerHtml = aiUsed ? `
-  <p class="muted" style="text-align:center;margin-top:-10px;">🤖 חיפשנו בשבילך${category ? `: <b>${esc(catName(d, category))}</b>` : ""}${subcategory ? ` › <b>${esc(subcatName(d, category, subcategory))}</b>` : ""}${city ? ` ב<b>${esc(cityName(d, city))}</b>` : ""}${sortQuality ? ` · ממוינות לפי דירוג` : ""}${q ? ` · "${esc(query.get("q") || "")}"` : ""} - לא בדיוק מה שרצית? אפשר לדייק בטופס הרגיל למטה.</p>` : "";
+  // תיבת "חיפוש חכם" (AI) הוסרה מעמוד החיפוש לפי בקשה מפורשת (2026-10-04) - נשאר רק החיפוש הרגיל.
   const body = `
   ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
-  ${aiSearchBoxHtml}
-  ${aiUsedBannerHtml}
       <form class="search-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות" style="margin-right:0;margin-left:0;">
         <div class="search-row">
           <input type="text" id="scSearchQ" name="q" value="${esc(query.get("q") || "")}" placeholder="חפשי לפי שם עסק, עצמאית או תחום - הסינון אוטומטי תוך כדי הקלדה" oninput="scLiveFilter()" autocomplete="off" />
@@ -2886,32 +2927,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
 // הנתונים האמיתיים (d.categories/d.cities) לפני שהם נכנסים ל-URL - לעולם לא סומכים על קלט
 // חיצוני (גם לא כזה שמגיע מ-AI) בלי אימות.
 route("POST", "/search/ai", async (req, res, params, query, ctx) => {
-  const d = db.load();
+  // החיפוש החכם הוסר מהאתר (2026-10-04) - נשאר ראוט שמפנה לחיפוש הרגיל, למקרה של עמוד ישן פתוח בדפדפן.
   const body = await readBody(req);
   const freeText = clip((body.get("q") || "").trim(), 300);
-  if (!freeText) return redirect(res, "/search");
-  // חיפוש ה-AI האמיתי כבוי כברירת מחדל (לפי בקשה מפורשת 2026-08-30, אחרי שהוסבר שבניגוד לכפתור
-  // "הצע לי תשובה" הידני בתמיכה, כל חיפוש בודד כאן היה עולה כסף בפועל) - נבדק כאן, לפני
-  // aiSearchInterpret, כדי שכל עוד d.settings.aiSearchEnabled לא true, לא יוצאת בכלל שום קריאת
-  // רשת ל-Anthropic ולא נגבה שום עלות. ר' פאנל "🤖 עוזרת AI באתר" בניהול למתג ההפעלה/כיבוי.
-  let result = d.settings.aiSearchEnabled ? await aiSearchInterpret(freeText, d) : { ok: false, reason: "disabled" };
-  if (!result.ok) result = smartSearchHeuristic(freeText, d);
-  if (!result.ok) {
-    return redirect(res, `/search?q=${encodeURIComponent(freeText)}`);
-  }
-  const f = result.filters;
-  const params2 = new URLSearchParams();
-  if (f.categoryId && d.categories.some((c) => c.id === f.categoryId)) {
-    params2.set("category", f.categoryId);
-    if (f.subcategoryId && subcategoriesOf(d, f.categoryId).some((s) => s.id === f.subcategoryId)) {
-      params2.set("subcategory", f.subcategoryId);
-    }
-  }
-  if (f.cityId && d.cities.some((c) => c.id === f.cityId)) params2.set("city", f.cityId);
-  if (f.wantsHighQuality) params2.set("sortQuality", "1");
-  if (f.keywords) params2.set("q", f.keywords);
-  params2.set("ai", "1");
-  redirect(res, `/search?${params2.toString()}`);
+  redirect(res, freeText ? `/search?q=${encodeURIComponent(freeText)}` : "/search");
 });
 
 // ----- Freelancer profile -----
@@ -6973,11 +6992,9 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
     <h3 style="margin-top:0;">פינוק שווה על חשבוננו נשמע לך טוב?</h3>
     <p class="muted">העבירי את הקישור האישי שלך לכמה שיותר חברות - כל אחת שתירשם דרכו תזכה אותך אוטומטית בעוד 10 נקודות, ומי שהביאה הכי הרבה תזכה בפרס השווה!!</p>
     <p>${esc(customer.name.split(" ")[0])}, אל דאגה - יש לנו 4 מקומות, איזה מהם שלך?</p>
+    ${customerRaceNumber(d) > 1 ? `<p style="font-weight:800;color:var(--rose-dark);">🏁 מירוץ ההפניות מס' ${customerRaceNumber(d)}</p>` : ""}
     <ul class="referral-prize-list">
-      <li><span>🥇</span><span>מקום 1: מסאז' מפנק</span></li>
-      <li><span>🥈</span><span>מקום 2: מארז קינוחים מושחת וטעים</span></li>
-      <li><span>🥉</span><span>מקום 3: איפור ערב מתנה לפעם הבאה שתצטרכי</span></li>
-      <li><span>🎁</span><span>מקום 4: מגש פירות מפנק וצבעוני</span></li>
+      ${customerRacePrizes(d).map((prize, i) => `<li><span>${["🥇", "🥈", "🥉", "🎁"][i]}</span><span>מקום ${i + 1}: ${esc(prize)}${customerRacePrizeSponsorHtml(d, i)}</span></li>`).join("")}
     </ul>
     <div class="referral-link-row">
       <input type="text" id="scCustomerRefLink" value="${esc(referralLink)}" readonly />
@@ -6990,6 +7007,7 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
     entities: d.customers, refField: "referredByCustomerId", selfId: customer.id,
     nameOf: (c) => c.name, firstNameOf: (c) => c.name.split(" ")[0],
     endDateLabel: d.settings.customerReferralContestEndDate, noun: "חברות", rivalNoun: "לקוחות",
+    countList: customersInCurrentRace(d),
   })}` : "";
 
   // The same "פינוק שווה" message shows as a one-time popup the very first time she lands
@@ -8779,11 +8797,12 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // Same idea as freelancerReferralRanking just above, for the customers' "הביאי חברה" race
   // (referredByCustomerId) - added per explicit request 2026-08-30 so admin can see "who's
   // leading and by how much" for BOTH races in one place, not just the freelancer one.
-  const customerReferralCounts = referralCounts(d.customers, "referredByCustomerId");
+  const customerRaceList = customersInCurrentRace(d);
+  const customerReferralCounts = referralCounts(customerRaceList, "referredByCustomerId");
   const customerReferralRanking = d.customers
     .map((c) => ({
       id: c.id, name: c.name || c.email, count: customerReferralCounts[c.id] || 0,
-      referred: d.customers.filter((x) => x.referredByCustomerId === c.id).map((x) => x.name || x.email),
+      referred: customerRaceList.filter((x) => x.referredByCustomerId === c.id).map((x) => x.name || x.email),
     }))
     .filter((r) => r.count > 0)
     .sort((a, b) => b.count - a.count);
@@ -9739,19 +9758,9 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <h3>🤖 עוזרת AI באתר</h3>
     <p class="muted">
       ${AI_CONFIGURED
-        ? "מפתח ה-AI מוגדר. כפתור \"הצע לי תשובה\" בשיחות תמיכה פעיל תמיד כשיש מפתח - זו פעולה ידנית שאת לוחצת עליה רק כשרוצים, ולא עולה הרבה. חיפוש ה-AI בעמוד החיפוש הוא סיפור אחר - כל חיפוש עולה כסף בפועל, אז הוא כבוי כברירת מחדל ומופעל רק דרך המתג למטה."
-        : "כדי שהכפתור \"הצע לי תשובה\" בשיחות התמיכה וחיפוש ה-AI בעמוד החיפוש (כשתדליקי אותו) יתחילו לעבוד, צריך להגדיר ב-Render משתנה סביבה בשם ANTHROPIC_API_KEY (בדיוק כמו RESEND_API_KEY ו-VAPID_PUBLIC_KEY/PRIVATE_KEY שכבר מוגדרים אצלך). אפשר לקבל מפתח כזה בקישור <a href=\"https://console.anthropic.com\" target=\"_blank\" rel=\"noopener\">console.anthropic.com</a> - נרשמים, נכנסים ל-Settings ← API Keys, יוצרים מפתח חדש ומעתיקים אותו ל-Render (Environment ← Add Environment Variable)."}
+        ? "מפתח ה-AI מוגדר. כפתור \"הצע לי תשובה\" בשיחות תמיכה פעיל תמיד כשיש מפתח - זו פעולה ידנית שאת לוחצת עליה רק כשרוצים, ולא עולה הרבה."
+        : "כדי שהכפתור \"הצע לי תשובה\" בשיחות התמיכה יתחיל לעבוד, צריך להגדיר ב-Render משתנה סביבה בשם ANTHROPIC_API_KEY (בדיוק כמו RESEND_API_KEY ו-VAPID_PUBLIC_KEY/PRIVATE_KEY שכבר מוגדרים אצלך). אפשר לקבל מפתח כזה בקישור <a href=\"https://console.anthropic.com\" target=\"_blank\" rel=\"noopener\">console.anthropic.com</a> - נרשמים, נכנסים ל-Settings ← API Keys, יוצרים מפתח חדש ומעתיקים אותו ל-Render (Environment ← Add Environment Variable)."}
     </p>
-    <div style="margin:14px 0;padding:10px 12px;background:#f7f2ee;border-radius:8px;">
-      <p style="margin:0 0 8px;font-weight:700;">חיפוש חכם מבוסס AI בעמוד החיפוש: ${d.settings.aiSearchEnabled ? "🟢 פעיל" : "🔴 כבוי"}</p>
-      <p class="muted" style="margin:0 0 8px;font-size:13px;">${d.settings.aiSearchEnabled
-        ? "כרגע דלוק - כל חיפוש בתיבת \"חיפוש חכם\" שולח קריאה בתשלום ל-AI. אם תכבי, החיפוש חוזר מיד לגרסה החכמה-אבל-חינמית שעבדה עד עכשיו, בלי שום עלות."
-        : "כרגע כבוי לפי בקשתך, כדי לא להצטבר עלות לא צפויה - עמוד החיפוש ממשיך לעבוד רגיל עם הגרסה החכמה-אבל-חינמית (בלי קריאות AI ובלי עלות). אפשר להדליק בכל רגע בכפתור הזה."}</p>
-      <form method="post" action="/admin/ai-search-toggle">
-        <input type="hidden" name="enable" value="${d.settings.aiSearchEnabled ? "0" : "1"}" />
-        <button class="btn btn-small ${d.settings.aiSearchEnabled ? "btn-outline" : ""}" type="submit">${d.settings.aiSearchEnabled ? "כיבוי חיפוש ה-AI" : "הפעלת חיפוש ה-AI"}</button>
-      </form>
-    </div>
     <form method="post" action="/admin/support-knowledge-base">
       <label>מסמך מדיניות / שאלות נפוצות (זה מה שה-AI יסתמך עליו כדי להציע תשובות)
       <textarea name="supportKnowledgeBase" maxlength="12000" style="min-height:220px;" placeholder="לדוגמה: איך נרשמים לאתר, מה זה 'עצמאית מומלצת', מדיניות ביטולים, איך מדווחים על תוכן פוגעני, פרטי יצירת קשר...">${esc(d.settings.supportKnowledgeBase || "")}</textarea></label>
@@ -9918,7 +9927,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   </div>
 
   <div class="panel" id="customer-referral-race" style="scroll-margin-top:90px;">
-    <h3>מרוץ ההפניות של הלקוחות - מי מובילה 🏆</h3>
+    <h3>מרוץ ההפניות של הלקוחות - מי מובילה 🏆 (מירוץ מס' ${customerRaceNumber(d)})</h3>
     <p class="muted">כל לקוחה שנרשמה דרך הקישור האישי של לקוחה אחרת ("הביאי חברה") - ממוין מהכי הרבה הפניות להכי פחות, כולל השמות של מי שנרשמה דרך הקישור של כל אחת.</p>
     ${leaderGapSummaryHtml(customerReferralRanking, "חברות")}
     ${customerReferralRanking.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מקום</th><th>לקוחה</th><th>כמות הפניות</th><th>מי נרשמה דרכה</th></tr>
@@ -9940,6 +9949,44 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <button class="btn btn-small" type="submit">עדכון המבצע</button>
       </form>
     </div>
+    <!-- ניהול מרוץ הלקוחות: פרסים לעריכה, סיום המרוץ + הכרזת זוכות (מייל אוטומטי) ופתיחת מירוץ הבא -->
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <h4 style="margin:0 0 6px;">🎁 הפרסים ונותנות החסות של מירוץ מס' ${customerRaceNumber(d)}</h4>
+      <p class="muted" style="margin:0 0 8px;">הפרסים ושם העסק של נותנת החסות (קישור לפרופיל שלה) מוצגים ללקוחות באזור האישי ובעמוד "מירוץ ההפניות". אפשר לשנות בכל רגע.</p>
+      <form method="post" action="/admin/customer-race/prizes" style="display:flex;flex-direction:column;gap:8px;max-width:520px;">
+        ${customerRacePrizes(d).map((pz, i) => `<div style="border:1px solid #eee2d8;border-radius:8px;padding:8px 10px;">
+          <label>מקום ${i + 1} - הפרס<input type="text" name="prize${i + 1}" maxlength="120" value="${esc(pz)}" /></label>
+          <label>נותנת החסות (העסק שיוצג ויהיה לחיץ)
+            <select name="sponsor${i + 1}">
+              <option value="">ללא נותנת חסות</option>
+              ${d.freelancers.filter((f) => f.status === "approved").sort((a, b) => (a.businessName || a.name || "").localeCompare(b.businessName || b.name || "", "he")).map((f) => `<option value="${f.id}" ${((d.settings.customerRacePrizeSponsors || [])[i] === f.id) ? "selected" : ""}>${esc(f.businessName || f.name)}</option>`).join("")}
+            </select></label>
+        </div>`).join("")}
+        <button class="btn btn-small" type="submit" style="align-self:flex-start;">שמירת הפרסים והחסויות</button>
+      </form>
+    </div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <h4 style="margin:0 0 6px;">🏁 סיום מירוץ מס' ${customerRaceNumber(d)} והכרזת זוכות</h4>
+      <p class="muted" style="margin:0 0 8px;">בחרי את 4 הזוכות (ברירת המחדל - ארבע המובילות הנוכחיות; אפשר להשאיר מקום ריק). בלחיצה אחת: הזוכות מקבלות הודעה אוטומטית (פוש, ואם אין - מייל) עם המקום והפרס שלהן, המירוץ נשמר בהיסטוריה, ונפתח אוטומטית <strong>מירוץ מס' ${customerRaceNumber(d) + 1}</strong> שסופר מאפס רק לקוחות שיירשמו מעכשיו.</p>
+      <form method="post" action="/admin/customer-race/end" style="display:flex;flex-direction:column;gap:8px;max-width:520px;" onsubmit="return confirm('לסיים את מירוץ מס\' ${customerRaceNumber(d)}, לשלוח הודעה לזוכות ולפתוח מירוץ חדש?');">
+        ${[1, 2, 3, 4].map((place) => `<label>מקום ${place} - ${esc(customerRacePrizes(d)[place - 1])}${customerRacePrizeSponsor(d, place - 1) ? ` (בחסות ${esc(customerRacePrizeSponsor(d, place - 1).businessName || customerRacePrizeSponsor(d, place - 1).name)})` : ""}
+          <select name="place${place}">
+            <option value="">ללא</option>
+            ${d.customers.slice().sort((a, b) => (a.name || a.email || "").localeCompare(b.name || b.email || "", "he")).map((c) => `<option value="${c.id}" ${customerReferralRanking[place - 1] && customerReferralRanking[place - 1].id === c.id ? "selected" : ""}>${esc(c.name || c.email)}${customerReferralRanking[place - 1] && customerReferralRanking[place - 1].id === c.id ? ` (${customerReferralRanking[place - 1].count} הפניות)` : ""}</option>`).join("")}
+          </select></label>`).join("")}
+        <p class="muted" style="margin:6px 0 0;">הגדרות מירוץ מס' ${customerRaceNumber(d) + 1}:</p>
+        <label>תאריך סיום (אופציונלי)<input type="text" name="nextEndDate" placeholder="למשל 15.12" /></label>
+        <label>תאריך הכרזה (אופציונלי)<input type="text" name="nextAnnounceDate" placeholder="למשל 16.12" /></label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="sendEmails" value="1" checked style="width:auto;" /> לשלוח לזוכות הודעה אוטומטית</label>
+        <button class="btn" type="submit" style="align-self:flex-start;">סיום המירוץ ופתיחת מירוץ מס' ${customerRaceNumber(d) + 1}</button>
+      </form>
+    </div>
+    ${(d.settings.customerRaceHistory || []).length ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
+      <h4 style="margin:0 0 6px;">📜 מירוצים קודמים</h4>
+      <div class="table-scroll"><table class="table-simple"><tr><th>מירוץ</th><th>הסתיים</th><th>זוכות</th></tr>
+        ${(d.settings.customerRaceHistory || []).slice().reverse().map((h) => `<tr><td>מס' ${esc(String(h.number))}</td><td>${esc(new Date(h.endedAt).toLocaleDateString("he-IL"))}</td><td>${(h.winners || []).map((w) => `${w.place}. ${esc(w.name)} (${w.count}) - ${esc(w.prize || "")}${w.sponsorName ? ` (בחסות ${esc(w.sponsorName)})` : ""}`).join("<br>") || "-"}</td></tr>`).join("")}
+      </table></div>
+    </div>` : ""}
     <!-- תיקון שיוך הפניה ידני - לפי בקשה מפורשת 2026-08-30 (לקוחה טענה שהפנתה חברות שלא נספרו).
          הסיבה הסבירה: שיוך הפניה של לקוחה תלוי לגמרי בקישור האישי ששרד עד לשליחת הטופס - בניגוד
          לעצמאיות, ללקוחות אין רשימת "איך שמעת עלינו" עם בחירה ידנית (ר' /signup, שעכשיו כן קיבל
@@ -11013,6 +11060,67 @@ route("POST", "/admin/referral-settings/quick-update", async (req, res, params, 
   redirect(res, `/admin?ok=${encodeURIComponent("המבצע עודכן!")}#${which}-referral-race`);
 });
 
+// ----- ניהול מרוץ הלקוחות מהניהול: עריכת פרסים, וסיום מרוץ + הכרזת זוכות + פתיחת המרוץ הבא -----
+route("POST", "/admin/customer-race/prizes", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  d.settings.customerRacePrizes = [1, 2, 3, 4].map((i) => clip((body.get(`prize${i}`) || "").trim(), 120));
+  d.settings.customerRacePrizeSponsors = [1, 2, 3, 4].map((i) => {
+    const id = body.get(`sponsor${i}`) || "";
+    return d.freelancers.some((f) => f.id === id) ? id : "";
+  });
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הפרסים ונותנות החסות עודכנו.")}#customer-referral-race`);
+});
+
+route("POST", "/admin/customer-race/end", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  const number = customerRaceNumber(d);
+  const prizes = customerRacePrizes(d);
+  const raceList = customersInCurrentRace(d);
+  const counts = referralCounts(raceList, "referredByCustomerId");
+  const sendEmails = body.get("sendEmails") === "1";
+  const winners = [];
+  const used = new Set();
+  [1, 2, 3, 4].forEach((place) => {
+    const cid = body.get(`place${place}`);
+    if (!cid || used.has(cid)) return;
+    const c = d.customers.find((x) => x.id === cid);
+    if (!c) return;
+    used.add(cid);
+    const sponsor = customerRacePrizeSponsor(d, place - 1);
+    const sponsorName = sponsor ? (sponsor.businessName || sponsor.name) : "";
+    winners.push({ place, customerId: c.id, name: c.name || c.email, count: counts[c.id] || 0, prize: prizes[place - 1], sponsorName, sponsorId: sponsor ? sponsor.id : "" });
+    if (sendEmails) {
+      notify(c, {
+        pushTitle: `זכית במקום ${place} במירוץ ההפניות! 🏆`, pushBody: `הפרס שלך: ${prizes[place - 1]}`, url: "/account",
+        emailSubject: `מזל טוב! זכית במקום ${place} במירוץ ההפניות של SheCan 🏆`,
+        emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;">
+          <p>היי ${esc((c.name || "").split(" ")[0])},</p>
+          <p>מזל טוב! 🎉 סיימת במקום <strong>${place}</strong> במירוץ ההפניות מס' ${number} של SheCan - עם ${counts[c.id] || 0} חברות שהצטרפו דרכך.</p>
+          <p>הפרס שלך: <strong>${esc(prizes[place - 1])}</strong> 🎁${sponsorName ? ` - בחסות <a href="https://shecan.co.il/freelancer/${esc(sponsor.id)}">${esc(sponsorName)}</a>` : ""}</p>
+          <p>ניצור איתך קשר בקרוב לתיאום קבלת הפרס. תודה שהבאת חברות לקהילה!</p>
+        </div>`,
+      }).catch(() => {});
+    }
+  });
+  d.settings.customerRaceHistory = d.settings.customerRaceHistory || [];
+  d.settings.customerRaceHistory.push({
+    number, startedAt: d.settings.customerRaceStartedAt || null, endedAt: new Date().toISOString(), winners,
+  });
+  d.settings.customerRaceNumber = number + 1;
+  d.settings.customerRaceStartedAt = new Date().toISOString();
+  d.settings.customerReferralContestEndDate = (body.get("nextEndDate") || "").trim();
+  d.settings.customerReferralAnnounceDate = (body.get("nextAnnounceDate") || "").trim();
+  d.settings.customerReferralPromoNote = "";
+  d.settings.customerReferralContestActive = true;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`מירוץ מס' ${number} הסתיים${winners.length ? ` (${winners.length} זוכות${sendEmails ? " קיבלו הודעה" : ""})` : ""}, ומירוץ מס' ${number + 1} נפתח.`)}#customer-referral-race`);
+});
+
 // הכרזת מנצחת מרוץ ההפניות ופרסום אמיתי בדף הבית עד תאריך שהיא בוחרת - ר' getWeeklyFeature
 // למעלה בקובץ שממש נותן לזה עדיפות בתצוגה. "until" הוא מחרוזת "YYYY-MM-DD" (מגיע מ-<input
 // type="date">) - אותו פורמט בדיוק כמו israelDayKeyOffset, כדי שההשוואה בין השניים תהיה פשוטה
@@ -11061,6 +11169,8 @@ route("POST", "/admin/referral-settings/grant-ad-prizes", async (req, res, param
     f.isAdvertisedUntil = until;
     f.adPaymentStatus = "paid";
     granted.push(`${f.businessName || f.name} (עד ${until})`);
+    const placeNum = key.replace("place", "");
+    notifyAdActivated(f, { until, prizeLabel: `זכית במקום ${placeNum} במרוץ ההפניות של SheCan, והפרס שלך הוא פרסום חינם באתר` });
   }
   db.save();
   redirect(res, granted.length
@@ -12165,9 +12275,10 @@ route("POST", "/admin/freelancer/:id/toggle-ad", async (req, res, params, query,
     // "on" here means a regular paid ad that stays on until manually turned off, not a
     // self-expiring prize, and a manual "off" should fully reset the state either way.
     f.isAdvertisedUntil = null;
+    if (f.isAdvertised) notifyAdActivated(f);
   }
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent(f && f.isAdvertised ? "המודעה שלה פעילה עכשיו באתר (ממתינה לתשלום)." : "המודעה כובתה.")}`);
+  redirect(res, `/admin?ok=${encodeURIComponent(f && f.isAdvertised ? "המודעה שלה פעילה עכשיו באתר (ממתינה לתשלום) - נשלחה לה הודעה אוטומטית." : "המודעה כובתה.")}`);
 });
 
 route("POST", "/admin/freelancer/:id/mark-ad-paid", async (req, res, params, query, ctx) => {
@@ -12190,9 +12301,10 @@ route("POST", "/admin/listing/:fid/:lid/toggle-ad", async (req, res, params, que
   if (l) {
     l.isAdvertised = !l.isAdvertised;
     l.adPaymentStatus = l.isAdvertised ? "pending_payment" : "none";
+    if (l.isAdvertised) notifyAdActivated(f, { businessName: l.businessName || f.businessName || f.name });
   }
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent(l && l.isAdvertised ? "המודעה שלה פעילה עכשיו באתר (ממתינה לתשלום)." : "המודעה כובתה.")}`);
+  redirect(res, `/admin?ok=${encodeURIComponent(l && l.isAdvertised ? "המודעה שלה פעילה עכשיו באתר (ממתינה לתשלום) - נשלחה לה הודעה אוטומטית." : "המודעה כובתה.")}`);
 });
 
 route("POST", "/admin/listing/:fid/:lid/mark-ad-paid", async (req, res, params, query, ctx) => {
@@ -12568,9 +12680,9 @@ route("GET", "/race", async (req, res, params, query, ctx) => {
     ${d.settings.freelancerReferralAnnounceDate ? `<p class="muted">הזוכות יוכרזו ב-${esc(d.settings.freelancerReferralAnnounceDate)}.</p>` : ""}
   </div>
   <div class="panel" id="customers" style="scroll-margin-top:90px;max-width:680px;margin:0 auto;text-align:right;">
-    <h3 style="margin-top:0;">מירוץ ${esc(String(d.settings.customerRaceGoal || 1000))} הלקוחות</h3>
+    <h3 style="margin-top:0;">מירוץ ${esc(String(d.settings.customerRaceGoal || 1000))} הלקוחות${customerRaceNumber(d) > 1 ? ` - מירוץ מס' ${customerRaceNumber(d)}` : ""}</h3>
     <p>אנחנו שואפות להגיע ל-${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות רשומות באתר - וכל לקוחה יכולה לעזור להגיע לשם. לכל לקוחה יש קישור אישי משלה (מהאזור האישי שלה): כל חברה שנרשמת דרך הקישור הזה מזכה אותה אוטומטית ב-10 נקודות.</p>
-    <p><strong>הפרסים:</strong> 4 פרסים שווים מחכים ל-4 המקומות המובילות${d.settings.customerReferralContestEndDate ? ` (נכון ליום סיום ההרשמה לתחרות, ${esc(d.settings.customerReferralContestEndDate)})` : ""}.</p>
+    <p><strong>הפרסים:</strong> ${customerRacePrizes(d).map((pz, i) => `מקום ${i + 1} - ${esc(pz)}${customerRacePrizeSponsorHtml(d, i)}`).join("<br>")}${d.settings.customerReferralContestEndDate ? ` (נכון ליום סיום ההרשמה לתחרות, ${esc(d.settings.customerReferralContestEndDate)})` : ""}.</p>
     ${d.settings.customerReferralAnnounceDate ? `<p class="muted">הזוכות יוכרזו ב-${esc(d.settings.customerReferralAnnounceDate)}.</p>` : ""}
   </div>
   <p class="muted" style="text-align:center;margin-top:20px;">מחוברת כבר? הקישור האישי שלך מחכה לך <a href="/account" style="color:var(--rose-dark);font-weight:800;">באזור האישי</a> (או <a href="/freelancer-dashboard" style="color:var(--rose-dark);font-weight:800;">בדשבורד שלך</a> אם את עצמאית).</p>
