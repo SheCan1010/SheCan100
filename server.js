@@ -1418,6 +1418,17 @@ function getWeeklyFeature(d) {
 // סיפור נכנס לטור ברגע שהוא מאושר - בלי קשר להטבה (2026-10-04: הקשר בין הסיפור להטבה בוטל
 // לפי החלטה; הטבה מזכה בבאנר ובסינון "עם הטבה" בחיפוש, והסיפור נשמר כאפשרות נפרדת).
 function storyInColumn(d, s) { return !!s && s.status === "approved"; }
+// שורת לקוחה בטבלת "מאגר הלקוחות" בניהול - משמשת גם את הרינדור הראשוני וגם את תוצאות החיפוש החי
+function customerDirectoryRowHtml(d, c) {
+  const status = c.suspended ? " ⛔ הושעתה" : c.accountLocked ? " 🔒 נעולה" : "";
+  return `<tr>
+        <td>${esc(c.name || "-")}${status}</td>
+        <td>${esc(c.email || "-")}</td>
+        <td>${esc(cityName(d, c.cityId))}</td>
+        <td>${c.emailVerified ? "כן ✓" : "לא"}</td>
+        <td>${c.createdAt ? esc(new Date(c.createdAt).toLocaleDateString("he-IL")) : "-"}</td>
+      </tr>`;
+}
 function notifyStoryLive(f, s, origin) {
   if (!f || !f.email) return Promise.resolve();
   const storyUrl = `${origin}/stories/${s.id}`;
@@ -2385,6 +2396,44 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const freelancerRaceStartCount = Math.max(0, approvedActiveFreelancersCount - 2);
   const customerRaceStartCount = Math.max(0, registeredCustomersCount - 2);
 
+  // 2026-10-05 (לפי בקשה מפורשת): במקום המספרים - מצב "המירוץ הסתיים" בדף הבית: מירוץ הלקוחות עם
+  // הפרסים והנותנות חסות, ומירוץ העצמאיות עם שלוש המובילות, ולכל אחד כפתור לייק ("רוצות מירוץ
+  // נוסף"). נשלט מהניהול (d.settings.homeRaceEndedMode, ברירת מחדל: פעיל) - ר' פאנל ההפניות.
+  const homeRaceEnded = d.settings.homeRaceEndedMode !== false;
+  const endedRaceNumber = d.settings.homeRaceEndedNumber || customerRaceNumber(d);
+  const raceLikes = d.settings.raceLikes || {};
+  const raceLikeBtn = (key) => {
+    const n = raceLikes[key] || 0;
+    return `<button type="button" class="weekly-tip-like" style="position:static;margin:6px auto 0;display:inline-flex;" data-like-key="${esc(key)}" onclick="scLikeRace(this)" aria-label="לייק למירוץ נוסף"><span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${n}</span></button>`;
+  };
+  const endedPrizes = customerRacePrizes(d);
+  const endedPrizeIcons = ["🥇", "🥈", "🥉", "🎁"];
+  const freelancerTop3 = publicReferralLeaders(d.freelancers, "referredByFreelancerId", (f) => f.businessName || f.name, 3);
+  const homeRaceEndedHtml = `
+      <div class="two-col" style="margin-top:24px;">
+        <section class="panel race-panel" id="scCustomerRaceSection" style="text-align:center;">
+          <h3 style="margin:0 0 6px;">🏁 מירוץ הלקוחות</h3>
+          <p style="font-weight:800;font-size:19px;color:#7C1743;margin:4px 0 10px;">מירוץ מס' ${esc(String(endedRaceNumber))} הסתיים! 🎉</p>
+          <p style="margin:0 0 8px;font-weight:700;">יש לנו זוכות ב:</p>
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:center;margin-bottom:10px;">
+            ${endedPrizes.map((pz, i) => `<div style="font-size:15px;">${endedPrizeIcons[i] || "🎁"} <strong>${esc(pz)}</strong>${customerRacePrizeSponsorHtml(d, i)}</div>`).join("")}
+          </div>
+          <p style="margin:8px 0 2px;">והן אלופות ששיתפו פעולה! 🏆</p>
+          <p class="muted" style="margin:0;">ואם הן מעוניינות במירוץ נוסף - שיסמנו לייק 👇</p>
+          ${raceLikeBtn(`c${endedRaceNumber}`)}
+        </section>
+        <section class="panel race-panel" id="scFreelancerRaceSection" style="text-align:center;">
+          <h3 style="margin:0 0 6px;">🏆 מירוץ העצמאיות</h3>
+          ${freelancerTop3.length ? `
+          <p style="margin:4px 0 8px;font-size:16px;line-height:1.7;">
+            ${freelancerTop3.map((r, i) => `<a class="race-leader-link" href="/freelancer/${esc(r.id)}" style="font-weight:800;">${["🥇", "🥈", "🥉"][i]} ${esc(r.name)}</a>`).join("<br />")}
+          </p>
+          <p style="font-weight:800;color:#7C1743;margin:6px 0;">הביאו את מספר הנרשמות הכי גדול! 👏</p>` : `<p class="muted">המירוץ הסתיים - תודה לכל העצמאיות שהצטרפו!</p>`}
+          <p class="muted" style="margin:6px 0 0;">ואם הן רוצות מירוץ נוסף - שיסמנו לייק 👇</p>
+          ${raceLikeBtn("f1")}
+        </section>
+      </div>`;
+
   const body = `
       ${currentStoryFreelancer ? `
       <a href="/stories/${currentStory.id}" class="story-of-week-banner">📖 השבוע מככבת בסיפור <strong>${esc(currentStoryFreelancer.businessName || currentStoryFreelancer.name)}</strong> - בואי לצפות בסיפור שלה</a>
@@ -2453,13 +2502,11 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </div>
       </form>
 
-      ${(d.settings.freelancerReferralContestActive || d.settings.customerReferralContestActive) ? `
+      ${homeRaceEnded ? homeRaceEndedHtml : (d.settings.freelancerReferralContestActive || d.settings.customerReferralContestActive) ? `
       <div class="${bothRacesActive ? "two-col" : ""}" style="margin-top:24px;">
         ${d.settings.freelancerReferralContestActive ? `
-        <section class="panel race-panel" id="scFreelancerRaceSection" ${freelancerRoundMilestone ? `data-milestone="${freelancerRoundMilestone}"` : ""} style="text-align:center;position:relative;overflow:hidden;">
-          <div class="race-number race-number-primary" id="scRaceNumFreelancer" data-real="${approvedActiveFreelancersCount}">${raceOdometerHtml(freelancerRaceStartCount)}</div>
-          <div class="race-number-label">עצמאיות כבר איתנו</div>
-          ${freelancerRoundMilestone ? `<p style="margin:10px 0 0;font-weight:800;font-size:15px;color:var(--arena);">🎉 כבר עברנו את ה-${freelancerRoundMilestone}!</p>` : ""}
+        <section class="panel race-panel" id="scFreelancerRaceSection" style="text-align:center;position:relative;overflow:hidden;">
+          <h3 style="margin:0 0 6px;">🏆 מירוץ העצמאיות</h3>
           <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> ${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות!</p>
           <p class="muted">עד אז ההרשמה נשארת חינמית לגמרי - <span class="race-goal-label">המעבר לתשלום יחול רק על העצמאית ה-${esc(String((d.settings.freelancerRaceGoal || 700) + 1))} ואילך</span> 🚀</p>
           <p class="muted">שתפי את הקישור האישי שלך ועזרי לנו להגיע ליעד לפני שהוא נסגר. על כל עצמאית שנרשמת דרכך - 10 נקודות!</p>
@@ -2470,11 +2517,9 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </section>` : ""}
 
         ${d.settings.customerReferralContestActive ? `
-        <section class="panel race-panel" id="scCustomerRaceSection" ${customerRoundMilestone ? `data-milestone="${customerRoundMilestone}"` : ""} style="text-align:center;position:relative;overflow:hidden;">
-          <div class="race-number" id="scRaceNumCustomer" data-real="${registeredCustomersCount}">${raceOdometerHtml(customerRaceStartCount)}</div>
-          <div class="race-number-label">לקוחות רשומות כבר איתנו</div>
+        <section class="panel race-panel" id="scCustomerRaceSection" style="text-align:center;position:relative;overflow:hidden;">
+          <h3 style="margin:0 0 6px;">🏁 מירוץ הלקוחות</h3>
           ${customerRaceNumber(d) > 1 ? `<p style="margin:6px 0 0;font-weight:800;color:var(--rose-dark);">🏁 מירוץ ההפניות מס' ${customerRaceNumber(d)} יצא לדרך!</p>` : ""}
-          ${customerRoundMilestone ? `<p style="margin:10px 0 0;font-weight:800;font-size:15px;color:var(--arena);">🎉 כבר עברנו את ה-${customerRoundMilestone}!</p>` : ""}
           <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> ${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות! <span class="race-goal-label">מירוץ ${esc(String(d.settings.customerRaceGoal || 1000))} לקוחות בעיצומו!</span> 🚀</p>
           <p class="muted">שתפי את SheCan עם חברות והגדילי את הסיכוי שלך לזכות. 4 פרסים שווים מחכים למובילות!</p>
           ${[0, 1, 2, 3].map((i) => customerRacePrizeSponsor(d, i)).filter(Boolean).length ? `<p class="muted" style="font-size:13px;">🎁 הפרסים בחסות: ${[0, 1, 2, 3].map((i) => customerRacePrizeSponsor(d, i)).filter(Boolean).filter((f, idx, arr) => arr.findIndex((x) => x.id === f.id) === idx).map((f) => `<a href="/freelancer/${esc(f.id)}" style="color:var(--rose-dark);font-weight:800;">${esc(f.businessName || f.name)}</a>`).join(" · ")}</p>` : ""}
@@ -2488,133 +2533,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </section>` : ""}
       </div>
 
-      <script>
-      (function(){
-        // בלוקי המירוץ בדף הבית: (1) קונפטי חד-פעמי כשעוברים "מספר עגול" (100, 200...) (2) "עלייה"
-        // קטנה של המספרים כשמגיעים אליהם בגלילה - מתחילים ב-2 פחות מהמספר האמיתי, אחרי 2 שניות
-        // עולה ספרה ואחרי עוד 3 שניות עולה עוד ספרה עד המספר האמיתי, כדי שתמיד יראו תחושת פעילות
-        // באתר (3) רענון תקופתי מהשרת כדי שהמספרים תמיד יהיו עדכניים תוך כדי גלישה, בלי לרענן עמוד.
-        var COLORS = ["#A6265B", "#7C1743", "#c1b2a1", "#5C7A5A", "#E8B923", "#F7E3EB"];
-        function fireConfetti(container) {
-          var pieceCount = 70;
-          for (var i = 0; i < pieceCount; i++) {
-            (function(){
-              var el = document.createElement("span");
-              el.style.position = "absolute";
-              el.style.left = (Math.random() * 100) + "%";
-              el.style.top = "-12px";
-              el.style.width = (5 + Math.random() * 5) + "px";
-              el.style.height = (5 + Math.random() * 5) + "px";
-              el.style.background = COLORS[Math.floor(Math.random() * COLORS.length)];
-              el.style.opacity = "0.95";
-              el.style.borderRadius = Math.random() > 0.5 ? "50%" : "2px";
-              el.style.pointerEvents = "none";
-              el.style.zIndex = "5";
-              el.style.transform = "translateY(0) rotate(0deg)";
-              var duration = 1600 + Math.random() * 1200;
-              var delay = Math.random() * 250;
-              el.style.transition = "transform " + duration + "ms cubic-bezier(.25,.46,.45,.94) " + delay + "ms, opacity " + duration + "ms linear " + delay + "ms";
-              container.appendChild(el);
-              requestAnimationFrame(function(){
-                requestAnimationFrame(function(){
-                  var drift = (Math.random() - 0.5) * 160;
-                  var spin = Math.random() * 720 - 360;
-                  el.style.transform = "translateY(" + (container.offsetHeight + 60) + "px) translateX(" + drift + "px) rotate(" + spin + "deg)";
-                  el.style.opacity = "0";
-                });
-              });
-              setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, duration + delay + 300);
-            })();
-          }
-        }
-        // "גלגל" מתגלגל (odometer) - בונה מחדש את חלונות הספרות (fallback, כשמספר הספרות משתנה,
-        // למשל מעבר מ-99 ל-100), או מזיז רק את הרצועות הקיימות (המקרה הרגיל) כדי שהטרנזישן ב-CSS
-        // ייצור תחושת גלגל שמסתובב ועובר דרך הספרות שבדרך לספרה החדשה - ר' ההערה המקבילה ב-CSS
-        // (.odometer-digit) וב-raceOdometerHtml בצד השרת (server.js), שבונה את ה-HTML הזה בהתחלה.
-        function buildOdometerHtml(value) {
-          var str = String(value) + "+";
-          var out = "";
-          for (var i = 0; i < str.length; i++) {
-            var ch = str.charAt(i);
-            if (ch >= "0" && ch <= "9") {
-              var digits = "";
-              for (var n = 0; n <= 9; n++) digits += "<span>" + n + "</span>";
-              out += '<span class="odometer-digit"><span class="odometer-strip" style="transform:translateY(-' + (parseInt(ch, 10) * 10) + '%);">' + digits + "</span></span>";
-            } else {
-              out += '<span class="odometer-static">' + ch + "</span>";
-            }
-          }
-          return out;
-        }
-        function setOdometerValue(el, value) {
-          var str = String(value) + "+";
-          var numericPart = str.replace("+", "");
-          var digitEls = el.querySelectorAll(".odometer-digit");
-          if (digitEls.length !== numericPart.length) {
-            el.innerHTML = buildOdometerHtml(value);
-            return;
-          }
-          for (var i = 0; i < numericPart.length; i++) {
-            var strip = digitEls[i].querySelector(".odometer-strip");
-            if (strip) strip.style.transform = "translateY(-" + (parseInt(numericPart.charAt(i), 10) * 10) + "%)";
-          }
-        }
-        function animateNumberEntrance(el) {
-          var real = parseInt(el.getAttribute("data-real"), 10);
-          if (isNaN(real)) return;
-          var start = Math.max(0, real - 2);
-          setOdometerValue(el, start);
-          setTimeout(function(){ setOdometerValue(el, Math.min(real, start + 1)); }, 2000);
-          setTimeout(function(){ setOdometerValue(el, real); }, 5000);
-        }
-        function startLivePolling() {
-          var freelancerEl = document.getElementById("scRaceNumFreelancer");
-          var customerEl = document.getElementById("scRaceNumCustomer");
-          if (!freelancerEl && !customerEl) return;
-          setInterval(function(){
-            fetch("/api/community-counts").then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
-              if (!data) return;
-              if (freelancerEl && typeof data.freelancers === "number") {
-                freelancerEl.setAttribute("data-real", data.freelancers);
-                setOdometerValue(freelancerEl, data.freelancers);
-              }
-              if (customerEl && typeof data.customers === "number") {
-                customerEl.setAttribute("data-real", data.customers);
-                setOdometerValue(customerEl, data.customers);
-              }
-            }).catch(function(){});
-          }, 25000);
-        }
-        var sections = document.querySelectorAll(".race-panel");
-        if (sections.length) {
-          if ("IntersectionObserver" in window) {
-            var fired = {};
-            var observer = new IntersectionObserver(function(entries){
-              entries.forEach(function(entry){
-                if (entry.isIntersecting && !fired[entry.target.id]) {
-                  fired[entry.target.id] = true;
-                  var numEl = entry.target.querySelector(".race-number");
-                  if (numEl) animateNumberEntrance(numEl);
-                  if (entry.target.hasAttribute("data-milestone")) fireConfetti(entry.target);
-                  observer.unobserve(entry.target);
-                }
-              });
-            }, { threshold: 0.35 });
-            sections.forEach(function(s){ observer.observe(s); });
-          } else {
-            // בלי IntersectionObserver (דפדפן ישן מאוד) - אין אנימציית כניסה, אבל עדיין צריך לקפוץ
-            // ישר למספר האמיתי (הרינדור הראשוני מציג את מספר ההתחלה בכוונה, ר' ההערה למעלה ליד
-            // freelancerRaceStartCount), אחרת המספר היה נשאר תקוע 2 פחות מהאמיתי לצמיתות.
-            sections.forEach(function(s){
-              var numEl = s.querySelector(".race-number");
-              var real = numEl && parseInt(numEl.getAttribute("data-real"), 10);
-              if (numEl && !isNaN(real)) setOdometerValue(numEl, real);
-            });
-          }
-        }
-        setTimeout(startLivePolling, 5500);
-      })();
-      </script>` : ""}
+      ` : ""}
 
       <h2 class="section-title">מה למצוא לך היום?</h2>
       <div class="cat-grid">
@@ -3424,6 +3343,21 @@ route("POST", "/freelancer/:id/reveal-coupon", async (req, res, params, query, c
 // entity's own running like counter. The client already updates the count optimistically and
 // remembers the like in localStorage (see scLikeWeeklyQuote in layout.js), so this route
 // doesn't need to return anything beyond a plain 204.
+// לייק "רוצות מירוץ נוסף" בבלוקי המירוץ בדף הבית (פתוח לכולן, אחד לדפדפן - כמו לייק משפט השבוע).
+// key: c<מספר מירוץ לקוחות> / f1 (עצמאיות). נשמר ב-d.settings.raceLikes וגם מוצג בניהול.
+route("POST", "/race/like", async (req, res, params, query, ctx) => {
+  const body = await readBody(req);
+  const key = String(body.get("key") || "");
+  if (/^[cf]\d{1,3}$/.test(key)) {
+    const d = db.load();
+    d.settings.raceLikes = d.settings.raceLikes || {};
+    d.settings.raceLikes[key] = (d.settings.raceLikes[key] || 0) + 1;
+    db.save();
+  }
+  res.writeHead(204);
+  res.end();
+});
+
 route("POST", "/weekly-quote/like", async (req, res, params, query, ctx) => {
   const d = db.load();
   const weekly = getWeeklyFeature(d);
@@ -9356,17 +9290,37 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   <div class="panel">
     <h3>מאגר הלקוחות (${d.customers.length}) 📇</h3>
-    <p class="muted">כל הלקוחות שנרשמו באתר, כולל כתובת המייל שלהן - ממוין מהחדשה לוותיקה.${d.customers.length > CUSTOMERS_DIRECTORY_SHOW_MAX ? ` מוצגות כאן ${CUSTOMERS_DIRECTORY_SHOW_MAX} האחרונות - להורדת הרשימה המלאה יש את קובץ ה-CSV למטה.` : ""}</p>
+    <p class="muted">כל הלקוחות שנרשמו באתר, כולל כתובת המייל שלהן - ממוין מהחדשה לוותיקה. תיבת החיפוש למטה מחפשת בכל הלקוחות (גם אלו שלא מוצגות ברשימה).${d.customers.length > CUSTOMERS_DIRECTORY_SHOW_MAX ? ` מוצגות כאן ${CUSTOMERS_DIRECTORY_SHOW_MAX} האחרונות - להורדת הרשימה המלאה יש את קובץ ה-CSV למטה.` : ""}</p>
     <p><a class="btn btn-small" href="/admin/export/customers.csv">⬇️ הורדת כל הלקוחות כקובץ אקסל (CSV)</a></p>
-    ${customersDirectoryShown.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>אימייל</th><th>עיר</th><th>מייל מאומת</th><th>תאריך הצטרפות</th></tr>
-      ${customersDirectoryShown.map((c) => `<tr>
-        <td>${esc(c.name || "-")}</td>
-        <td>${esc(c.email || "-")}</td>
-        <td>${esc(cityName(d, c.cityId))}</td>
-        <td>${c.emailVerified ? "כן ✓" : "לא"}</td>
-        <td>${c.createdAt ? esc(new Date(c.createdAt).toLocaleDateString("he-IL")) : "-"}</td>
-      </tr>`).join("")}
-    </table></div>` : `<p class="muted">עדיין אין לקוחות רשומות.</p>`}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0;max-width:520px;">
+      <input type="search" id="scCustSearch" placeholder="🔍 חיפוש לקוחה לפי שם, אימייל או עיר..." autocomplete="off" style="flex:1;min-width:220px;" />
+      <button type="button" class="btn btn-small btn-outline" id="scCustSearchClear" style="display:none;">ניקוי</button>
+    </div>
+    <p class="muted" id="scCustSearchInfo" style="margin:0 0 8px;"></p>
+    ${d.customers.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>אימייל</th><th>עיר</th><th>מייל מאומת</th><th>תאריך הצטרפות</th></tr>
+      <tbody id="scCustTbody">${customersDirectoryShown.map((c) => customerDirectoryRowHtml(d, c)).join("")}</tbody>
+    </table></div>
+    <script>
+    (function(){
+      var input=document.getElementById("scCustSearch"), tb=document.getElementById("scCustTbody"), info=document.getElementById("scCustSearchInfo"), clr=document.getElementById("scCustSearchClear");
+      if(!input||!tb) return;
+      var original=tb.innerHTML, timer=null, seq=0;
+      function reset(){ tb.innerHTML=original; info.textContent=""; clr.style.display="none"; }
+      function run(){
+        var q=input.value.trim();
+        if(!q){ reset(); return; }
+        clr.style.display="";
+        var my=++seq;
+        fetch("/admin/customers/search?q="+encodeURIComponent(q),{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){
+          if(my!==seq) return;
+          tb.innerHTML=j.rows.length?j.rows.join(""):'<tr><td colspan="5" class="muted">לא נמצאה לקוחה שמתאימה לחיפוש.</td></tr>';
+          info.textContent="נמצאו "+j.total+" לקוחות"+(j.total>j.rows.length?" (מוצגות "+j.rows.length+" הראשונות - צמצמי את החיפוש)":"")+".";
+        }).catch(function(){ info.textContent="החיפוש נכשל - נסי שוב."; });
+      }
+      input.addEventListener("input",function(){ clearTimeout(timer); timer=setTimeout(run,250); });
+      clr.addEventListener("click",function(){ input.value=""; reset(); input.focus(); });
+    })();
+    </script>` : `<p class="muted">עדיין אין לקוחות רשומות.</p>`}
   </div>
 
   <div class="panel">
@@ -10000,6 +9954,17 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <button class="btn btn-small" type="submit">עדכון שיוך</button>
       </form>
     </div>
+  </div>
+
+  <div class="panel" id="home-race-ended" style="scroll-margin-top:90px;">
+    <h3>🏁 מה מוצג בדף הבית במקום המירוצים</h3>
+    <p class="muted">כשהמצב דלוק, דף הבית מציג "מירוץ מס' N הסתיים" - מירוץ הלקוחות עם הפרסים והנותנות חסות, ומירוץ העצמאיות עם שלוש המובילות, ולכל אחד כפתור לייק ("רוצות מירוץ נוסף"). כשהוא כבוי חוזרים הבלוקים הרגילים של המירוצים הפעילים (בלי המספרים).</p>
+    <form method="post" action="/admin/home-race-ended" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:700;width:auto;"><input type="checkbox" name="on" value="1" ${d.settings.homeRaceEndedMode !== false ? "checked" : ""} style="width:auto;" /> להציג "המירוץ הסתיים" בדף הבית</label>
+      <label style="width:auto;">מספר המירוץ שהסתיים<input type="number" name="number" min="1" max="99" value="${esc(String(d.settings.homeRaceEndedNumber || customerRaceNumber(d)))}" style="width:90px;" /></label>
+      <button class="btn btn-small" type="submit">שמירה</button>
+    </form>
+    <p style="margin-top:10px;font-weight:700;">❤️ לייקים ל"מירוץ נוסף": לקוחות (מירוץ ${esc(String(d.settings.homeRaceEndedNumber || customerRaceNumber(d)))}) - ${(d.settings.raceLikes || {})["c" + (d.settings.homeRaceEndedNumber || customerRaceNumber(d))] || 0} | עצמאיות - ${(d.settings.raceLikes || {}).f1 || 0}</p>
   </div>
 
   <div class="panel" id="customer-referral-race" style="scroll-margin-top:90px;">
@@ -11150,6 +11115,17 @@ route("POST", "/admin/customer-race/prizes", async (req, res, params, query, ctx
   redirect(res, `/admin?ok=${encodeURIComponent("הפרסים ונותנות החסות עודכנו.")}#customer-referral-race`);
 });
 
+route("POST", "/admin/home-race-ended", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  d.settings.homeRaceEndedMode = body.get("on") === "1";
+  const n = parseInt(body.get("number"), 10);
+  if (n >= 1 && n <= 99) d.settings.homeRaceEndedNumber = n;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.homeRaceEndedMode ? "בדף הבית מוצג עכשיו 'המירוץ הסתיים'." : "דף הבית חזר להציג את בלוקי המירוצים הרגילים.")}#home-race-ended`);
+});
+
 route("POST", "/admin/customer-race/end", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -11187,6 +11163,9 @@ route("POST", "/admin/customer-race/end", async (req, res, params, query, ctx) =
   d.settings.customerRaceHistory.push({
     number, startedAt: d.settings.customerRaceStartedAt || null, endedAt: new Date().toISOString(), winners,
   });
+  // דף הבית יציג "מירוץ מס' <שהסתיים> הסתיים" עם הפרסים והנותנות חסות (ר' פאנל home-race-ended)
+  d.settings.homeRaceEndedMode = true;
+  d.settings.homeRaceEndedNumber = number;
   d.settings.customerRaceNumber = number + 1;
   d.settings.customerRaceStartedAt = new Date().toISOString();
   d.settings.customerReferralContestEndDate = (body.get("nextEndDate") || "").trim();
@@ -11819,6 +11798,18 @@ route("GET", "/admin/export/freelancers.csv", async (req, res, params, query, ct
 
 // "מאגר הלקוחות" CSV - כל הלקוחות בלי הגבלה (בשונה מהטבלה בעמוד עצמו, שמוגבלת
 // ל-CUSTOMERS_DIRECTORY_SHOW_MAX כדי לא להכביד על טעינת /admin) - לפי בקשה מפורשת 2026-08-30.
+// חיפוש חי במאגר הלקוחות בניהול - מחפש בכל הלקוחות (לא רק ב-300 שמוצגות בטבלה): לפי שם, אימייל
+// או עיר (חיפוש חלקי, ללא רגישות לאותיות). מחזיר עד 100 שורות מוכנות.
+route("GET", "/admin/customers/search", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) { res.writeHead(403, { "Content-Type": "application/json" }); return res.end("{}"); }
+  const d = db.load();
+  const q = (query.get("q") || "").trim().toLowerCase();
+  const matches = q ? d.customers.filter((c) => `${c.name || ""} ${c.email || ""} ${cityName(d, c.cityId) || ""}`.toLowerCase().includes(q)) : [];
+  matches.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(JSON.stringify({ total: matches.length, rows: matches.slice(0, 100).map((c) => customerDirectoryRowHtml(d, c)) }));
+});
+
 route("GET", "/admin/export/customers.csv", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();

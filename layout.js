@@ -2592,6 +2592,21 @@ function scRevealCoupon(id, btn, listingId){
 // "default" for the admin's fallback message) so the same browser can't like it again, even
 // across page reloads or if her quote comes up again in a future rotation. The actual POST is
 // fire-and-forget, same pattern as scRevealCoupon above.
+function scLikeRace(btn) {
+  var key = btn.getAttribute("data-like-key") || "";
+  var storageKey = "scRaceLiked::" + key;
+  var already = false;
+  try { already = localStorage.getItem(storageKey) === "1"; } catch (e) {}
+  if (already || btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add("liked");
+  var iconEl = btn.querySelector(".weekly-tip-like-icon");
+  if (iconEl) iconEl.textContent = "❤️";
+  var countEl = btn.querySelector(".weekly-tip-like-count");
+  if (countEl) countEl.textContent = String((parseInt(countEl.textContent, 10) || 0) + 1);
+  try { localStorage.setItem(storageKey, "1"); } catch (e) {}
+  fetch("/race/like", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "key=" + encodeURIComponent(key) }).catch(function () {});
+}
 function scLikeWeeklyQuote(btn) {
   var key = btn.getAttribute("data-like-key") || "default";
   var storageKey = "scWeeklyLiked::" + key;
