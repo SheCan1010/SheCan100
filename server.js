@@ -2419,7 +2419,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
             ${endedPrizes.map((pz, i) => `<div style="font-size:15px;">${endedPrizeIcons[i] || "🎁"} <strong>${esc(pz)}</strong>${customerRacePrizeSponsorHtml(d, i)}</div>`).join("")}
           </div>
           <p style="margin:8px 0 2px;">והן אלופות ששיתפו פעולה! 🏆</p>
-          <p class="muted" style="margin:0;">ואם הן מעוניינות במירוץ נוסף - שיסמנו לייק 👇</p>
           ${raceLikeBtn(`c${endedRaceNumber}`)}
         </section>
         <section class="panel race-panel" id="scFreelancerRaceSection" style="text-align:center;">
@@ -2429,7 +2428,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
             ${freelancerTop3.map((r, i) => `<a class="race-leader-link" href="/freelancer/${esc(r.id)}" style="font-weight:800;">${["🥇", "🥈", "🥉"][i]} ${esc(r.name)}</a>`).join("<br />")}
           </p>
           <p style="font-weight:800;color:#7C1743;margin:6px 0;">הביאו את מספר הנרשמות הכי גדול! 👏</p>` : `<p class="muted">המירוץ הסתיים - תודה לכל העצמאיות שהצטרפו!</p>`}
-          <p class="muted" style="margin:6px 0 0;">ואם הן רוצות מירוץ נוסף - שיסמנו לייק 👇</p>
           ${raceLikeBtn("f1")}
         </section>
       </div>`;
