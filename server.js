@@ -2408,9 +2408,8 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   };
   const endedPrizes = customerRacePrizes(d);
   const endedPrizeIcons = ["🥇", "🥈", "🥉", "🎁"];
-  const freelancerTop3 = publicReferralLeaders(d.freelancers, "referredByFreelancerId", (f) => f.businessName || f.name, 3);
   const homeRaceEndedHtml = `
-      <div class="two-col" style="margin-top:24px;">
+      <div style="margin-top:24px;max-width:560px;margin-inline:auto;">
         <section class="panel race-panel" id="scCustomerRaceSection" style="text-align:center;">
           <h3 style="margin:0 0 6px;">🏁 מירוץ הלקוחות</h3>
           <p style="font-weight:800;font-size:19px;color:#7C1743;margin:4px 0 10px;">מירוץ מס' ${esc(String(endedRaceNumber))} הסתיים! 🎉</p>
@@ -2420,15 +2419,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           </div>
           <p style="margin:8px 0 2px;">והן אלופות ששיתפו פעולה! 🏆</p>
           ${raceLikeBtn(`c${endedRaceNumber}`)}
-        </section>
-        <section class="panel race-panel" id="scFreelancerRaceSection" style="text-align:center;">
-          <h3 style="margin:0 0 6px;">🏆 מירוץ העצמאיות</h3>
-          ${freelancerTop3.length ? `
-          <p style="margin:4px 0 8px;font-size:16px;line-height:1.7;">
-            ${freelancerTop3.map((r, i) => `<a class="race-leader-link" href="/freelancer/${esc(r.id)}" style="font-weight:800;">${["🥇", "🥈", "🥉"][i]} ${esc(r.name)}</a>`).join("<br />")}
-          </p>
-          <p style="font-weight:800;color:#7C1743;margin:6px 0;">הביאו את מספר הנרשמות הכי גדול! 👏</p>` : `<p class="muted">המירוץ הסתיים - תודה לכל העצמאיות שהצטרפו!</p>`}
-          ${raceLikeBtn("f1")}
         </section>
       </div>`;
 
@@ -2500,19 +2490,8 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </div>
       </form>
 
-      ${homeRaceEnded ? homeRaceEndedHtml : (d.settings.freelancerReferralContestActive || d.settings.customerReferralContestActive) ? `
-      <div class="${bothRacesActive ? "two-col" : ""}" style="margin-top:24px;">
-        ${d.settings.freelancerReferralContestActive ? `
-        <section class="panel race-panel" id="scFreelancerRaceSection" style="text-align:center;position:relative;overflow:hidden;">
-          <h3 style="margin:0 0 6px;">🏆 מירוץ העצמאיות</h3>
-          <p class="race-goal"><span class="race-goal-label">היעד שלנו:</span> ${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות!</p>
-          <p class="muted">עד אז ההרשמה נשארת חינמית לגמרי - <span class="race-goal-label">המעבר לתשלום יחול רק על העצמאית ה-${esc(String((d.settings.freelancerRaceGoal || 700) + 1))} ואילך</span> 🚀</p>
-          <p class="muted">שתפי את הקישור האישי שלך ועזרי לנו להגיע ליעד לפני שהוא נסגר. על כל עצמאית שנרשמת דרכך - 10 נקודות!</p>
-          <p class="muted">3 העצמאיות שיירשמו דרכן הכי הרבה - יזכו בפרסום שווה בחינם!</p>
-          <div style="margin-top:10px;">${freelancerRaceCtaHtml}</div>
-          <p style="margin-top:14px;font-weight:700;">${freelancerRaceLeader ? `מובילה כרגע: <a class="race-leader-link" href="/freelancer/${freelancerRaceLeader.id}">${esc(freelancerRaceLeader.name)}</a> 👑` : "עדיין אין מי שמובילה - זו ההזדמנות שלך!"}</p>
-          <a class="race-details-link" href="/race#freelancers">ספרי לי עוד על המירוץ ←</a>
-        </section>` : ""}
+      ${homeRaceEnded ? homeRaceEndedHtml : d.settings.customerReferralContestActive ? `
+      <div style="margin-top:24px;max-width:560px;margin-inline:auto;">
 
         ${d.settings.customerReferralContestActive ? `
         <section class="panel race-panel" id="scCustomerRaceSection" style="text-align:center;position:relative;overflow:hidden;">
@@ -6143,6 +6122,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label>🌸 שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
     <label>🌸 שם העסק<input type="text" name="businessName" id="joinBusinessName" value="${esc(p.businessName || "")}" required /></label>
     <label>🌸 מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
+    <p style="background:#fff4e8;border-radius:10px;padding:8px 12px;margin:-2px 0 10px;font-size:13.5px;line-height:1.55;">📬 <strong>שימי לב למיילים שאת מקבלת מהאתר</strong> - לפעמים אלה לקוחות שמתעניינות בשירות שלך. כדאי לבדוק את תיבת המייל באופן קבוע (וגם בספאם), כדי לא לפספס פנייה.</p>
     <label>🌸 בחרי סיסמה<input type="password" name="password" required /></label>
     ${isRetry ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
     <label>🌸 מה התחום שלך?
@@ -9956,13 +9936,13 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
 
   <div class="panel" id="home-race-ended" style="scroll-margin-top:90px;">
     <h3>🏁 מה מוצג בדף הבית במקום המירוצים</h3>
-    <p class="muted">כשהמצב דלוק, דף הבית מציג "מירוץ מס' N הסתיים" - מירוץ הלקוחות עם הפרסים והנותנות חסות, ומירוץ העצמאיות עם שלוש המובילות, ולכל אחד כפתור לייק ("רוצות מירוץ נוסף"). כשהוא כבוי חוזרים הבלוקים הרגילים של המירוצים הפעילים (בלי המספרים).</p>
+    <p class="muted">כשהמצב דלוק, דף הבית מציג "מירוץ מס' N הסתיים" - מירוץ הלקוחות עם הפרסים והנותנות חסות, עם כפתור לייק. כשהוא כבוי חוזרים הבלוקים הרגילים של המירוצים הפעילים (בלי המספרים).</p>
     <form method="post" action="/admin/home-race-ended" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
       <label style="display:flex;align-items:center;gap:6px;font-weight:700;width:auto;"><input type="checkbox" name="on" value="1" ${d.settings.homeRaceEndedMode !== false ? "checked" : ""} style="width:auto;" /> להציג "המירוץ הסתיים" בדף הבית</label>
       <label style="width:auto;">מספר המירוץ שהסתיים<input type="number" name="number" min="1" max="99" value="${esc(String(d.settings.homeRaceEndedNumber || customerRaceNumber(d)))}" style="width:90px;" /></label>
       <button class="btn btn-small" type="submit">שמירה</button>
     </form>
-    <p style="margin-top:10px;font-weight:700;">❤️ לייקים ל"מירוץ נוסף": לקוחות (מירוץ ${esc(String(d.settings.homeRaceEndedNumber || customerRaceNumber(d)))}) - ${(d.settings.raceLikes || {})["c" + (d.settings.homeRaceEndedNumber || customerRaceNumber(d))] || 0} | עצמאיות - ${(d.settings.raceLikes || {}).f1 || 0}</p>
+    <p style="margin-top:10px;font-weight:700;">❤️ לייקים במירוץ הלקוחות: (מירוץ ${esc(String(d.settings.homeRaceEndedNumber || customerRaceNumber(d)))}) - ${(d.settings.raceLikes || {})["c" + (d.settings.homeRaceEndedNumber || customerRaceNumber(d))] || 0}</p>
   </div>
 
   <div class="panel" id="customer-referral-race" style="scroll-margin-top:90px;">
