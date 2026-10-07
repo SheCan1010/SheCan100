@@ -1791,7 +1791,7 @@ function referralCounts(list, refField) {
 const DEFAULT_CUSTOMER_RACE_PRIZES = [
   "מסאז' מפנק",
   "מארז קינוחים מושחת וטעים",
-  "איפור ערב מתנה לפעם הבאה שתצטרכי",
+  "איפור ערב",
   "מגש פירות מפנק וצבעוני",
 ];
 function customerRaceNumber(d) { return d.settings.customerRaceNumber || 1; }
@@ -2417,7 +2417,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <div style="display:flex;flex-direction:column;gap:6px;align-items:center;margin-bottom:10px;">
             ${endedPrizes.map((pz, i) => `<div style="font-size:15px;">${endedPrizeIcons[i] || "🎁"} <strong>${esc(pz)}</strong>${customerRacePrizeSponsorHtml(d, i)}</div>`).join("")}
           </div>
-          <p style="margin:8px 0 2px;">והן אלופות ששיתפו פעולה! 🏆</p>
           ${raceLikeBtn(`c${endedRaceNumber}`)}
         </section>
       </div>`;
@@ -6975,10 +6974,7 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
         <p style="text-align:right;font-size:14.5px;">העבירי את הקישור האישי שלך לכמה שיותר חברות - כל אחת שתירשם דרכו תזכה אותך אוטומטית בעוד 10 נקודות, ומי שהביאה הכי הרבה תזכה בפרס השווה!!</p>
         <p style="text-align:right;font-size:14.5px;">${esc(customer.name.split(" ")[0])}, אל דאגה - יש לנו 4 מקומות, איזה מהם שלך?</p>
         <ul class="referral-prize-list">
-          <li><span>🥇</span><span>מקום 1: מסאז' מפנק</span></li>
-          <li><span>🥈</span><span>מקום 2: מארז קינוחים מושחת וטעים</span></li>
-          <li><span>🥉</span><span>מקום 3: איפור ערב מתנה לפעם הבאה שתצטרכי</span></li>
-          <li><span>🎁</span><span>מקום 4: מגש פירות מפנק וצבעוני</span></li>
+          ${customerRacePrizes(d).map((pz, i) => `<li><span>${["🥇", "🥈", "🥉", "🎁"][i]}</span><span>מקום ${i + 1}: ${esc(pz)}${customerRacePrizeSponsorHtml(d, i)}</span></li>`).join("")}
         </ul>
         <div class="referral-link-row">
           <input type="text" id="scCustomerRefLinkPopup" value="${esc(referralLink)}" readonly />
