@@ -2445,10 +2445,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const homeRaceEnded = d.settings.homeRaceEndedMode !== false;
   const endedRaceNumber = d.settings.homeRaceEndedNumber || customerRaceNumber(d);
   const raceLikes = d.settings.raceLikes || {};
-  const raceLikeBtn = (key) => {
-    const n = raceLikes[key] || 0;
-    return `<button type="button" class="weekly-tip-like" style="position:static;margin:6px auto 0;display:inline-flex;" data-like-key="${esc(key)}" onclick="scLikeRace(this)" aria-label="לייק למירוץ נוסף"><span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${n}</span></button>`;
-  };
   const endedPrizes = customerRacePrizes(d);
   const endedPrizeIcons = ["🥇", "🥈", "🥉", "🎁"];
   const homeRaceEndedHtml = `
@@ -8862,6 +8858,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     .map((c) => ({
       id: c.id, name: c.name || c.email, email: c.email || "", count: customerReferralCounts[c.id] || 0,
       referred: customerRaceList.filter((x) => x.referredByCustomerId === c.id).map((x) => x.name || x.email),
+      referredWithEmail: customerRaceList.filter((x) => x.referredByCustomerId === c.id).map((x) => (x.name && x.email) ? `${x.name} (${x.email})` : (x.name || x.email)),
     }))
     .filter((r) => r.count > 0)
     .sort((a, b) => b.count - a.count);
@@ -10063,7 +10060,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     ${customerReferralRanking.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מקום</th><th>לקוחה</th><th>מייל</th><th>כמות הפניות</th><th>מי נרשמה דרכה</th></tr>
       ${customerReferralRanking.map((r, i) => `<tr>
         <td>${i + 1}${i === 0 ? " 👑" : ""}</td><td>${esc(r.name)}</td><td dir="ltr">${esc(r.email)}</td><td>${r.count}</td>
-        <td>${esc(r.referred.join(", "))}</td>
+        <td dir="auto">${esc(r.referredWithEmail.join(" ; "))}</td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין אין הפניות בפועל - אף לקוחה לא נרשמה עדיין דרך הקישור האישי של לקוחה אחרת.</p>`}
     <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
