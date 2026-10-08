@@ -49,6 +49,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { URL } = require("url");
 const db = require("./db");
+const mode = require("./mode");
 
 // Where uploaded/generated images live on disk from 2026-08-22 onward (see fileToDataUri and
 // migrateEmbeddedPhotosToFiles below) - a sibling folder to db.json itself, so it lives on the
@@ -858,6 +859,7 @@ function yearsInFieldShortLabel(value) {
 // and any business that HAS uploaded its own photo/logo keeps showing that as usual - this is
 // only the fallback for the ones that never uploaded anything at all.
 function cardPhotoHtml(photoUri, logoUri, name, cssClass, defaultLogoUri) {
+  if (mode.logosOnly()) photoUri = null; // אתר נטפרי: רק לוגואים, בלי תמונות אישיות
   if (photoUri) return `<div class="${cssClass}" style="background-image:url('${esc(photoUri)}');background-size:cover;background-position:center;"></div>`;
   if (logoUri) return `<div class="${cssClass} ${cssClass}-logo" style="background-image:url('${esc(logoUri)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
   if (defaultLogoUri) return `<div class="${cssClass} ${cssClass}-logo" style="background-image:url('${esc(defaultLogoUri)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
@@ -1174,7 +1176,7 @@ function dealBadgeHtml(d, dealText) {
   const logoImg = (d.settings.showLogoOnDealBadge && d.settings.siteLogoDataUri)
     ? `<img src="${d.settings.siteLogoDataUri}" alt="" class="card-deal-badge-logo" />`
     : "";
-  return `<div class="card-deal card-deal-badge" tabindex="0" data-deal="${esc(dealText || "הטבה בלעדית")}"><span style="flex-shrink:0;">🎁</span><span>הטבת SheCan</span>${logoImg}</div>`;
+  return `<div class="card-deal card-deal-badge" tabindex="0" data-deal="${esc(dealText || "הטבה בלעדית")}"><span style="flex-shrink:0;">🎁</span><span>${mode.isNetfree() ? "הטבה" : "הטבת SheCan"}</span>${logoImg}</div>`;
 }
 
 // Converts a local Israeli phone number into the digits-only international format
@@ -1591,7 +1593,7 @@ function publicReferralLeaders(entities, refField, nameOf, n, countList) {
 // fallback used on the grid cards). Left optional (rather than required) so the handful of
 // call sites that intentionally want "did SHE upload anything at all" (e.g. her own dashboard
 // edit-preview) can keep calling avatarUri(f) with no default applied.
-function avatarUri(f, d) { return f.photoDataUri || f.logoDataUri || (d && d.settings.defaultBusinessLogoDataUri) || null; }
+function avatarUri(f, d) { return (mode.logosOnly() ? null : f.photoDataUri) || f.logoDataUri || (d && d.settings.defaultBusinessLogoDataUri) || null; }
 
 function photoOrInitials(photoDataUri, name, cssClass) {
   if (photoDataUri) return `<div class="${cssClass}" style="background-image:url('${photoDataUri}');background-size:cover;background-position:center;"></div>`;
@@ -1658,7 +1660,7 @@ function freelancerCard(f, d, opts = {}) {
   // item, like every other card) and using a <span> with a click handler instead of a nested
   // <a>, so it stays valid HTML while still navigating to the story on click.
   const currentStory = getCurrentStory(d);
-  const featuredStoryBadge = (currentStory && currentStory.freelancerId === f.id)
+  const featuredStoryBadge = (!mode.isNetfree() && currentStory && currentStory.freelancerId === f.id)
     ? `<span class="badge badge-leading" style="position:absolute;top:10px;left:10px;z-index:2;cursor:pointer;" onclick="event.preventDefault();event.stopPropagation();location.href='/stories/${currentStory.id}';" role="link" tabindex="0">📖 הסיפור שלה מככב השבוע</span>`
     : "";
   const reviewCount = reviewCountFor(d, f.id);
@@ -2321,9 +2323,50 @@ route("GET", "/deploy-check", async (req, res) => {
   res.end(`SheCan deploy marker: ${DEPLOY_MARKER}\nProcess started at: ${new Date(Date.now() - process.uptime() * 1000).toISOString()}\nChecked at: ${new Date().toISOString()}\n\n--- Playwright browser cache check ---\n${browserCacheReport}`);
 });
 
+// ----- Netfree-mode pages (ר' mode.js) -----
+// דף הבית של אתר נטפרי: כותרת + חיפוש + תחומים + עסקים נבחרים. בלי שום דבר מהאתר הראשי
+// (מירוצים, סיפורים, מגזין, קהילה...) - הוא נבנה כאן במפורש ולא נגזר מדף הבית הרגיל, כדי
+// שפיצ'רים חדשים בבית הרגיל לעולם לא יגיעו לכאן בטעות.
+function netfreeHomeBody(d) {
+  const brand = mode.brandName();
+  const tagline = (d.settings.netfreeTagline || "").trim() || "מצאי עסקים של עצמאיות לפי תחום ועיר";
+  const catTiles = d.categories.map((c) => `<a class="card" href="/search?category=${encodeURIComponent(c.id)}" style="text-align:center;padding:18px 10px;"><div style="font-size:30px;">${categoryIcon(c.name)}</div><h3 class="card-name" style="margin:6px 0 0;">${esc(c.name)}</h3></a>`).join("");
+  const eligible = d.freelancers.filter((f) => mode.freelancerVisible(f));
+  const byReviews = (a, b) => reviewCountFor(d, b.id) - reviewCountFor(d, a.id);
+  const featured = eligible.filter((f) => f.tier === "premium").slice().sort(byReviews)
+    .concat(eligible.filter((f) => f.tier !== "premium").slice().sort(byReviews)).slice(0, 12);
+  const catOptions = d.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  return `
+  <div style="text-align:center;margin:10px 0 24px;">
+    <h1 class="section-title" style="margin-bottom:6px;">${esc(brand)}</h1>
+    <p class="muted" style="font-size:20px;margin:0;">${esc(tagline)}</p>
+  </div>
+  <form class="search-box" action="/search" method="get" role="search" aria-label="חיפוש עסקים" style="margin-right:0;margin-left:0;">
+    <div class="search-row">
+      <input type="text" name="q" placeholder="חפשי לפי שם עסק או תחום" autocomplete="off" />
+    </div>
+    <div class="search-row" style="margin-top:10px;">
+      <select name="category"><option value="">כל התחומים</option>${catOptions}</select>
+      <button class="btn" type="submit">חפשי</button>
+    </div>
+  </form>
+  <h2 class="section-title" style="margin-top:30px;">תחומים</h2>
+  <div class="grid">${catTiles}</div>
+  ${featured.length ? `<h2 class="section-title" style="margin-top:30px;">עסקים נבחרים</h2><div class="grid">${featured.map((f) => freelancerCard(f, d)).join("")}</div>` : ""}
+  `;
+}
+
 // ----- Home -----
 route("GET", "/", async (req, res, params, query, ctx) => {
   const d = db.load();
+  if (mode.isNetfree()) {
+    const brand = mode.brandName();
+    return sendHtml(res, 200, page({
+      title: (d.settings.netfreeTagline || "").trim() || "מדריך עסקים של עצמאיות", session: null, body: netfreeHomeBody(d), query,
+      description: (d.settings.netfreeDescription || "").trim() || `${brand} - מדריך עסקים של עצמאיות, לפי תחום ועיר.`,
+      canonicalUrl: `${getOrigin(req)}/`,
+    }));
+  }
   // Sponsors ("נותנות חסות") used to also get their own big showcase strip directly on the
   // home page - per request, that's been removed so they only appear in the side columns
   // (rendered on every page via sidebarColumnsHtml), not duplicated in the main content here.
@@ -2417,7 +2460,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           <div style="display:flex;flex-direction:column;gap:6px;align-items:center;margin-bottom:10px;">
             ${endedPrizes.map((pz, i) => `<div style="font-size:15px;">${endedPrizeIcons[i] || "🎁"} <strong>${esc(pz)}</strong>${customerRacePrizeSponsorHtml(d, i)}</div>`).join("")}
           </div>
-          ${raceLikeBtn(`c${endedRaceNumber}`)}
         </section>
       </div>`;
 
@@ -2696,9 +2738,11 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   // במקום לפי כמות ביקורות כרגיל. aiUsed רק לצורך הצגת "חיפשנו בשבילך" למעלה בתוצאות.
   const sortQuality = query.get("sortQuality") === "1";
   const aiUsed = query.get("ai") === "1";
+  const NF = mode.isNetfree();
   const results = d.freelancers.filter((f) => {
     if (f.status !== "approved") return false;
     if (f.active === false) return false;
+    if (NF && !mode.freelancerVisible(f)) return false;
     if (!freelancerMatchesCategory(f, category)) return false;
     // She can now have several subcategories (f.subcategoryIds) - matches if the searched-for
     // one is among hers. A freelancer with NO subcategory picked at all still matches (works
@@ -2731,6 +2775,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   const listingMatches = [];
   d.freelancers.forEach((lf) => {
     if (lf.status !== "approved" || lf.active === false) return;
+    if (NF && !mode.freelancerVisible(lf)) return;
     (lf.additionalListings || []).forEach((l) => {
       if (l.status !== "approved") return;
       if (category && l.categoryId !== category) return;
@@ -2803,7 +2848,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       ${combinedCards.length ? `<div class="grid" id="scCardsGrid" data-view="medium">${combinedCards.map((c) => c.html).join("")}</div>` : `<p class="muted" style="text-align:center;">הפעם לא מצאנו התאמה... נסי לפתוח קצת את החיפוש, בטוח יש מישהי בשבילך.</p>`}
       </div>
       <p id="scNoLiveMatch" class="muted" style="text-align:center;display:none;">אין כרגע עצמאית שמתאימה לזה... נסי לשנות קצת את החיפוש.</p>
-      ${category ? `<p class="muted" style="text-align:center;margin-top:18px;">לא מצאת בדיוק את מי שאת מחפשת? <a href="/service-requests?category=${category}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום הזה יוכלו לפנות אלייך.</p>` : ""}
+      ${(category && !NF) ? `<p class="muted" style="text-align:center;margin-top:18px;">לא מצאת בדיוק את מי שאת מחפשת? <a href="/service-requests?category=${category}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום הזה יוכלו לפנות אלייך.</p>` : ""}
   `;
   // כותרת/תיאור/canonical דינמיים לפי הסינון (נוסף 2026-08-27, לפי בקשה מפורשת לשיפור הדירוג
   // בגוגל) - עמוד "תחום X בעיר Y" ממוקד וברור לגוגל שווה הרבה יותר מ"חיפוש" גנרי לכל
@@ -2819,9 +2864,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   } else if (searchCityName) {
     searchTitle = `עצמאיות ב${searchCityName} - חיפוש`;
   }
-  const searchDescription = (searchCatName || searchCityName)
-    ? `מחפשת ${searchSubName || searchCatName || "עצמאית"}${searchCityName ? ` ב${searchCityName}` : ""}? מצאי אותה ב-SheCan - כרטיסיות עסק, ביקורות אמיתיות והטבה בלעדית לכל עצמאית.`
+  let searchDescription = (searchCatName || searchCityName)
+    ? `מחפשת ${searchSubName || searchCatName || "עצמאית"}${searchCityName ? ` ב${searchCityName}` : ""}? מצאי אותה ב${NF ? mode.brandName() : "SheCan"} - כרטיסיות עסק, ביקורות אמיתיות והטבה בלעדית לכל עצמאית.`
     : "חפשי עצמאיות לפי תחום ועיר, קבלי הטבה בלעדית וסגרי עסקה ישירות - הכל במקום אחד ב-SheCan.";
+  if (NF) searchDescription = `חפשי עסקים של עצמאיות לפי תחום ועיר ב${mode.brandName()}.`;
   const canonicalParams = new URLSearchParams();
   if (category) canonicalParams.set("category", category);
   if (category && subcategory) canonicalParams.set("subcategory", subcategory);
@@ -2851,7 +2897,8 @@ route("POST", "/search/ai", async (req, res, params, query, ctx) => {
 route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
-  if (!f || f.status !== "approved" || f.active === false) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הפרופיל הזה.</p>` }));
+  if (!f || f.status !== "approved" || f.active === false || (mode.isNetfree() && !mode.freelancerVisible(f))) return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הפרופיל הזה.</p>` }));
+  const NF = mode.isNetfree();
   const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved" && !r.listingId);
   // A freelancer who registered more than one line of work (e.g. also does balloons, not just
   // makeup) previously had those additional listings reachable only if a customer happened to
@@ -2941,7 +2988,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     f.tier === "premium" ? `<span class="badge">מומלצת</span>` : "",
     f.offersOnline ? `<span class="badge badge-outline">💻 שירות אונליין</span>` : "",
     f.offersHomeVisit ? `<span class="badge badge-outline">🚗 מגיעה אלייך</span>` : "",
-    isFeaturedStoryThisWeek ? `<a href="/stories/${currentStory.id}" class="badge badge-leading" style="text-decoration:none;">📖 הסיפור שלה מככב השבוע</a>` : "",
+    (!NF && isFeaturedStoryThisWeek) ? `<a href="/stories/${currentStory.id}" class="badge badge-leading" style="text-decoration:none;">📖 הסיפור שלה מככב השבוע</a>` : "",
     hasVerifiedDeal(d, f.id) ? `<span class="badge badge-verified" title="${esc(VERIFIED_DEAL_BADGE_TITLE)}">✅ הטבה מאומתת</span>` : "",
   ].filter(Boolean).join(" ");
 
@@ -2964,7 +3011,9 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
     (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     f.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(f.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
-    f.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
+    f.email ? (NF
+      ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="mailto:${esc(f.email)}">${esc(f.email)}</a></div>`
+      : `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>`) : "",
     instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
   const body = `
@@ -2995,7 +3044,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     ${dealVisibleToCustomers(f) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(f.dealText || ""))}
-      ${f.dealCode ? (
+      ${(f.dealCode && !NF) ? (
         !isCustomer
           ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
           : couponGated
@@ -3005,7 +3054,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     </div>` : ""}
   </div>
 
-  ${(f.galleryPhotos && f.galleryPhotos.length) ? (
+  ${(!mode.logosOnly() && !NF && f.galleryPhotos && f.galleryPhotos.length) ? (
     !f.galleryRequiresApproval || (customer && (f.galleryApprovedCustomerIds || []).includes(customer.id)) ? `
     <div class="panel profile-detail">
       <h3 style="color:var(--gray);font-size:22px;text-align:center;">גאה להציג</h3>
@@ -3024,13 +3073,13 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     </div>`
   ) : ""}
 
-  <div class="panel profile-detail" id="scReview">
+  ${NF ? "" : `<div class="panel profile-detail" id="scReview">
     <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
     ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
     ${isCustomer ? reviewFormHtml(f.businessName || f.name, `/freelancer/${f.id}/review`, "", myExistingReview) : customerOnlyPrompt(ctx, loginUrl, "לכתוב המלצה")}
-  </div>
+  </div>`}
 
-  <div class="panel profile-detail" id="scMessageBox">
+  ${NF ? "" : `<div class="panel profile-detail" id="scMessageBox">
     <h3>💌 מוזמנת לשלוח הודעה ל ${esc(f.businessName || f.name)}, היא תקבל את ההודעה שלך גם במייל :)</h3>
     ${isCustomer ? `
       ${myThread.length ? `<div class="chat-thread" style="text-align:right;">${myThread.map((m) => `<div class="chat-msg from-${m.fromRole}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>` : `<p class="muted">עדיין לא כתבתן - זו ההזדמנות לשאול אותה כל מה שמעניין אותך, ישירות.</p>`}
@@ -3040,7 +3089,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
       </form>
       ${messagePrefill ? `<script>(function(){var t=document.getElementById("scMessageText");if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length);}})();</script>` : ""}
     ` : customerOnlyPrompt(ctx, loginUrlToMessage, "לשלוח הודעה ישירה לעצמאית")}
-  </div>
+  </div>`}
 
   ${otherApprovedListings.length ? `
   <div class="panel profile-detail">
@@ -3058,7 +3107,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const profileCatLabel = subcatNames(d, f.categoryId, f.subcategoryIds) || catName(d, f.categoryId);
   const profileCityLabel = f.cityId ? cityName(d, f.cityId) : "";
   const profileDescription = clip((f.description || "").trim(), 160) ||
-    `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}. ${dealVisibleToCustomers(f) ? `הטבה: ${f.dealText}. ` : ""}מצאי עוד עצמאיות ב-SheCan.`;
+    `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}. ${dealVisibleToCustomers(f) ? `הטבה: ${f.dealText}. ` : ""}מצאי עוד עצמאיות ב${NF ? mode.brandName() : "SheCan"}.`;
   const profileTitle = `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}`;
   const profileCanonical = `${getOrigin(req)}/freelancer/${f.id}`;
   const profileAvatar = avatarUri(f, d);
@@ -3093,9 +3142,10 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
   const l = f && (f.additionalListings || []).find((x) => String(x.id) === params.lid);
-  if (!f || f.status !== "approved" || f.active === false || !l || l.status !== "approved") {
+  if (!f || f.status !== "approved" || f.active === false || !l || l.status !== "approved" || (mode.isNetfree() && !mode.freelancerVisible(f))) {
     return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>אופס, לא מצאנו את הפרופיל הזה.</p>` }));
   }
+  const NF = mode.isNetfree();
   const reviews = d.reviews.filter((r) => r.type === "freelancer" && r.targetId === f.id && r.status === "approved" && String(r.listingId || "") === String(l.id));
   const isCustomer = requireRole(ctx.session, "customer");
   let customer = null;
@@ -3127,7 +3177,9 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
     (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     l.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(l.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
-    f.email ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
+    f.email ? (NF
+      ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="mailto:${esc(f.email)}">${esc(f.email)}</a></div>`
+      : `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>`) : "",
     instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
   const body = `
@@ -3153,7 +3205,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     ${dealVisibleToCustomers(l) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(l.dealText || ""))}
-      ${l.dealCode ? (
+      ${(l.dealCode && !NF) ? (
         !isCustomer
           ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
           : couponGated
@@ -3163,7 +3215,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     </div>` : ""}
   </div>
 
-  ${(l.galleryPhotos && l.galleryPhotos.length) ? `
+  ${(!NF && l.galleryPhotos && l.galleryPhotos.length) ? `
   <div class="panel profile-detail">
     <h3 style="color:var(--gray);font-size:22px;text-align:center;">גאה להציג</h3>
     <div class="gallery-scroll">
@@ -3171,13 +3223,13 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     </div>
   </div>` : ""}
 
-  <div class="panel profile-detail">
+  ${NF ? "" : `<div class="panel profile-detail">
     <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
     ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
     ${isCustomer ? reviewFormHtml(l.businessName, `/freelancer/${f.id}/review`, l.id, myExistingReview) : customerOnlyPrompt(ctx, loginUrl, "לכתוב המלצה")}
-  </div>
+  </div>`}
 
-  <div class="panel profile-detail" id="scMessageBox">
+  ${NF ? "" : `<div class="panel profile-detail" id="scMessageBox">
     <h3>💌 מוזמנת לשלוח הודעה ל ${esc(l.businessName)}, היא תקבל את ההודעה שלך גם במייל :)</h3>
     ${isCustomer ? `
       ${myThread.length ? `<div class="chat-thread" style="text-align:right;">${myThread.map((m) => `<div class="chat-msg from-${m.fromRole}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>` : `<p class="muted">עדיין לא כתבתן - זו ההזדמנות לשאול אותה כל מה שמעניין אותך, ישירות.</p>`}
@@ -3187,7 +3239,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
         <button class="btn" style="margin-top:10px;" type="submit">שליחת הודעה</button>
       </form>
     ` : customerOnlyPrompt(ctx, loginUrlToMessage, "לשלוח הודעה ישירה לעצמאית")}
-  </div>
+  </div>`}
   `;
   sendHtml(res, 200, page({ title: l.businessName, session: ctx.session, body, query }));
 });
@@ -5979,6 +6031,13 @@ route("POST", "/account/favorite-note", async (req, res, params, query, ctx) => 
 // ----- Central deals page - all active coupon offers in one place -----
 route("GET", "/deals", async (req, res, params, query, ctx) => {
   const d = db.load();
+  if (mode.isNetfree()) {
+    const withDeal = d.freelancers.filter((f) => mode.freelancerVisible(f) && dealVisibleToCustomers(f))
+      .slice().sort((a, b) => reviewCountFor(d, b.id) - reviewCountFor(d, a.id));
+    const cards = withDeal.map((f) => freelancerCard(f, d)).join("");
+    const nfBody = `<h1 class="section-title">הטבות</h1><p class="muted" style="text-align:center;">עסקים שמציעים הטבה מיוחדת.</p>${cards ? `<div class="grid">${cards}</div>` : `<p class="muted" style="text-align:center;">עוד אין הטבות פעילות.</p>`}`;
+    return sendHtml(res, 200, page({ title: "הטבות", session: null, body: nfBody, query, canonicalUrl: `${getOrigin(req)}/deals` }));
+  }
   const withDeals = d.freelancers
     .filter((f) => f.status === "approved" && f.active !== false && dealVisibleToCustomers(f));
   const listingDeals = [];
@@ -8638,6 +8697,60 @@ route("POST", "/admin/inspiration-quote/:id/reject", async (req, res, params, qu
 });
 
 // ----- Admin -----
+// ----- מצב נטפרי: פאנל ניהול (ר' mode.js) -----
+function netfreeAdminPanelHtml(d) {
+  const st = d.settings;
+  const hosts = mode.configuredHosts();
+  const approved = d.freelancers.filter((f) => f.status === "approved").slice().sort((a, b) => String(a.businessName || a.name).localeCompare(String(b.businessName || b.name), "he"));
+  const hiddenCount = approved.filter((f) => f.netfreeHidden).length;
+  const rows = approved.map((f) => `<tr data-nf-name="${esc(((f.businessName || "") + " " + (f.name || "")).toLowerCase())}">
+      <td>${esc(f.businessName || f.name)}${f.active === false ? ' <span class="muted">(לא פעילה)</span>' : ""}</td>
+      <td style="text-align:center;"><input type="checkbox" name="hidden" value="${esc(f.id)}" ${f.netfreeHidden ? "checked" : ""} style="width:auto;" /></td>
+      <td style="text-align:center;"><input type="checkbox" name="ad" value="${esc(f.id)}" ${f.netfreeAd ? "checked" : ""} style="width:auto;" /></td>
+      <td style="text-align:center;"><input type="checkbox" name="sponsor" value="${esc(f.id)}" ${f.netfreeSponsor ? "checked" : ""} style="width:auto;" /></td>
+    </tr>`).join("");
+  return `
+  <div class="panel" id="netfree-mode" style="scroll-margin-top:90px;">
+    <h3>🕊️ אתר נטפרי (דומיין שני)</h3>
+    <p class="muted">אותו שרת ואותן עצמאיות, אבל בכתובת נוספת שמציגה רק: דף בית, חיפוש, פרופילים, הטבות ואודות - בלי מגזין, זירה, קהילה, סיפורים, התחברות או הרשמה, ובלי ביקורות והודעות. דברים חדשים שתוסיפי לאתר הראשי <strong>לא</strong> יופיעו שם. ${hosts.length ? `כתובות פעילות כרגע: <strong>${esc(hosts.join(", "))}</strong>` : "<strong>עדיין לא הוגדרה כתובת - האתר הזה כבוי.</strong>"}</p>
+    <form method="post" action="/admin/netfree-settings" enctype="multipart/form-data">
+      <label>כתובת/ות הדומיין של נטפרי (בלי https://, מופרדות בפסיק - למשל: shecan-biz.co.il, www.shecan-biz.co.il)
+        <input type="text" name="hosts" value="${esc(st.netfreeHosts || "")}" dir="ltr" placeholder="example.co.il" /></label>
+      <label>שם המותג באתר נטפרי
+        <input type="text" name="brandName" maxlength="60" value="${esc(st.netfreeBrandName || "")}" placeholder="SheCan עסקים" /></label>
+      <label>משפט פתיחה בדף הבית
+        <input type="text" name="tagline" maxlength="140" value="${esc(st.netfreeTagline || "")}" /></label>
+      <label>תיאור לגוגל (meta description) של דף הבית
+        <input type="text" name="description" maxlength="200" value="${esc(st.netfreeDescription || "")}" /></label>
+      <label>מייל ליצירת קשר (מוצג בתחתית, אופציונלי)
+        <input type="text" name="contactEmail" maxlength="120" value="${esc(st.netfreeContactEmail || "")}" dir="ltr" /></label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:700;"><input type="checkbox" name="indexable" value="1" ${st.netfreeIndexable !== false ? "checked" : ""} style="width:auto;" /> לאפשר לגוגל לאנדקס את אתר נטפרי (robots + מפת אתר נפרדת)</label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:700;"><input type="checkbox" name="logosOnly" value="1" ${st.netfreeLogosOnly !== false ? "checked" : ""} style="width:auto;" /> לוגואים בלבד - בלי תמונות אישיות וגלריות (מומלץ לנטפרי)</label>
+      <label>טקסט "אודות" (אם ריק - טקסט ברירת מחדל)
+        <textarea name="aboutText" rows="4">${esc(st.netfreeAboutText || "")}</textarea></label>
+      <label>תקנון לאתר נטפרי (אם ריק - טקסט קצר כברירת מחדל)
+        <textarea name="termsText" rows="3">${esc(st.netfreeTermsText || "")}</textarea></label>
+      <label>מדיניות פרטיות לאתר נטפרי (אם ריק - טקסט קצר כברירת מחדל)
+        <textarea name="privacyText" rows="3">${esc(st.netfreePrivacyText || "")}</textarea></label>
+      <label>לוגו לאתר נטפרי ${st.netfreeLogoDataUri ? `<span class="muted">(קיים)</span> <label style="display:inline;font-weight:400;"><input type="checkbox" name="removeLogo" value="1" style="width:auto;" /> הסרה</label>` : ""}
+        <input type="file" name="logo" accept="image/*" /></label>
+      <label>באנר עליון לאתר נטפרי ${st.netfreeTopBannerDataUri ? `<span class="muted">(קיים)</span> <label style="display:inline;font-weight:400;"><input type="checkbox" name="removeBanner" value="1" style="width:auto;" /> הסרה</label>` : ""}
+        <input type="file" name="banner" accept="image/*" /></label>
+      <button class="btn btn-small" type="submit">שמירת הגדרות נטפרי</button>
+    </form>
+    <h4 style="margin-top:22px;">עצמאיות באתר נטפרי</h4>
+    <p class="muted">"לא לנטפרי" - העסק לא מופיע שם בכלל (חיפוש, פרופיל, מפת אתר). "מודעה בצד" ו"נותנת חסות" - מוצגות בצדדים באתר נטפרי בלבד, בנפרד לגמרי מהמודעות באתר הראשי. כרגע מוסתרות מנטפרי: ${hiddenCount}.</p>
+    <input type="text" placeholder="סינון לפי שם..." oninput="var q=this.value.trim().toLowerCase();document.querySelectorAll('#nfRows tr').forEach(function(r){r.style.display=(!q||r.getAttribute('data-nf-name').indexOf(q)>-1)?'':'none';});" />
+    <form method="post" action="/admin/netfree-freelancers">
+      <div class="table-scroll"><table class="table-simple">
+        <tr><th>עסק</th><th>לא לנטפרי</th><th>מודעה בצד</th><th>נותנת חסות</th></tr>
+        <tbody id="nfRows">${rows}</tbody>
+      </table></div>
+      <button class="btn btn-small" type="submit" style="margin-top:10px;">שמירת הסימונים</button>
+    </form>
+  </div>`;
+}
+
 route("GET", "/admin", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -8747,7 +8860,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   const customerReferralCounts = referralCounts(customerRaceList, "referredByCustomerId");
   const customerReferralRanking = d.customers
     .map((c) => ({
-      id: c.id, name: c.name || c.email, count: customerReferralCounts[c.id] || 0,
+      id: c.id, name: c.name || c.email, email: c.email || "", count: customerReferralCounts[c.id] || 0,
       referred: customerRaceList.filter((x) => x.referredByCustomerId === c.id).map((x) => x.name || x.email),
     }))
     .filter((r) => r.count > 0)
@@ -9930,6 +10043,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     </div>
   </div>
 
+  ${netfreeAdminPanelHtml(d)}
+
   <div class="panel" id="home-race-ended" style="scroll-margin-top:90px;">
     <h3>🏁 מה מוצג בדף הבית במקום המירוצים</h3>
     <p class="muted">כשהמצב דלוק, דף הבית מציג "מירוץ מס' N הסתיים" - מירוץ הלקוחות עם הפרסים והנותנות חסות, עם כפתור לייק. כשהוא כבוי חוזרים הבלוקים הרגילים של המירוצים הפעילים (בלי המספרים).</p>
@@ -9945,9 +10060,9 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <h3>מרוץ ההפניות של הלקוחות - מי מובילה 🏆 (מירוץ מס' ${customerRaceNumber(d)})</h3>
     <p class="muted">כל לקוחה שנרשמה דרך הקישור האישי של לקוחה אחרת ("הביאי חברה") - ממוין מהכי הרבה הפניות להכי פחות, כולל השמות של מי שנרשמה דרך הקישור של כל אחת.</p>
     ${leaderGapSummaryHtml(customerReferralRanking, "חברות")}
-    ${customerReferralRanking.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מקום</th><th>לקוחה</th><th>כמות הפניות</th><th>מי נרשמה דרכה</th></tr>
+    ${customerReferralRanking.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>מקום</th><th>לקוחה</th><th>מייל</th><th>כמות הפניות</th><th>מי נרשמה דרכה</th></tr>
       ${customerReferralRanking.map((r, i) => `<tr>
-        <td>${i + 1}${i === 0 ? " 👑" : ""}</td><td>${esc(r.name)}</td><td>${r.count}</td>
+        <td>${i + 1}${i === 0 ? " 👑" : ""}</td><td>${esc(r.name)}</td><td dir="ltr">${esc(r.email)}</td><td>${r.count}</td>
         <td>${esc(r.referred.join(", "))}</td>
       </tr>`).join("")}
     </table></div>` : `<p class="muted">עדיין אין הפניות בפועל - אף לקוחה לא נרשמה עדיין דרך הקישור האישי של לקוחה אחרת.</p>`}
@@ -9987,7 +10102,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         ${[1, 2, 3, 4].map((place) => `<label>מקום ${place} - ${esc(customerRacePrizes(d)[place - 1])}${customerRacePrizeSponsor(d, place - 1) ? ` (בחסות ${esc(customerRacePrizeSponsor(d, place - 1).businessName || customerRacePrizeSponsor(d, place - 1).name)})` : ""}
           <select name="place${place}">
             <option value="">ללא</option>
-            ${d.customers.slice().sort((a, b) => (a.name || a.email || "").localeCompare(b.name || b.email || "", "he")).map((c) => `<option value="${c.id}" ${customerReferralRanking[place - 1] && customerReferralRanking[place - 1].id === c.id ? "selected" : ""}>${esc(c.name || c.email)}${customerReferralRanking[place - 1] && customerReferralRanking[place - 1].id === c.id ? ` (${customerReferralRanking[place - 1].count} הפניות)` : ""}</option>`).join("")}
+            ${d.customers.slice().sort((a, b) => (a.name || a.email || "").localeCompare(b.name || b.email || "", "he")).map((c) => `<option value="${c.id}" ${customerReferralRanking[place - 1] && customerReferralRanking[place - 1].id === c.id ? "selected" : ""}>${esc(c.name || c.email)}${c.name && c.email ? ` - ${esc(c.email)}` : ""}${customerReferralRanking[place - 1] && customerReferralRanking[place - 1].id === c.id ? ` (${customerReferralRanking[place - 1].count} הפניות)` : ""}</option>`).join("")}
           </select></label>`).join("")}
         <p class="muted" style="margin:6px 0 0;">הגדרות מירוץ מס' ${customerRaceNumber(d) + 1}:</p>
         <label>תאריך סיום (אופציונלי)<input type="text" name="nextEndDate" placeholder="למשל 15.12" /></label>
@@ -9999,7 +10114,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     ${(d.settings.customerRaceHistory || []).length ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
       <h4 style="margin:0 0 6px;">📜 מירוצים קודמים</h4>
       <div class="table-scroll"><table class="table-simple"><tr><th>מירוץ</th><th>הסתיים</th><th>זוכות</th></tr>
-        ${(d.settings.customerRaceHistory || []).slice().reverse().map((h) => `<tr><td>מס' ${esc(String(h.number))}</td><td>${esc(new Date(h.endedAt).toLocaleDateString("he-IL"))}</td><td>${(h.winners || []).map((w) => `${w.place}. ${esc(w.name)} (${w.count}) - ${esc(w.prize || "")}${w.sponsorName ? ` (בחסות ${esc(w.sponsorName)})` : ""}`).join("<br>") || "-"}</td></tr>`).join("")}
+        ${(d.settings.customerRaceHistory || []).slice().reverse().map((h) => `<tr><td>מס' ${esc(String(h.number))}</td><td>${esc(new Date(h.endedAt).toLocaleDateString("he-IL"))}</td><td>${(h.winners || []).map((w) => `${w.place}. ${esc(w.name)}${(() => { const wc = d.customers.find((x) => x.id === w.customerId); const em = (wc && wc.email) || w.email || ""; return em ? ` <span dir="ltr" style="color:#7a6e63;">&lt;${esc(em)}&gt;</span>` : ""; })()} (${w.count}) - ${esc(w.prize || "")}${w.sponsorName ? ` (בחסות ${esc(w.sponsorName)})` : ""}`).join("<br>") || "-"}</td></tr>`).join("")}
       </table></div>
     </div>` : ""}
     <!-- תיקון שיוך הפניה ידני - לפי בקשה מפורשת 2026-08-30 (לקוחה טענה שהפנתה חברות שלא נספרו).
@@ -11089,6 +11204,49 @@ route("POST", "/admin/customer-race/prizes", async (req, res, params, query, ctx
   redirect(res, `/admin?ok=${encodeURIComponent("הפרסים ונותנות החסות עודכנו.")}#customer-referral-race`);
 });
 
+route("POST", "/admin/netfree-settings", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/admin?err=${encodeURIComponent("התמונה גדולה מדי (עד 8MB) - נסי תמונה קטנה יותר.")}#netfree-mode`);
+  const d = db.load();
+  const st = d.settings;
+  const txt = (k, max) => clip((body.get(k) || "").trim(), max);
+  st.netfreeHosts = mode.normalizeHost ? txt("hosts", 300).split(/[\s,;]+/).map((h) => h.replace(/^https?:\/\//i, "").replace(/\/.*$/, "")).filter(Boolean).join(", ") : txt("hosts", 300);
+  st.netfreeBrandName = txt("brandName", 60);
+  st.netfreeTagline = txt("tagline", 140);
+  st.netfreeDescription = txt("description", 200);
+  st.netfreeContactEmail = txt("contactEmail", 120);
+  st.netfreeAboutText = clip((body.get("aboutText") || "").trim(), 4000);
+  st.netfreeTermsText = clip((body.get("termsText") || "").trim(), 12000);
+  st.netfreePrivacyText = clip((body.get("privacyText") || "").trim(), 12000);
+  st.netfreeIndexable = body.get("indexable") === "1";
+  st.netfreeLogosOnly = body.get("logosOnly") === "1";
+  if (body.get("removeLogo") === "1") st.netfreeLogoDataUri = null;
+  if (body.get("removeBanner") === "1") st.netfreeTopBannerDataUri = null;
+  const logo = fileToDataUri(body.files.logo, MAX_UPLOAD_BYTES);
+  if (logo) st.netfreeLogoDataUri = logo;
+  const banner = fileToDataUri(body.files.banner, MAX_UPLOAD_BYTES);
+  if (banner) st.netfreeTopBannerDataUri = banner;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הגדרות אתר נטפרי נשמרו.")}#netfree-mode`);
+});
+
+route("POST", "/admin/netfree-freelancers", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const hidden = new Set(body.getAll("hidden"));
+  const ad = new Set(body.getAll("ad"));
+  const sponsor = new Set(body.getAll("sponsor"));
+  d.freelancers.forEach((f) => {
+    f.netfreeHidden = hidden.has(f.id);
+    f.netfreeAd = ad.has(f.id);
+    f.netfreeSponsor = sponsor.has(f.id);
+  });
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הסימונים של אתר נטפרי נשמרו.")}#netfree-mode`);
+});
+
 route("POST", "/admin/home-race-ended", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -11119,7 +11277,7 @@ route("POST", "/admin/customer-race/end", async (req, res, params, query, ctx) =
     used.add(cid);
     const sponsor = customerRacePrizeSponsor(d, place - 1);
     const sponsorName = sponsor ? (sponsor.businessName || sponsor.name) : "";
-    winners.push({ place, customerId: c.id, name: c.name || c.email, count: counts[c.id] || 0, prize: prizes[place - 1], sponsorName, sponsorId: sponsor ? sponsor.id : "" });
+    winners.push({ place, customerId: c.id, name: c.name || c.email, email: c.email || "", count: counts[c.id] || 0, prize: prizes[place - 1], sponsorName, sponsorId: sponsor ? sponsor.id : "" });
     if (sendEmails) {
       notify(c, {
         pushTitle: `זכית במקום ${place} במירוץ ההפניות! 🏆`, pushBody: `הפרס שלך: ${prizes[place - 1]}`, url: "/account",
@@ -12655,6 +12813,12 @@ route("POST", "/admin/review/:id/delete", async (req, res, params, query, ctx) =
 // ----- Static-ish pages -----
 route("GET", "/about", async (req, res, params, query, ctx) => {
   const d = db.load();
+  if (mode.isNetfree()) {
+    const brand = mode.brandName();
+    const txt = (d.settings.netfreeAboutText || "").trim() || `${brand} הוא מדריך עסקים של עצמאיות בישראל. אפשר לחפש עסק לפי תחום ועיר, ולפנות אליו ישירות בטלפון או בוואטסאפ.`;
+    const nfBody = `<h1 class="section-title">אודות</h1><div class="panel" style="text-align:right;max-width:680px;margin:0 auto;">${renderRichText(txt)}</div>`;
+    return sendHtml(res, 200, page({ title: "אודות", session: null, body: nfBody, query, canonicalUrl: `${getOrigin(req)}/about` }));
+  }
   const body = `<h1 class="section-title">מי אנחנו</h1><div class="panel" style="text-align:right;max-width:680px;margin:0 auto;">${renderRichText(d.settings.aboutText)}</div><p class="muted" style="text-align:center;margin-top:18px;">יש לך שאלה או רצית לספר לנו משהו? <a href="/contact" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">בואי נדבר</a> ❤️</p>`;
   sendHtml(res, 200, page({ title: "מי אנחנו", session: ctx.session, body, query }));
 });
@@ -13270,12 +13434,20 @@ route("GET", "/admin/support/open-summary", async (req, res, params, query, ctx)
 
 route("GET", "/terms", async (req, res, params, query, ctx) => {
   const d = db.load();
+  if (mode.isNetfree()) {
+    const txt = (d.settings.netfreeTermsText || "").trim() || "האתר הוא מדריך עסקים. האחריות על השירות, המחיר והתנאים היא של בעלת העסק בלבד. השימוש באתר באחריות הגולשת.";
+    return sendHtml(res, 200, page({ title: "תקנון", session: null, body: `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
+  }
   const body = `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(d.settings.termsText)}</div>`;
   sendHtml(res, 200, page({ title: "תקנון", session: ctx.session, body, query }));
 });
 
 route("GET", "/privacy", async (req, res, params, query, ctx) => {
   const d = db.load();
+  if (mode.isNetfree()) {
+    const txt = (d.settings.netfreePrivacyText || "").trim() || "האתר אינו דורש הרשמה ואינו אוסף פרטים אישיים מהגולשות. הפרטים המוצגים על כל עסק נמסרו על ידי בעלת העסק.";
+    return sendHtml(res, 200, page({ title: "מדיניות פרטיות", session: null, body: `<h1 class="section-title">מדיניות פרטיות</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
+  }
   const body = `<h1 class="section-title">מדיניות פרטיות</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(d.settings.privacyPolicyText)}</div>`;
   sendHtml(res, 200, page({ title: "מדיניות פרטיות", session: ctx.session, body, query }));
 });
@@ -13345,9 +13517,28 @@ route("GET", "/icons/:file", async (req, res, params, query, ctx) => {
 // off disk rather than held in memory, same reasoning as the magazine files fix above. Filenames
 // are always our own randomly-generated names (never a user-typed path), but the extra pattern
 // check + "..".includes guard is cheap defense-in-depth against path traversal regardless.
+function netfreeAllowedUploadNames() {
+  const d = db.load();
+  const set = new Set();
+  const add = (uri) => {
+    const m = typeof uri === "string" && uri.match(/^\/uploads\/([a-zA-Z0-9._-]+)$/);
+    if (m) set.add(m[1]);
+  };
+  const st = d.settings || {};
+  [st.defaultBusinessLogoDataUri, st.netfreeLogoDataUri, st.netfreeTopBannerDataUri, st.siteLogoDataUri].forEach(add);
+  d.freelancers.forEach((f) => {
+    add(f.logoDataUri);
+    (f.additionalListings || []).forEach((l) => add(l.logoDataUri));
+  });
+  return set;
+}
+
 route("GET", "/uploads/:filename", async (req, res, params, query, ctx) => {
   const filename = params.filename || "";
   if (!/^[a-zA-Z0-9._-]+$/.test(filename) || filename.includes("..")) return sendHtml(res, 404, "not found");
+  // אתר נטפרי במצב "לוגואים בלבד": מגישים רק קבצים שמשמשים כלוגו (של עסק, ברירת מחדל, או של
+  // האתר עצמו) - לא תמונות אישיות/גלריות, גם אם מישהי מנחשת את הכתובת ישירות.
+  if (mode.logosOnly() && !netfreeAllowedUploadNames().has(filename)) return sendHtml(res, 404, "not found");
   const filePath = path.join(UPLOADS_DIR, filename);
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return sendHtml(res, 404, "not found");
@@ -13442,7 +13633,9 @@ route("POST", "/push/unsubscribe", async (req, res, params, query, ctx) => {
 
 route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
   const d = db.load();
-  const txt = d.settings.searchEngineVisible
+  const txt = mode.isNetfree()
+    ? (mode.indexable() ? `User-agent: *\nAllow: /\nSitemap: ${getOrigin(req)}/sitemap.xml\n` : "User-agent: *\nDisallow: /\n")
+    : d.settings.searchEngineVisible
     ? "User-agent: *\nAllow: /\nSitemap: https://shecan.co.il/sitemap.xml\n"
     : "User-agent: *\nDisallow: /\n";
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
@@ -13460,16 +13653,21 @@ route("GET", "/sitemap.xml", async (req, res, params, query, ctx) => {
   const d = db.load();
   const origin = getOrigin(req);
   const urls = [];
+  const NFS = mode.isNetfree();
   const addUrl = (urlPath, changefreq, priority) => urls.push({ loc: `${origin}${urlPath}`, changefreq, priority });
   addUrl("/", "daily", "1.0");
   addUrl("/search", "daily", "0.9");
   addUrl("/deals", "daily", "0.7");
-  addUrl("/magazine", "weekly", "0.6");
-  addUrl("/stories", "weekly", "0.6");
-  addUrl("/arena", "daily", "0.6");
-  addUrl("/join", "monthly", "0.5");
+  if (!NFS) {
+    addUrl("/magazine", "weekly", "0.6");
+    addUrl("/stories", "weekly", "0.6");
+    addUrl("/arena", "daily", "0.6");
+    addUrl("/join", "monthly", "0.5");
+  } else {
+    addUrl("/about", "monthly", "0.3");
+  }
   d.categories.forEach((c) => addUrl(`/search?category=${encodeURIComponent(c.id)}`, "weekly", "0.7"));
-  d.freelancers.filter((f) => f.status === "approved" && f.active !== false).forEach((f) => {
+  d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (!NFS || mode.freelancerVisible(f))).forEach((f) => {
     addUrl(`/freelancer/${encodeURIComponent(f.id)}`, "weekly", "0.8");
     (f.additionalListings || []).filter((l) => l.status === "approved").forEach((l) => {
       addUrl(`/freelancer/${encodeURIComponent(f.id)}/listing/${encodeURIComponent(l.id)}`, "weekly", "0.6");
@@ -13687,13 +13885,24 @@ function trackSiteVisit(method, pathname, session, req, res, query) {
   saveSiteStatsThrottled();
 }
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
+  // מצב נטפרי: הדומיין השני (ר' mode.js) רץ על אותו שרת בדיוק, אבל כל בקשה שמגיעה אליו נעטפת
+  // בהקשר "netfree" - ורק נתיבים מהרשימה הלבנה ב-mode.js קיימים בו בכלל.
+  const nf = mode.hostIsNetfree(req.headers.host);
+  mode.runWith({ netfree: nf }, () => handleRequest(req, res, nf));
+});
+
+async function handleRequest(req, res, nf) {
   try {
     const u = new URL(req.url, `http://${req.headers.host}`);
-    const { session, sid } = getSession(req);
+    // באתר נטפרי אין התחברות כלל - לא קוראים/יוצרים session משתמש, גם אם הגיע cookie.
+    const { session, sid } = nf ? { session: null, sid: null } : getSession(req);
+    if (nf && !mode.pathAllowed(req.method, u.pathname)) {
+      return sendHtml(res, 404, page({ title: "לא נמצא", session, body: "<p>הדף הזה לא קיים - אפשר לחזור <a href=\"/\">לדף הבית</a>.</p>" }));
+    }
     const match = routes.find((r) => r.method === req.method && r.regex.test(u.pathname));
     if (!match) return sendHtml(res, 404, page({ title: "לא נמצא", session, body: "<p>הדף הזה לא קיים - בואי נחזור <a href=\"/\">הביתה</a> ❤️</p>" }));
-    trackSiteVisit(req.method, u.pathname, session, req, res, u.searchParams);
+    if (!nf) trackSiteVisit(req.method, u.pathname, session, req, res, u.searchParams);
     const m = u.pathname.match(match.regex);
     const params = {};
     match.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
@@ -13702,6 +13911,6 @@ const server = http.createServer(async (req, res) => {
     console.error(e);
     sendHtml(res, 500, "<h1>שגיאת שרת</h1><pre>" + esc(e.stack) + "</pre>");
   }
-});
+}
 
 server.listen(PORT, () => console.log(`SheCan running on http://localhost:${PORT}`));
