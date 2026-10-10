@@ -1,5 +1,6 @@
 const { patternDataUri } = require("./pattern");
 const db = require("./db");
+const mode = require("./mode");
 const PATTERN = patternDataUri();
 // Public VAPID key for Web Push subscription (safe to expose client-side - it's the PUBLIC
 // half of the keypair). Set VAPID_PUBLIC_KEY in Render alongside VAPID_PRIVATE_KEY (server.js);
@@ -255,7 +256,45 @@ function dealsTickerHtml() {
   </div>`;
 }
 
+function netfreeNav() {
+  const d = db.load();
+  const settings = d.settings;
+  const brand = mode.brandName();
+  const logo = settings.netfreeLogoDataUri
+    ? `<img src="${esc(settings.netfreeLogoDataUri)}" alt="${esc(brand)}" class="brand-logo" />`
+    : `<span style="font-weight:800;font-size:22px;color:var(--dark);">${esc(brand)}</span>`;
+  return `
+  ${settings.netfreeTopBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${esc(settings.netfreeTopBannerDataUri)}" alt="${esc(brand)}" class="top-banner" /></a></div>` : ""}
+  <div class="site-header-sticky">
+    <header class="site-header" role="banner">
+      <div class="container header-inner">
+        <a href="/" class="brand">${logo}</a>
+        <nav class="main-nav" aria-label="ניווט ראשי">
+          <a class="nav-link" href="/">דף הבית</a>
+          <a class="nav-link" href="/search"><span>חיפוש</span><span aria-hidden="true" style="color:var(--rose-dark);">🔍</span></a>
+          <a class="nav-link" href="/deals">הטבות</a>
+          <a class="nav-link" href="/about">אודות</a>
+        </nav>
+      </div>
+    </header>
+  </div>`;
+}
+
+function netfreeFooter() {
+  const d = db.load();
+  const brand = mode.brandName();
+  const mail = (d.settings.netfreeContactEmail || "").trim();
+  return `
+  <footer class="site-footer" role="contentinfo">
+    <div class="container footer-inner">
+      <div>${esc(brand)}</div>
+      <nav class="footer-links" aria-label="קישורי תחתית"><a href="/about">אודות</a> · <a href="/terms">תקנון</a> · <a href="/privacy">מדיניות פרטיות</a> · <a href="/accessibility">הצהרת נגישות</a>${mail ? ` · <a href="mailto:${esc(mail)}">${esc(mail)}</a>` : ""}</nav>
+    </div>
+  </footer>`;
+}
+
 function nav(session) {
+  if (mode.isNetfree()) return netfreeNav();
   const d = db.load();
   const settings = d.settings;
   let right = `
@@ -276,6 +315,8 @@ function nav(session) {
     right = `${switchToFreelancerBtn}<a class="nav-link" href="/account" title="אזור אישי">${label}${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "freelancer") {
     right = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
+  } else if (session && session.role === "influencer") {
+    right = `<a class="nav-link" href="/influencer-dashboard" title="אזור אישי">האזור שלי</a><a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "admin") {
     right = `<a class="nav-link" href="/admin" title="ניהול">ניהול${pendingBadge(pendingAdminCount())}</a><a class="nav-link" href="/logout">יציאה</a>`;
   }
@@ -298,6 +339,7 @@ function nav(session) {
           <a class="nav-link" href="/deals">הטבות SheCan</a>
           <a class="nav-link" href="/stories">SheCan Stories</a>
           <a class="nav-link" href="/magazine">מגזין SheCan</a>
+          ${settings.influencersEnabled ? `<a class="nav-link" href="/influencers">✨ ${esc((settings.influencersPageName || "").trim() || "SheCan Muses")}</a>` : ""}
           <a class="nav-link nav-link-community" href="/community">קהילת SheCan${badge(communityUnseenCount(session))}</a>
           <a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${badge(arenaUnseenPollCount(session))}</a>
@@ -311,6 +353,7 @@ function nav(session) {
 }
 
 function footer() {
+  if (mode.isNetfree()) return netfreeFooter();
   return `
   <footer class="site-footer" role="contentinfo">
     <div class="container footer-inner">
@@ -524,8 +567,19 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 /* כפתור צף "יש לך שאלה? 💬" - מופיע בכל עמוד, בצד הנגדי לווידג'ט הנגישות (ימין ולא שמאל)
    כדי שהם לעולם לא יתנגשו זה בזה. */
 .sc-support-widget{position:fixed;bottom:20px;right:20px;z-index:500;}
+/* חתימה עדינה מוצמדת בתחתית כל הדפים (2026-10-10) - קטנה, שקופה למחצה, ולא תופסת לחיצות. */
+.sc-signature{position:fixed;bottom:6px;left:50%;transform:translateX(-50%);z-index:5;font-size:12px;letter-spacing:.6px;color:var(--rose-dark);opacity:.55;pointer-events:none;font-family:"Heebo","Assistant",sans-serif;font-weight:500;white-space:nowrap;}
 .sc-support-widget-btn{display:flex;align-items:center;gap:6px;background:var(--rose-dark);color:var(--white);border:none;border-radius:999px;padding:12px 18px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.25);text-decoration:none;}
 .sc-support-widget-btn:hover{background:var(--dark);}
+/* כפתור התמיכה: מופיע מורחב ("לתמיכה לחצי כאן") בשניות הראשונות, ואז מצטמצם לעיגול עם סמל שירות
+   לקוחות (🎧). ריחוף/מיקוד מרחיב אותו שוב. הצמצום מתבצע ב-scSupportCollapse בסקריפט למטה. */
+.sc-support-widget-btn .sc-support-label{display:inline-block;white-space:nowrap;max-width:200px;overflow:hidden;transition:max-width .45s ease,opacity .35s ease;opacity:1;}
+.sc-support-widget-btn .sc-support-icon{font-size:20px;line-height:1;}
+.sc-support-widget-btn{transition:padding .45s ease,gap .45s ease,background .2s;}
+.sc-support-widget.sc-support-collapsed .sc-support-widget-btn{padding:0;gap:0;width:52px;height:52px;justify-content:center;}
+.sc-support-widget.sc-support-collapsed .sc-support-label{max-width:0;opacity:0;}
+.sc-support-widget.sc-support-collapsed:hover .sc-support-widget-btn,.sc-support-widget.sc-support-collapsed:focus-within .sc-support-widget-btn{padding:12px 18px;gap:6px;width:auto;height:auto;}
+.sc-support-widget.sc-support-collapsed:hover .sc-support-label,.sc-support-widget.sc-support-collapsed:focus-within .sc-support-label{max-width:200px;opacity:1;}
 /* "Add to home screen" install banner - fixed bar at the bottom of the screen, above the
    accessibility widget so the two never overlap. Made large/bold on purpose (thick rose top
    border, big emoji, bold text, roomy padding) so it's impossible to miss - per explicit
@@ -1151,6 +1205,7 @@ function sidebarCatName(d, id) {
 // feature existed). photoUri/logoUri come from whichever record (freelancer or listing) is
 // actually being advertised - a listing only ever has its own logoDataUri, never a photo.
 function sideAdPhotoHtml(photoUri, logoUri, d, name) {
+  if (mode.logosOnly()) photoUri = null;
   const uri = photoUri || logoUri || (d.settings && d.settings.defaultBusinessLogoDataUri) || null;
   if (uri) return `<div class="side-ad-photo" style="background-image:url('${esc(uri)}');"></div>`;
   const initial = String(name || "").trim().charAt(0);
@@ -1163,7 +1218,7 @@ function sponsorCardHtml(f, d) {
       <div class="side-ad-card-row">
         ${sideAdPhotoHtml(f.photoDataUri, f.logoDataUri, d, f.businessName || f.name)}<span class="side-mini-mark">👑</span>
         <div class="side-ad-card-text">
-          <span class="badge badge-leading">👑 עסק מוביל</span>
+          <span class="badge badge-leading">👑 נותנת חסות</span>
           <h4>${esc(f.businessName || f.name)}</h4>
           <div class="muted">${esc(sidebarCatName(d, f.categoryId))}</div>
         </div>
@@ -1183,7 +1238,7 @@ function adCardHtml(f, d, listing) {
       <div class="side-ad-card-row">
         ${sideAdPhotoHtml(listing ? null : f.photoDataUri, target.logoDataUri, d, target.businessName || target.name)}<span class="side-mini-mark">📣</span>
         <div class="side-ad-card-text">
-          <span class="badge badge-ad">${!listing && f.adSource === "race" ? "📣 נותנת חסות" : "📣 מודעה"}</span>
+          <span class="badge badge-ad">${!listing && f.adSource === "race" ? "📣 עסק מוביל" : "📣 מודעה"}</span>
           <h4>${esc(target.businessName || target.name)}</h4>
           <div class="muted">${esc(sidebarCatName(d, categoryId))}</div>
         </div>
@@ -1211,6 +1266,17 @@ function isCurrentlyAdvertisedForSidebar(f) {
   return new Date().toISOString().slice(0, 10) <= f.isAdvertisedUntil;
 }
 function sidebarColumnsHtml(d) {
+  if (mode.isNetfree()) {
+    // מודעות/נותנות חסות של נטפרי נפרדות לגמרי מהאתר הראשי - דגלים משלהן (netfreeSponsor / netfreeAd).
+    const ok = (f) => mode.freelancerVisible(f);
+    const nfItems = [
+      ...d.freelancers.filter((f) => ok(f) && f.netfreeSponsor).map((f) => ({ f, kind: "sponsor" })),
+      ...d.freelancers.filter((f) => ok(f) && f.netfreeAd && !f.netfreeSponsor).map((f) => ({ f, kind: "ad" })),
+    ];
+    const nfCard = (it) => (it.kind === "sponsor" ? sponsorCardHtml(it.f, d) : adCardHtml(it.f, d, null));
+    const nfCol = (list, cls) => `<div class="side-col ${cls}"><div class="side-stack">${list.map(nfCard).join("")}</div></div>`;
+    return nfCol(nfItems.filter((_, i) => i % 2 === 0), "side-col-right") + nfCol(nfItems.filter((_, i) => i % 2 === 1), "side-col-left");
+  }
   const eligible = (f) => f.status === "approved" && f.active !== false;
   const sponsors = d.freelancers.filter((f) => eligible(f) && f.isLeadingBusiness).map((f) => ({ f, listing: null, kind: "sponsor" }));
   const freelancerAds = d.freelancers.filter((f) => eligible(f) && isCurrentlyAdvertisedForSidebar(f) && !f.isLeadingBusiness).map((f) => ({ f, listing: null, kind: "ad" }));
@@ -1285,7 +1351,9 @@ function jsonLdScriptHtml(data) {
 function page({ title, session, body, query, noSidebars, description, canonicalUrl, ogImage, jsonLd }) {
   const d = db.load();
   const searchEngineVisible = d.settings.searchEngineVisible;
-  const metaDescription = description || SITE_DEFAULT_DESCRIPTION;
+  const metaDescription = mode.isNetfree()
+    ? (description || d.settings.netfreeDescription || `${mode.brandName()} - מדריך עסקים של עצמאיות בישראל, לפי תחום ועיר.`)
+    : (description || SITE_DEFAULT_DESCRIPTION);
   // Whether the logged-in customer/freelancer opted into push notifications (checkbox at
   // signup/join) - drives the quiet auto-subscribe flow in the script block below, since
   // there's no standing "enable notifications" nav button anymore.
@@ -1297,27 +1365,30 @@ function page({ title, session, body, query, noSidebars, description, canonicalU
     const f = d.freelancers.find((x) => x.id === session.id);
     wantsPush = !!(f && f.wantsPushNotifications);
   }
-  const mainHtml = noSidebars
+  const NF = mode.isNetfree();
+  const siteName = NF ? mode.brandName() : "SheCan";
+  const mainHtmlRaw = noSidebars
     ? `${flashHtml(query)}${body}`
     : `<div class="page-with-sidebars"><div class="main-col">${flashHtml(query)}${body}</div>${sidebarColumnsHtml(d)}</div>`;
+  const mainHtml = NF ? mode.sanitizeHtml(mainHtmlRaw) : mainHtmlRaw;
   return `<!doctype html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${esc(title)} | SheCan</title>
-${searchEngineVisible ? "" : '<meta name="robots" content="noindex, nofollow" />'}
+<title>${esc(title)} | ${esc(siteName)}</title>
+${(NF ? mode.indexable() : searchEngineVisible) ? "" : '<meta name="robots" content="noindex, nofollow" />'}
 <meta name="description" content="${esc(metaDescription)}" />
 ${canonicalUrl ? `<link rel="canonical" href="${esc(canonicalUrl)}" />` : ""}
-<meta property="og:site_name" content="SheCan" />
+<meta property="og:site_name" content="${esc(siteName)}" />
 <meta property="og:type" content="website" />
 <meta property="og:locale" content="he_IL" />
-<meta property="og:title" content="${esc(title)} | SheCan" />
+<meta property="og:title" content="${esc(title)} | ${esc(siteName)}" />
 <meta property="og:description" content="${esc(metaDescription)}" />
 ${canonicalUrl ? `<meta property="og:url" content="${esc(canonicalUrl)}" />` : ""}
 ${ogImage ? `<meta property="og:image" content="${esc(ogImage)}" />` : ""}
 <meta name="twitter:card" content="${ogImage ? "summary_large_image" : "summary"}" />
-<meta name="twitter:title" content="${esc(title)} | SheCan" />
+<meta name="twitter:title" content="${esc(title)} | ${esc(siteName)}" />
 <meta name="twitter:description" content="${esc(metaDescription)}" />
 ${ogImage ? `<meta name="twitter:image" content="${esc(ogImage)}" />` : ""}
 ${jsonLdScriptHtml(jsonLd)}
@@ -1327,7 +1398,7 @@ ${jsonLdScriptHtml(jsonLd)}
 <!-- Installable-app (PWA) support: manifest + icons + iOS-specific meta tags (iOS Safari
      ignores the manifest for some of this and needs its own tags to behave like an app when
      added to the home screen). -->
-<link rel="manifest" href="/manifest.json" />
+${NF ? "" : '<link rel="manifest" href="/manifest.json" />'}
 <!-- Tells the browser this site is light-only, so Android Chrome/Samsung Internet's automatic
      "force dark" mode doesn't try to auto-invert colors on unstyled/gap areas (a very common
      cause of light backgrounds - especially in the corner gaps around a border-radius photo -
@@ -1338,7 +1409,7 @@ ${jsonLdScriptHtml(jsonLd)}
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<meta name="apple-mobile-web-app-title" content="SheCan" />
+<meta name="apple-mobile-web-app-title" content="${esc(siteName)}" />
 <style>${CSS}</style>
 ${d.settings.siteBackgroundImageDataUri ? `<style>body{background-image:url('${d.settings.siteBackgroundImageDataUri}');background-size:cover;background-position:top center;background-repeat:no-repeat;background-attachment:fixed;}</style>` : ""}
 </head>
@@ -1356,8 +1427,8 @@ ${footer()}
   <img id="scLightboxImg" src="" alt="" />
   <button type="button" class="sc-lightbox-nav sc-lightbox-next" id="scLightboxNext" onclick="scLightboxStep(event,-1)" style="display:none;" aria-label="התמונה הבאה">‹</button>
 </div>
-${statusRailHtml(d)}
-<div class="sc-status-viewer-overlay" id="scStatusViewer" onclick="scCloseStatusViewer(event)" role="dialog" aria-label="צפייה בסטטוס" aria-modal="true">
+${NF ? "" : statusRailHtml(d)}
+${NF ? "" : `<div class="sc-status-viewer-overlay" id="scStatusViewer" onclick="scCloseStatusViewer(event)" role="dialog" aria-label="צפייה בסטטוס" aria-modal="true">
   <button type="button" class="sc-status-viewer-close" onclick="event.stopPropagation();scCloseStatusViewerBtn();" aria-label="סגירה">✕</button>
   <button type="button" class="sc-status-viewer-nav sc-status-viewer-prev" id="scStatusViewerPrev" onclick="event.stopPropagation();scStatusViewerStep(1);" style="display:none;" aria-label="הקודם">›</button>
   <div id="scStatusViewerMedia" onclick="event.stopPropagation();"></div>
@@ -1368,7 +1439,7 @@ ${statusRailHtml(d)}
     <button type="button" id="scStatusViewerShareBtn" class="btn btn-small btn-outline" onclick="scShareCommunityItem(this)">שיתוף</button>
     <a id="scStatusViewerProfileLink" href="#" class="btn btn-small">למעבר לפרופיל שלה</a>
   </div>
-</div>
+</div>`}
 <script>
 // ---- Make error messages impossible to miss: scroll straight to the error banner and give
 // it a brief attention "shake" on load - important on long forms (like the freelancer signup)
@@ -1948,7 +2019,7 @@ document.addEventListener("DOMContentLoaded", scSetupDealBadges);
 
 // ---- Installable app (PWA): register the service worker on every page so the site becomes
 // installable and can receive push messages even when no tab is open. ----
-if ("serviceWorker" in navigator) {
+if (!${JSON.stringify(NF)} && "serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(function(){});
 }
 
@@ -2904,9 +2975,13 @@ function scArenaCopyLink(id, btn){
     <a href="/accessibility" class="sc-a11y-row-btn" style="display:block;text-align:center;text-decoration:none;">הצהרת נגישות</a>
   </div>
 </div>
-<div class="sc-support-widget">
-  <a href="/support" class="sc-support-widget-btn"><span aria-hidden="true">💬</span><span>לתמיכה לחצי</span></a>
+<div class="sc-signature" aria-hidden="true">ספיר בריל</div>
+${NF ? "" : `<div class="sc-support-widget">
+  <a href="/support" class="sc-support-widget-btn" aria-label="לתמיכה לחצי כאן"><span class="sc-support-icon" aria-hidden="true">🎧</span><span class="sc-support-label">לתמיכה לחצי כאן</span></a>
 </div>
+<script>
+(function(){ setTimeout(function(){ var w=document.querySelector(".sc-support-widget"); if(w) w.classList.add("sc-support-collapsed"); }, 6000); })();
+</script>`}
 <script>
 /* סיבוב מודעות בצדדים - מציג כל פעם "עמוד" של מודעות שנכנס בגובה המסך, ומחליף כל כמה שניות */
 (function(){

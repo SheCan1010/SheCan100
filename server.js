@@ -1635,7 +1635,7 @@ function freelancerCard(f, d, opts = {}) {
   // on the regular grid card, per the redesign request.
   const badges = [];
   if (f.availableNow) badges.push(`<span class="badge badge-available">🟢 זמינה כרגע</span>`);
-  if (f.isLeadingBusiness) badges.push(`<span class="badge badge-leading">👑 עסק מוביל</span>`);
+  if (f.isLeadingBusiness) badges.push(`<span class="badge badge-leading">👑 נותנת חסות</span>`);
   if (f.tier === "premium") badges.push(`<span class="badge">מומלצת</span>`);
   if (hasVerifiedDeal(d, f.id)) badges.push(`<span class="badge badge-verified" title="${esc(VERIFIED_DEAL_BADGE_TITLE)}">✅ הטבה מאומתת</span>`);
   const cardClass = "card" + (f.isLeadingBusiness ? " card-leading" : "") + (isFreelancerCurrentlyAdvertised(f) ? " card-ad" : "");
@@ -1824,7 +1824,7 @@ function customerRacePrizeSponsorHtml(d, i) {
 // נשלח אוטומטית (פוש אם יש, אחרת מייל) לעצמאית ברגע שהמודעה שלה מופעלת מהניהול - גם כפרס מרוץ
 // ההפניות (until = תאריך תפוגה) וגם כהפעלה ידנית רגילה.
 // תג המודעה: מודעה שהגיעה מפרס מרוץ ההפניות (adSource === "race") מקבלת תג "נותנת חסות"
-function adBadgeLabel(f) { return f && f.adSource === "race" ? "📣 נותנת חסות" : "📣 מודעה"; }
+function adBadgeLabel(f) { return f && f.adSource === "race" ? "📣 עסק מוביל" : "📣 מודעה"; }
 function notifyAdActivated(f, { until, businessName, prizeLabel } = {}) {
   const name = businessName || f.businessName || f.name || "";
   const untilLine = until ? `המודעה תהיה פעילה עד ${until}.` : "המודעה פעילה ותישאר באתר עד שנעדכן אותך אחרת.";
@@ -1992,8 +1992,23 @@ function supportKeyReadOnly(req, ctx) {
 // laptop without remembering to turn it off, she still stops showing as online after a short
 // while. 90s (vs. e.g. 20s) gives a little slack for a slow tick or a brief tab-switch without
 // flickering the asker's "🟢 online" banner off and back on.
-function isAdminOnline(d) {
+// כיבוי אוטומטי יומי (2026-10-10, לפי בקשה): השירות נכבה מעצמו ב-16:00 (שעון ישראל, ניתן לשינוי
+// ב-d.settings.supportAutoOffHour) אלא אם כן ספיר הדליקה אותו ידנית *אחרי* אותה שעה - הדלקה
+// אחרי 16:00 מחזיקה עד ה-16:00 הבא. כלומר: ברירת המחדל אחרי 16:00 היא כבוי.
+function supportToggleStillValid(d) {
   if (!d.settings.adminSupportOnline) return false;
+  const hour = Number.isFinite(Number(d.settings.supportAutoOffHour)) ? Number(d.settings.supportAutoOffHour) : 16;
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
+  const hh = Number(parts.find((p) => p.type === "hour").value) % 24;
+  const mm = Number(parts.find((p) => p.type === "minute").value);
+  const minutesSinceCutoff = (((hh - hour) * 60 + mm) % 1440 + 1440) % 1440;
+  const lastCutoff = Date.now() - minutesSinceCutoff * 60 * 1000;
+  const onSince = d.settings.adminSupportOnSince ? new Date(d.settings.adminSupportOnSince).getTime() : 0;
+  return onSince >= lastCutoff;
+}
+
+function isAdminOnline(d) {
+  if (!supportToggleStillValid(d)) return false;
   const at = d.settings.adminSupportActiveAt;
   if (!at) return false;
   return Date.now() - new Date(at).getTime() < 90 * 1000;
@@ -2448,23 +2463,22 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const endedPrizes = customerRacePrizes(d);
   const endedPrizeIcons = ["🥇", "🥈", "🥉", "🎁"];
   const homeRaceEndedHtml = `
-      <div style="margin-top:24px;max-width:560px;margin-inline:auto;">
-        <section class="panel race-panel" id="scCustomerRaceSection" style="text-align:center;">
-          <h3 style="margin:0 0 6px;">🏁 מירוץ הלקוחות</h3>
-          <p style="font-weight:800;font-size:19px;color:#7C1743;margin:4px 0 10px;">מירוץ מס' ${esc(String(endedRaceNumber))} הסתיים! 🎉</p>
-          <p style="margin:0 0 8px;font-weight:700;">יש לנו זוכות ב:</p>
-          <div style="display:flex;flex-direction:column;gap:6px;align-items:center;margin-bottom:10px;">
-            ${endedPrizes.map((pz, i) => `<div style="font-size:15px;">${endedPrizeIcons[i] || "🎁"} <strong>${esc(pz)}</strong>${customerRacePrizeSponsorHtml(d, i)}</div>`).join("")}
+      <div style="margin-top:16px;max-width:420px;margin-inline:auto;">
+        <section class="panel race-panel" id="scCustomerRaceSection" style="text-align:center;padding:12px 16px;border:2px solid #A6265B;background:linear-gradient(180deg,#fff8fb,#fbeef3);box-shadow:0 3px 14px rgba(166,38,91,.14);">
+          <p style="font-weight:900;font-size:18px;color:#7C1743;margin:0 0 2px;">🏁 מירוץ הלקוחות - מירוץ מס' ${esc(String(endedRaceNumber))} הסתיים! 🎉</p>
+          <p style="margin:0 0 6px;font-weight:700;font-size:14px;">יש לנו זוכות ב:</p>
+          <div style="display:flex;flex-direction:column;gap:3px;align-items:center;">
+            ${endedPrizes.map((pz, i) => `<div style="font-size:14px;line-height:1.5;">${endedPrizeIcons[i] || "🎁"} <strong>${esc(pz)}</strong>${customerRacePrizeSponsorHtml(d, i)}</div>`).join("")}
           </div>
         </section>
       </div>`;
 
   const body = `
       ${currentStoryFreelancer ? `
-      <a href="/stories/${currentStory.id}" class="story-of-week-banner">📖 השבוע מככבת בסיפור <strong>${esc(currentStoryFreelancer.businessName || currentStoryFreelancer.name)}</strong> - בואי לצפות בסיפור שלה</a>
+      <a href="/stories/${currentStory.id}" class="story-of-week-banner">📖 השבוע מככבת בסיפור <strong>${esc(storyOwnerLabel(currentStoryFreelancer))}</strong> - בואי לצפות בסיפור שלה</a>
       <div id="scStoryNotice" class="story-notice" data-story-id="${currentStory.id}" style="display:none;">
         <button type="button" id="scStoryNoticeClose" class="story-notice-close" aria-label="סגירה">✕</button>
-        <p class="story-notice-text">סיפור השבוע התעדכן והשבוע הסיפור של <strong>${esc(currentStoryFreelancer.businessName || currentStoryFreelancer.name)}</strong> מופיע.</p>
+        <p class="story-notice-text">סיפור השבוע התעדכן והשבוע הסיפור של <strong>${esc(storyOwnerLabel(currentStoryFreelancer))}</strong> מופיע.</p>
         <a href="/stories/${currentStory.id}" class="story-notice-link">לקריאת הסיפור ←</a>
       </div>
       <script>
@@ -2494,9 +2508,6 @@ route("GET", "/", async (req, res, params, query, ctx) => {
       <div class="weekly-tip">
         <span class="weekly-tip-kicker">From the Pros | טיפ שבועי מהמומחית</span>
         <p class="weekly-tip-quote">${esc(weekly.text)}</p>
-        <button type="button" class="weekly-tip-like" id="scWeeklyLike" data-like-key="${esc(weeklyLikeKey)}" onclick="scLikeWeeklyQuote(this)" aria-label="סמני לייק למשפט השבוע">
-          <span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${weeklyLikeCount}</span>
-        </button>
         ${weekly.freelancer ? `
         <a class="weekly-tip-attr" href="/freelancer/${weekly.freelancer.id}">${esc(weekly.freelancer.businessName || weekly.freelancer.name)} | ${esc(subcatName(d, weekly.freelancer.categoryId, weekly.freelancer.subcategoryId) || catName(d, weekly.freelancer.categoryId))}</a>
         ` : `<a class="weekly-tip-btn" href="/arena">מעבר לזירה</a>`}
@@ -2979,7 +2990,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
 
   const heroBadges = [
     f.availableNow ? `<span class="badge badge-available">🟢 זמינה כרגע</span>` : "",
-    f.isLeadingBusiness ? `<span class="badge badge-leading">👑 עסק מוביל</span>` : "",
+    f.isLeadingBusiness ? `<span class="badge badge-leading">👑 נותנת חסות</span>` : "",
     isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">${adBadgeLabel(f)}</span>` : "",
     f.tier === "premium" ? `<span class="badge">מומלצת</span>` : "",
     f.offersOnline ? `<span class="badge badge-outline">💻 שירות אונליין</span>` : "",
@@ -3608,9 +3619,16 @@ route("GET", "/magazine/download/:slug", async (req, res, params, query, ctx) =>
 
 // Builds the display pieces (title/date/Q&A/comments) shared between the /stories index
 // (current featured story) and a story's own permalink page.
+// שם העסק + (שם העצמאית ושם המשפחה) בסוגריים - מוצג בכל מקום שמציגים סיפור (לפי בקשה 2026-10-10).
+function storyOwnerLabel(f) {
+  if (!f) return "";
+  const b = (f.businessName || "").trim(), n = (f.name || "").trim();
+  return (b && n && b !== n) ? `${b} (${n})` : (b || n);
+}
+
 function storyDetailHtml(s, d) {
   const f = d.freelancers.find((x) => x.id === s.freelancerId);
-  const title = s.title || (f ? `הסיפור של ${f.businessName || f.name}` : "סיפור השראה");
+  const title = s.title || (f ? `הסיפור של ${storyOwnerLabel(f)}` : "סיפור השראה");
   // The date shown must reflect when the story actually went LIVE on /stories (s.featuredAt,
   // set the moment getCurrentStory() first picks it as the current story - see server.js
   // rotation logic above) - NOT when it was written/approved, which can be well before its
@@ -3632,7 +3650,8 @@ function storyDetailHtml(s, d) {
         <span class="story-like-icon">🤍</span><span class="story-like-count">${s.likeCount || 0}</span>
       </button>
     </div>`;
-  return { f, title, dateStr, qaHtml, commentsHtml, likeHtml };
+  const bylineHtml = f ? `<p class="muted" style="text-align:center;margin:0 0 10px;font-weight:700;">${esc(storyOwnerLabel(f))}</p>` : "";
+  return { f, title, dateStr, qaHtml, commentsHtml, likeHtml, bylineHtml };
 }
 
 route("GET", "/stories", async (req, res, params, query, ctx) => {
@@ -3650,17 +3669,18 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
 
   let currentHtml = `<p class="muted" style="text-align:center;">הסיפור הראשון בדרך - חכי בסבלנות.</p>`;
   if (current) {
-    const { f, title, dateStr, qaHtml, commentsHtml, likeHtml } = storyDetailHtml(current, d);
+    const { f, title, dateStr, qaHtml, commentsHtml, likeHtml, bylineHtml } = storyDetailHtml(current, d);
     const nextRotationLabel = nextStoryRotationLabel(d);
     currentHtml = `
     <div class="panel">
       <span class="badge">הסיפור המוצג עכשיו</span>
       ${current.photoDataUri ? `<img src="${current.photoDataUri}" alt="" style="width:100%;max-height:320px;object-fit:cover;border-radius:10px;margin:10px 0;" />` : ""}
       <h3>${esc(title)}</h3>
+      ${bylineHtml}
       <p class="muted">${dateStr}</p>
       ${qaHtml}
       ${likeHtml}
-      ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(f.businessName || f.name)}</a>` : ""}
+      ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(storyOwnerLabel(f))}</a>` : ""}
       ${nextRotationLabel ? `<p class="muted" style="font-size:11px;text-align:center;margin-top:16px;">הסיפור הבא יתעדכן ב-${esc(nextRotationLabel)}</p>` : ""}
       <h4 style="margin-top:24px;">תגובות</h4>
       ${commentsHtml}
@@ -3677,7 +3697,7 @@ route("GET", "/stories", async (req, res, params, query, ctx) => {
     ? (previousStories.length
         ? `<div class="grid">${previousStories.map((s) => {
             const f = d.freelancers.find((x) => x.id === s.freelancerId);
-            const title = s.title || (f ? `הסיפור של ${f.businessName || f.name}` : "סיפור השראה");
+            const title = s.title || (f ? `הסיפור של ${storyOwnerLabel(f)}` : "סיפור השראה");
             return `<div class="card"><div class="card-photo">📖</div><div class="card-body"><h3>${esc(title)}</h3><a class="btn btn-small" style="margin-top:8px;text-align:center;" href="/stories/${s.id}">לקריאת הסיפור</a></div></div>`;
           }).join("")}</div>`
         : `<p class="muted" style="text-align:center;">עוד אין סיפורים קודמים.</p>`)
@@ -3710,16 +3730,17 @@ route("GET", "/stories/:id", async (req, res, params, query, ctx) => {
   // slowness/OOM issues.
   saveSiteStatsThrottled();
   const isCustomer = requireRole(ctx.session, "customer");
-  const { f, title, dateStr, qaHtml, commentsHtml, likeHtml } = storyDetailHtml(s, d);
+  const { f, title, dateStr, qaHtml, commentsHtml, likeHtml, bylineHtml } = storyDetailHtml(s, d);
   const nextRotationLabel = nextStoryRotationLabel(d);
   const body = `
   <div class="panel">
     ${s.photoDataUri ? `<img src="${s.photoDataUri}" alt="" style="width:100%;max-height:320px;object-fit:cover;border-radius:10px;margin-bottom:14px;" />` : ""}
     <h1 class="section-title" style="margin-top:0;">${esc(title)}</h1>
+    ${bylineHtml}
     <p class="muted" style="text-align:center;">${dateStr}</p>
     ${qaHtml}
     ${likeHtml}
-    ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(f.businessName || f.name)}</a>` : ""}
+    ${f ? `<a class="btn btn-small" style="margin-top:10px;" href="/freelancer/${f.id}">לכרטיסייה של ${esc(storyOwnerLabel(f))}</a>` : ""}
     ${nextRotationLabel ? `<p class="muted" style="font-size:11px;text-align:center;margin-top:16px;">הסיפור הבא באתר יתעדכן ב-${esc(nextRotationLabel)}</p>` : ""}
     <h4 style="margin-top:24px;">תגובות</h4>
     ${commentsHtml}
@@ -6125,7 +6146,7 @@ function founderPricingBlockHtml(d) {
   </div>`;
 }
 
-function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameDatalist, storyQuestionsJoin, prefill }) {
+function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameDatalist, storyQuestionsJoin, prefill, influencerCodePrefill }) {
   const p = prefill || {};
   const isRetry = !!prefill;
   const catOptions = d.categories.map((c) => `<option value="${c.id}" ${p.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
@@ -6272,6 +6293,12 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       `}
     </div>
 
+    <div class="referral-source-choice" style="margin-top:14px;border:2px solid var(--rose);border-radius:12px;padding:12px 14px;background:var(--white);">
+      <label style="font-weight:800;font-size:15px;">🎟️ הגעת דרך משפיענית או מנהלת קבוצה? כתבי כאן את קוד הקופון שלה
+        <input type="text" name="influencerCode" value="${esc(influencerCodePrefill || "")}" dir="ltr" autocomplete="off" maxlength="30" placeholder="למשל: SC7K2PQ" style="margin-top:6px;" /></label>
+      <p class="muted" style="font-size:13.5px;margin:6px 0 0;"><strong>חשוב לנו מאוד:</strong> אם הגעת אלינו דרך משפיענית (סטטוס, אינסטגרם או קבוצת צ'אט) - נא לכתוב את קוד הקופון האישי שלה, כדי שההפניה תירשם על שמה. אם לא הגעת דרך אף אחת - אפשר להשאיר ריק.</p>
+    </div>
+
     <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap;">
       <button class="btn btn-outline" style="flex:1;min-width:180px;" type="button" onclick="scShowJoinPreview()">תצוגה מוקדמת 👀</button>
       <button class="btn" style="flex:1;min-width:180px;" type="submit">${charging ? "המשך לתשלום" : "הרשמה"}</button>
@@ -6302,7 +6329,8 @@ function joinFormRenderContext(d, body, req) {
   const businessNameDatalist = d.freelancers.filter((x) => x.status === "approved")
     .map((x) => `<option value="${esc(x.businessName || x.name)}"></option>`).join("");
   const storyQuestionsJoin = d.settings.storyQuestions || [];
-  return { charging: d.settings.chargingEnabled, refId, referrerFreelancer, businessNameDatalist, storyQuestionsJoin };
+  const influencerCodePrefill = (body ? (body.get("influencerCode") || body.get("c")) : "") || "";
+  return { charging: d.settings.chargingEnabled, refId, referrerFreelancer, businessNameDatalist, storyQuestionsJoin, influencerCodePrefill };
 }
 
 // Auto-links a matching CUSTOMER account to a freshly-created freelancer, so the "מעבר למצב
@@ -6344,7 +6372,7 @@ route("GET", "/join", async (req, res, params, query, ctx) => {
   const d = db.load();
   // A visit via another business's referral link (/join?ref=<freelancerId>) is only trusted
   // here as a query param - see joinFormRenderContext for the equivalent lookup from a POST body.
-  const ctxData = joinFormRenderContext(d, { get: (k) => (k === "ref" ? query.get("ref") : "") }, req);
+  const ctxData = joinFormRenderContext(d, { get: (k) => (k === "ref" ? query.get("ref") : k === "c" ? query.get("c") : "") }, req);
   const body = joinFormBody(d, { ...ctxData, prefill: null });
   sendHtml(res, 200, page({ title: "הצטרפות כעצמאית", session: ctx.session, body, query }));
 });
@@ -6373,7 +6401,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
       offersHomeVisit: body.get("offersHomeVisit") === "1", instagram: body.get("instagram"),
       portfolioUrl: body.get("portfolioUrl"), description: body.get("description"), dealText: body.get("dealText"),
       tier: body.get("tier"), wantsPushNotifications: body.get("wantsPushNotifications") === "1",
-      vipCode: body.get("vipCode"),
+      vipCode: body.get("vipCode"), influencerCode: body.get("influencerCode"),
       publicListingConsent: body.get("publicListingConsent") === "1",
       howHeardChoice: body.get("howHeardChoice"), howHeardBusinessName: body.get("howHeardBusinessName"),
       // Preserve whatever she'd already typed into the inspiration-story questions too, so a
@@ -6424,6 +6452,13 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     vipCoupon = (d.vipCoupons || []).find((c) => (c.code || "").toUpperCase() === rawVipCode);
     if (!vipCoupon) return rerenderWithError(d, "קוד ה-VIP לא נמצא - בדקי שהקלדת אותו נכון, או השאירי את השדה ריק.");
     if (vipCoupon.redeemedByFreelancerId) return rerenderWithError(d, "קוד ה-VIP הזה כבר מומש בעבר ולא ניתן לשימוש חוזר.");
+  }
+  // קוד קופון של משפיענית (אופציונלי) - אם הוקלד קוד שלא קיים, מחזירים שגיאה כדי שלא תפסיד את
+  // הקרדיט בטעות; ריק = בסדר.
+  const rawInfluencerCode = (body.get("influencerCode") || "").trim();
+  const influencerRef = rawInfluencerCode ? infFindByCode(d, rawInfluencerCode) : null;
+  if (rawInfluencerCode && !influencerRef) {
+    return rerenderWithError(d, "קוד הקופון של המשפיענית לא נמצא - בדקי שהקלדת אותו נכון, או השאירי את השדה ריק.");
   }
   const id = db.nextId("freelancer");
   const charging = d.settings.chargingEnabled;
@@ -6480,9 +6515,17 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     isLeadingBusiness: false, isAdvertised: false, isAdvertisedUntil: null, adPaymentStatus: "none",
     viewCount: 0, couponRevealCount: 0, pushSubscriptions: [],
     referredByFreelancerId, welcomePopupSeen: false,
+    referredByInfluencerId: influencerRef ? influencerRef.id : null, influencerCodeUsed: influencerRef ? influencerRef.couponCode : "",
     status: "pending", createdAt: new Date().toISOString(),
     siteVisitCount: 0,
   });
+  if (influencerRef) {
+    notify(influencerRef, {
+      pushTitle: "עצמאית חדשה נרשמה עם הקוד שלך! 🎉", pushBody: body.get("businessName") || body.get("name") || "", url: "/influencer-dashboard",
+      emailSubject: "עצמאית חדשה נרשמה עם קוד הקופון שלך ב-SheCan",
+      emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(influencerRef.name)},</p><p>${esc(body.get("businessName") || body.get("name") || "עצמאית")} נרשמה עכשיו עם קוד הקופון שלך 🎉 - היא תופיע בטבלה באזור האישי שלך.</p></div>`,
+    }).catch(() => {});
+  }
   // נועלת את קוד ה-VIP לצמיתות על הפרופיל החדש הזה - ר' ההערה המלאה למעלה ליד הבדיקה.
   if (vipCoupon) {
     vipCoupon.redeemedByFreelancerId = id;
@@ -6577,6 +6620,7 @@ function loginFormBody({ next, roleParam, emailPrefill }) {
     <select name="role">
       <option value="customer" ${roleParam === "customer" ? "selected" : ""}>לקוחה</option>
       <option value="freelancer" ${roleParam === "freelancer" ? "selected" : ""}>עצמאית</option>
+      <option value="influencer" ${roleParam === "influencer" ? "selected" : ""}>משפיענית</option>
       <option value="admin" ${roleParam === "admin" ? "selected" : ""}>מנהלת</option>
     </select></label>
     <label>מייל<input type="email" name="email" value="${esc(emailPrefill || "")}" required /></label>
@@ -6605,6 +6649,7 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
   let user, list;
   if (role === "customer") list = d.customers;
   else if (role === "freelancer") list = d.freelancers;
+  else if (role === "influencer") list = infAll(d).filter((i) => i.active !== false);
   else list = d.admins;
   user = list.find((u) => u.email === email);
   const rerenderLoginError = (errMsg) => {
@@ -6629,7 +6674,7 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
   }
   const sid = auth.createSession(role, user.id);
   const loginCookies = role === "admin" ? sessionCookie(sid) : [sessionCookie(sid), identityCookie(role, user.id)];
-  redirect(res, next || (role === "admin" ? "/admin" : role === "freelancer" ? "/freelancer-dashboard" : "/account"), loginCookies);
+  redirect(res, next || (role === "admin" ? "/admin" : role === "freelancer" ? "/freelancer-dashboard" : role === "influencer" ? "/influencer-dashboard" : "/account"), loginCookies);
 });
 
 // ----- Forgot / reset password -----
@@ -7216,6 +7261,7 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
       </div>
     `).join("") : `<p class="muted">עוד לא כתבת לאף עצמאית - אפשר לשלוח הודעה ישירה מתוך הכרטיסייה שלה.</p>`}
   </div>
+  ${infCustomerThreadsHtml(d, customer)}
   `;
   sendHtml(res, 200, page({ title: "האזור שלי", session: ctx.session, body, query, noSidebars: true }));
 });
@@ -7385,7 +7431,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   <div class="panel">
     ${f.joinType === "founding" ? `<span class="founding-badge">מייסדת ✦</span> ` : ""}
     ${f.isLeadingBusiness ? `<span class="badge badge-leading">👑 נותנת חסות</span> ` : ""}
-    ${isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">${f.adSource === "race" ? "📣 נותנת חסות פעילה" : "📣 מודעה פעילה"}${f.isAdvertisedUntil ? ` (פרס מרוץ ההפניות, עד ${esc(f.isAdvertisedUntil)})` : ""}</span> ` : ""}
+    ${isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">${f.adSource === "race" ? "📣 עסק מוביל פעיל" : "📣 מודעה פעילה"}${f.isAdvertisedUntil ? ` (פרס מרוץ ההפניות, עד ${esc(f.isAdvertisedUntil)})` : ""}</span> ` : ""}
     <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"} · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}</span>
     ${f.paymentStatus === "pending_payment" ? `
     <form method="post" action="/freelancer-dashboard/redeem-vip-code" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
@@ -8693,6 +8739,58 @@ route("POST", "/admin/inspiration-quote/:id/reject", async (req, res, params, qu
 });
 
 // ----- Admin -----
+// ----- מיילים מוכנים לזוכות מירוץ הלקוחות (2026-10-10) -----
+// לא נשלח אוטומטית - רק טיוטה שאפשר לערוך בתוך הדף ואז לפתוח בתוכנת המייל / ב-Gmail / להעתיק,
+// ולשלוח בעצמה. כוללת מה זכתה, פרטי העצמאית הנותנת חסות לפרס ואיך אוספים אותו.
+const DEFAULT_CUSTOMER_RACE_COLLECT_TEXT = "כדי לממש את הפרס יש ליצור קשר ישירות עם נותנת החסות בפרטים שלמעלה, לתאם איתה מועד ואופן קבלה, ולציין שזכית במירוץ ההפניות של SheCan. אם יש שאלה - אפשר להשיב למייל הזה.";
+function customerRaceWinnerDraft(d, h, w) {
+  const c = d.customers.find((x) => x.id === w.customerId);
+  const to = (c && c.email) || w.email || "";
+  const first = String((c && c.name) || w.name || "").trim().split(/\s+/)[0] || "";
+  const sp = w.sponsorId ? d.freelancers.find((x) => x.id === w.sponsorId) : null;
+  const lines = [];
+  lines.push(`היי ${first},`);
+  lines.push("");
+  lines.push(`מזל טוב! 🎉 סיימת במקום ${w.place} במירוץ ההפניות מס' ${h.number} של SheCan - עם ${w.count || 0} חברות שהצטרפו דרכך.`);
+  lines.push("");
+  lines.push(`הפרס שלך: ${w.prize || ""}`);
+  if (sp) {
+    const phone = sp.phone ? String(sp.phone) : "";
+    const cityLabel = sp.cityId ? cityName(d, sp.cityId) : "";
+    lines.push("");
+    lines.push("הפרס ניתן בחסות:");
+    lines.push(`${sp.businessName || sp.name}${sp.businessName && sp.name ? ` (${sp.name})` : ""}`);
+    if (sp.categoryId) lines.push(`תחום: ${catName(d, sp.categoryId)}`);
+    if (cityLabel) lines.push(`עיר: ${cityLabel}`);
+    if (phone) lines.push(`טלפון: ${phone}${sp.hasWhatsapp ? " (גם בוואטסאפ)" : ""}`);
+    if (sp.email) lines.push(`מייל: ${sp.email}`);
+    if (sp.instagram) lines.push(`אינסטגרם: ${sp.instagram}`);
+    lines.push(`הכרטיסייה שלה ב-SheCan: https://shecan.co.il/freelancer/${sp.id}`);
+  }
+  lines.push("");
+  lines.push("איך אוספים את הפרס:");
+  lines.push((d.settings.customerRaceCollectText || "").trim() || DEFAULT_CUSTOMER_RACE_COLLECT_TEXT);
+  lines.push("");
+  lines.push("תודה שהבאת חברות לקהילה! 💛");
+  lines.push("ספיר, SheCan");
+  return { to, subject: `מזל טוב! זכית במקום ${w.place} במירוץ ההפניות של SheCan 🏆`, body: lines.join("\n") };
+}
+function customerRaceWinnerMailHtml(d, h, w) {
+  const dr = customerRaceWinnerDraft(d, h, w);
+  const uid = `wm-${h.number}-${w.place}`;
+  return `<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:700;color:#7C1743;">✉️ מייל מוכן ל${esc(w.name)}</summary>
+    <div id="${uid}" style="margin-top:6px;max-width:520px;">
+      <label style="display:block;font-size:12px;">אל<input type="text" class="wm-to" value="${esc(dr.to)}" dir="ltr" /></label>
+      <label style="display:block;font-size:12px;">נושא<input type="text" class="wm-subject" value="${esc(dr.subject)}" /></label>
+      <label style="display:block;font-size:12px;">תוכן (אפשר לערוך)<textarea class="wm-body" rows="12" style="width:100%;">${esc(dr.body)}</textarea></label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+        <button type="button" class="btn btn-small" onclick="scWinnerMail('${uid}','mailto')">פתיחה בתוכנת המייל</button>
+        <button type="button" class="btn btn-small btn-outline" onclick="scWinnerMail('${uid}','gmail')">פתיחה ב-Gmail</button>
+        <button type="button" class="btn btn-small btn-outline" onclick="scWinnerMail('${uid}','copy')">העתקת התוכן</button>
+      </div>
+    </div></details>`;
+}
+
 // ----- מצב נטפרי: פאנל ניהול (ר' mode.js) -----
 function netfreeAdminPanelHtml(d) {
   const st = d.settings;
@@ -9102,11 +9200,11 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // למעלה) - פאנל קבוע שאפשר להפעיל/לכבות ממנו בכל רגע, ובנוסף פופאפ ששואל אותה במפורש בכל
   // כניסה לעמוד הזה כל עוד השירות עדיין כבוי (לא נשאל שוב ברגע שהיא הדליקה אותו), לפי בקשה
   // מפורשת 2026-08-30 - "רק כשהוא דלוק יופיע ללקוחות שאני מחוברת".
-  const adminSupportOnlineNow = !!d.settings.adminSupportOnline;
+  const adminSupportOnlineNow = supportToggleStillValid(d);
   const supportTogglePanelHtml = `
   <div class="panel" id="admin-support-toggle-panel">
     <h3>שירות תמיכה ללקוחות 💬</h3>
-    <p class="muted">כשהשירות פעיל, לקוחות ועצמאיות שנכנסות ל"לתמיכה לחצי" רואות שאת מחוברת עכשיו ומקבלות ממך תשובה מיידית בצ'אט. כשהוא כבוי, הן משאירות הודעה ומקבלות תשובה בהמשך - גם באתר וגם במייל.</p>
+    <p class="muted">כשהשירות פעיל, לקוחות ועצמאיות שנכנסות ל"לתמיכה לחצי" רואות שאת מחוברת עכשיו ומקבלות ממך תשובה מיידית בצ'אט. כשהוא כבוי, הן משאירות הודעה ומקבלות תשובה בהמשך - גם באתר וגם במייל. <strong>השירות נכבה אוטומטית כל יום ב-16:00</strong> - אלא אם הדלקת אותו ידנית אחרי השעה הזו (אז הוא נשאר פעיל עד 16:00 הבא).</p>
     <p id="scSupportToggleStatus" style="font-weight:800;${adminSupportOnlineNow ? "color:var(--rose-dark);" : ""}">${adminSupportOnlineNow ? "🟢 השירות פעיל עכשיו" : "⚪ השירות כבוי כרגע"}</p>
     <button type="button" id="scSupportToggleBtn" class="btn btn-small${adminSupportOnlineNow ? " btn-outline" : ""}" onclick="scToggleAdminSupport(${adminSupportOnlineNow ? "false" : "true"})">${adminSupportOnlineNow ? "כיבוי שירות התמיכה" : "הפעלת שירות התמיכה"}</button>
   </div>
@@ -9970,14 +10068,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
          "התוכן השבועי" למעלה) - זה פין שמחזיק מעצמו עד תאריך שהיא בוחרת (למשל חודש שלם), לא
          רק מחזור שבועי אחד. ר' getWeeklyFeature למעלה בקובץ ל-override עצמו. -->
     <div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
-      <h4 style="margin:0 0 6px;">🏆 הכרזת מנצחת - פרסום אוטומטי כנותנת חסות</h4>
+      <h4 style="margin:0 0 6px;">🏆 הכרזת מנצחת - פרסום אוטומטי כעסק מוביל</h4>
       ${(() => {
         const currentWinner = d.settings.freelancerReferralWinnerId && d.settings.freelancerReferralWinnerUntil && israelDayKeyOffset(0) <= d.settings.freelancerReferralWinnerUntil
           ? d.freelancers.find((x) => x.id === d.settings.freelancerReferralWinnerId) : null;
         return currentWinner
-          ? `<p class="muted">מוצגת כרגע כמודעה עם תג "נותנת חסות" בכל מקום שמודעות מוצגות באתר: <strong>${esc(currentWinner.businessName || currentWinner.name)}</strong>, עד ה-${esc(d.settings.freelancerReferralWinnerUntil)}. (משפט השבוע בדף הבית לא מושפע.)</p>
+          ? `<p class="muted">מוצגת כרגע כמודעה עם תג "עסק מוביל" בכל מקום שמודעות מוצגות באתר: <strong>${esc(currentWinner.businessName || currentWinner.name)}</strong>, עד ה-${esc(d.settings.freelancerReferralWinnerUntil)}. (משפט השבוע בדף הבית לא מושפע.)</p>
              <form method="post" action="/admin/referral-settings/clear-winner" style="margin-bottom:10px;"><button class="btn btn-small btn-outline" type="submit">ביטול הפרסום</button></form>`
-          : `<p class="muted">אין כרגע מנצחת מוכרזת - כשתבחרי אחת, היא תקבל אוטומטית פרסום כמו מודעה רגילה (עם תג "נותנת חסות") עד התאריך שתקבעי, ותקבל מייל. משפט השבוע בדף הבית לא משתנה.</p>`;
+          : `<p class="muted">אין כרגע מנצחת מוכרזת - כשתבחרי אחת, היא תקבל אוטומטית פרסום כמו מודעה רגילה (עם תג "עסק מוביל") עד התאריך שתקבעי, ותקבל מייל. משפט השבוע בדף הבית לא משתנה.</p>`;
       })()}
       <form method="post" action="/admin/referral-settings/set-winner" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
         <label style="flex:2;min-width:200px;">המנצחת
@@ -9989,7 +10087,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <label style="flex:1;min-width:150px;">מוצגת עד תאריך
           <input type="date" name="until" value="${esc(israelDateKey(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))}" required />
         </label>
-        <button class="btn btn-small" type="submit">הכרזה ופרסום כנותנת חסות</button>
+        <button class="btn btn-small" type="submit">הכרזה ופרסום כעסק מוביל</button>
       </form>
     </div>
     <!-- פרס "פרסום חינם" ל-3 המקומות הראשונים במרוץ (נוסף 2026-09-09, לפי בקשה מפורשת: "מי
@@ -10039,6 +10137,8 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
       </form>
     </div>
   </div>
+
+  ${influencersAdminPanelHtml(d)}
 
   ${netfreeAdminPanelHtml(d)}
 
@@ -10111,8 +10211,32 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     ${(d.settings.customerRaceHistory || []).length ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid #eee2d8;">
       <h4 style="margin:0 0 6px;">📜 מירוצים קודמים</h4>
       <div class="table-scroll"><table class="table-simple"><tr><th>מירוץ</th><th>הסתיים</th><th>זוכות</th></tr>
-        ${(d.settings.customerRaceHistory || []).slice().reverse().map((h) => `<tr><td>מס' ${esc(String(h.number))}</td><td>${esc(new Date(h.endedAt).toLocaleDateString("he-IL"))}</td><td>${(h.winners || []).map((w) => `${w.place}. ${esc(w.name)}${(() => { const wc = d.customers.find((x) => x.id === w.customerId); const em = (wc && wc.email) || w.email || ""; return em ? ` <span dir="ltr" style="color:#7a6e63;">&lt;${esc(em)}&gt;</span>` : ""; })()} (${w.count}) - ${esc(w.prize || "")}${w.sponsorName ? ` (בחסות ${esc(w.sponsorName)})` : ""}`).join("<br>") || "-"}</td></tr>`).join("")}
+        ${(d.settings.customerRaceHistory || []).slice().reverse().map((h) => `<tr><td>מס' ${esc(String(h.number))}</td><td>${esc(new Date(h.endedAt).toLocaleDateString("he-IL"))}</td><td>${(h.winners || []).map((w) => `${w.place}. ${esc(w.name)}${(() => { const wc = d.customers.find((x) => x.id === w.customerId); const em = (wc && wc.email) || w.email || ""; return em ? ` <span dir="ltr" style="color:#7a6e63;">&lt;${esc(em)}&gt;</span>` : ""; })()} (${w.count}) - ${esc(w.prize || "")}${w.sponsorName ? ` (בחסות ${esc(w.sponsorName)})` : ""}${customerRaceWinnerMailHtml(d, h, w)}`).join("<hr style=\"border:0;border-top:1px solid #eee2d8;margin:8px 0;\">") || "-"}</td></tr>`).join("")}
       </table></div>
+      <form method="post" action="/admin/customer-race/collect-text" style="margin-top:12px;max-width:560px;">
+        <label style="font-size:13px;">הוראות איסוף שיופיעו במייל הזוכות (אם ריק - טקסט ברירת מחדל)
+          <textarea name="text" rows="3">${esc(d.settings.customerRaceCollectText || "")}</textarea></label>
+        <button class="btn btn-small" type="submit" style="margin-top:6px;">שמירת הוראות איסוף</button>
+      </form>
+      <script>
+      function scWinnerMail(uid, how) {
+        var root = document.getElementById(uid); if (!root) return;
+        var to = root.querySelector(".wm-to").value.trim();
+        var subject = root.querySelector(".wm-subject").value;
+        var body = root.querySelector(".wm-body").value;
+        if (how === "copy") {
+          var text = "אל: " + to + "\\nנושא: " + subject + "\\n\\n" + body;
+          if (navigator.clipboard) navigator.clipboard.writeText(text).then(function(){ alert("הועתק!"); });
+          else { var t = root.querySelector(".wm-body"); t.select(); document.execCommand("copy"); }
+          return;
+        }
+        if (how === "gmail") {
+          window.open("https://mail.google.com/mail/?view=cm&fs=1&to=" + encodeURIComponent(to) + "&su=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body), "_blank");
+          return;
+        }
+        window.location.href = "mailto:" + encodeURIComponent(to).replace(/%40/g, "@") + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+      }
+      </script>
     </div>` : ""}
     <!-- תיקון שיוך הפניה ידני - לפי בקשה מפורשת 2026-08-30 (לקוחה טענה שהפנתה חברות שלא נספרו).
          הסיבה הסבירה: שיוך הפניה של לקוחה תלוי לגמרי בקישור האישי ששרד עד לשליחת הטופס - בניגוד
@@ -11255,6 +11379,15 @@ route("POST", "/admin/home-race-ended", async (req, res, params, query, ctx) => 
   redirect(res, `/admin?ok=${encodeURIComponent(d.settings.homeRaceEndedMode ? "בדף הבית מוצג עכשיו 'המירוץ הסתיים'." : "דף הבית חזר להציג את בלוקי המירוצים הרגילים.")}#home-race-ended`);
 });
 
+route("POST", "/admin/customer-race/collect-text", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  d.settings.customerRaceCollectText = clip((body.get("text") || "").trim(), 1500);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הוראות האיסוף נשמרו.")}#customer-referral-race`);
+});
+
 route("POST", "/admin/customer-race/end", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -11332,8 +11465,8 @@ route("POST", "/admin/referral-settings/set-winner", async (req, res, params, qu
   f.adPaymentStatus = "paid";
   f.adSource = "race";
   db.save();
-  notifyAdActivated(f, { until, prizeLabel: "זכית במרוץ ההפניות של העצמאיות, והפרס שלך הוא פרסום באתר כנותנת חסות" });
-  redirect(res, `/admin?ok=${encodeURIComponent(`${f.businessName || f.name} מפורסמת עכשיו כנותנת חסות עד ה-${until} ונשלח לה מייל.`)}#freelancer-referral-race`);
+  notifyAdActivated(f, { until, prizeLabel: "זכית במרוץ ההפניות של העצמאיות, והפרס שלך הוא פרסום באתר כעסק מוביל" });
+  redirect(res, `/admin?ok=${encodeURIComponent(`${f.businessName || f.name} מפורסמת עכשיו כעסק מוביל עד ה-${until} ונשלח לה מייל.`)}#freelancer-referral-race`);
 });
 
 route("POST", "/admin/referral-settings/clear-winner", async (req, res, params, query, ctx) => {
@@ -11344,7 +11477,7 @@ route("POST", "/admin/referral-settings/clear-winner", async (req, res, params, 
   d.settings.freelancerReferralWinnerId = null;
   d.settings.freelancerReferralWinnerUntil = null;
   db.save();
-  redirect(res, `/admin?ok=${encodeURIComponent("הפרסום כנותנת חסות בוטל.")}#freelancer-referral-race`);
+  redirect(res, `/admin?ok=${encodeURIComponent("הפרסום כעסק מוביל בוטל.")}#freelancer-referral-race`);
 });
 
 // הענקת פרס "פרסום חינם" ל-3 המקומות הראשונות במרוץ ההפניות של העצמאיות (ר' ההערה המלאה ליד
@@ -13153,7 +13286,7 @@ route("POST", "/admin/support/toggle", async (req, res, params, query, ctx) => {
   const body = await readBody(req);
   const on = body.get("on") === "1";
   d.settings.adminSupportOnline = on;
-  if (on) d.settings.adminSupportActiveAt = new Date().toISOString();
+  if (on) { d.settings.adminSupportActiveAt = new Date().toISOString(); d.settings.adminSupportOnSince = new Date().toISOString(); }
   db.save();
   sendHtml(res, 200, JSON.stringify({ ok: true, online: isAdminOnline(d) }), { "Content-Type": "application/json; charset=utf-8" });
 });
@@ -13675,6 +13808,698 @@ route("GET", "/sitemap.xml", async (req, res, params, query, ctx) => {
   res.end(xml);
 });
 
+// ===================================================================================
+// משפיעניות (2026-10-10) - עמוד "SheCan Muses" (השם ניתן לשינוי בניהול): משפיעניות בסטטוסים +
+// מנהלות קבוצות צ'אט. לכל אחת: חשבון כניסה, קוד קופון אישי (שנכתב בהרשמת עצמאית ונספר על שמה),
+// טבלת נרשמות דרכה, תיבת הודעות מלקוחות (תגובות לסטטוסים), והעלאת סטטוסים (מאושרים ע"י ספיר).
+// העמוד הציבורי נשלט ע"י d.settings.influencersEnabled (ברירת מחדל: כבוי).
+// ===================================================================================
+const INF_STATUS_TTL_MS = 24 * 60 * 60 * 1000;
+const INF_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function infPageName(d) { return (d.settings.influencersPageName || "").trim() || "SheCan Muses"; }
+function infAll(d) { if (!Array.isArray(d.influencers)) d.influencers = []; return d.influencers; }
+function infStatusesAll(d) { if (!Array.isArray(d.influencerStatuses)) d.influencerStatuses = []; return d.influencerStatuses; }
+function infMessagesAll(d) { if (!Array.isArray(d.influencerMessages)) d.influencerMessages = []; return d.influencerMessages; }
+function infNormalizeCode(c) { return String(c || "").trim().toUpperCase().replace(/\s+/g, ""); }
+function infFindByCode(d, code) {
+  const c = infNormalizeCode(code);
+  if (!c) return null;
+  return infAll(d).find((i) => i.active !== false && infNormalizeCode(i.couponCode) === c) || null;
+}
+function infGenerateCode(d) {
+  const existing = new Set(infAll(d).map((i) => infNormalizeCode(i.couponCode)));
+  let code;
+  do {
+    code = "SC";
+    for (let k = 0; k < 5; k++) code += INF_CODE_ALPHABET[crypto.randomInt(INF_CODE_ALPHABET.length)];
+  } while (existing.has(code));
+  return code;
+}
+function infRegistered(d, inf) { return d.freelancers.filter((f) => f.referredByInfluencerId === inf.id); }
+function infActiveStatuses(d, infId) {
+  const now = Date.now();
+  return infStatusesAll(d)
+    .filter((s) => s.influencerId === infId && s.status === "approved" && new Date(s.expiresAt).getTime() > now)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+}
+function infPruneStatuses(d) {
+  const now = Date.now();
+  const list = infStatusesAll(d);
+  const kept = [];
+  let removed = false;
+  list.forEach((s) => {
+    // סטטוס שפג תוקפו נמחק (כולל הקובץ); סטטוס שממתין לאישור נשמר עד שיאושר/יידחה.
+    if (s.status === "pending" || new Date(s.expiresAt).getTime() > now) { kept.push(s); return; }
+    removed = true;
+    const filename = (s.url || "").split("/").pop();
+    if (filename) { try { fs.unlinkSync(path.join(UPLOADS_DIR, filename)); } catch (e) {} }
+  });
+  if (removed) d.influencerStatuses = kept;
+  return removed;
+}
+function infInitial(inf) { return String(inf.name || "?").trim().charAt(0) || "?"; }
+function infAvatarHtml(inf, size) {
+  const px = size || 64;
+  if (inf.photo) return `<div class="inf-avatar" style="width:${px}px;height:${px}px;background-image:url('${esc(inf.photo)}');"></div>`;
+  return `<div class="inf-avatar inf-avatar-initial" style="width:${px}px;height:${px}px;font-size:${Math.round(px * 0.42)}px;">${esc(infInitial(inf))}</div>`;
+}
+function infFieldLabel(d, inf) { return inf.categoryId ? catName(d, inf.categoryId) : "כללי"; }
+function infRanking(d) {
+  return infAll(d)
+    .filter((i) => i.active !== false && i.kind === "status")
+    .map((i) => ({ inf: i, count: infRegistered(d, i).length }))
+    .sort((a, b) => b.count - a.count);
+}
+
+const INF_CSS = `<style>
+.inf-avatar{border-radius:50%;background-size:cover;background-position:center;flex-shrink:0;border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.15);}
+.inf-avatar-initial{display:flex;align-items:center;justify-content:center;background:var(--rose);color:#fff;font-weight:800;}
+.inf-ring{padding:3px;border-radius:50%;background:linear-gradient(45deg,#A6265B,#E8A87C);cursor:pointer;display:inline-block;line-height:0;border:0;}
+.inf-ring-none{background:#e4dad0;cursor:default;}
+.inf-top-rail{display:flex;gap:14px;overflow-x:auto;padding:6px 4px 10px;justify-content:center;flex-wrap:wrap;}
+.inf-top-item{display:flex;flex-direction:column;align-items:center;width:92px;text-align:center;font-size:13px;}
+.inf-top-rank{font-weight:900;color:#7C1743;font-size:15px;}
+.inf-chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:12px 0 18px;}
+.inf-chip{border:1px solid var(--rose);background:var(--white);border-radius:999px;padding:5px 14px;cursor:pointer;font:inherit;font-size:14px;}
+.inf-chip.active{background:var(--rose-dark);color:#fff;border-color:var(--rose-dark);}
+.inf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;}
+.inf-card{background:var(--white);border-radius:14px;padding:14px;box-shadow:0 2px 10px rgba(0,0,0,.07);display:flex;flex-direction:column;gap:8px;align-items:center;text-align:center;}
+.inf-card h3{margin:0;font-size:18px;}
+.inf-card .muted{font-size:13px;margin:0;}
+.inf-group-card{flex-direction:row;text-align:right;align-items:flex-start;}
+.inf-group-card .inf-body{flex:1;display:flex;flex-direction:column;gap:4px;align-items:flex-start;}
+.inf-section-nav{display:flex;gap:10px;justify-content:center;margin:12px 0;flex-wrap:wrap;}
+.inf-viewer{position:fixed;inset:0;background:rgba(20,15,15,.88);z-index:900;display:none;align-items:center;justify-content:center;flex-direction:column;padding:12px;}
+.inf-viewer.open{display:flex;}
+.inf-viewer-media{max-width:min(92vw,460px);max-height:62vh;display:flex;align-items:center;justify-content:center;}
+.inf-viewer-media img,.inf-viewer-media video{max-width:100%;max-height:62vh;border-radius:12px;}
+.inf-viewer-text{background:linear-gradient(135deg,#A6265B,#7C1743);color:#fff;padding:28px;border-radius:14px;font-size:22px;text-align:center;min-width:240px;white-space:pre-wrap;}
+.inf-viewer-bar{color:#fff;margin-bottom:10px;font-weight:800;display:flex;gap:10px;align-items:center;}
+.inf-viewer-nav{position:absolute;top:50%;background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:50%;width:40px;height:40px;font-size:22px;cursor:pointer;}
+.inf-viewer-reply{margin-top:12px;width:min(92vw,460px);}
+.inf-viewer-reply textarea{min-height:60px;}
+</style>`;
+
+// ----- עמוד ציבורי -----
+route("GET", "/influencers", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const isAdmin = requireRole(ctx.session, "admin");
+  if (!d.settings.influencersEnabled && !isAdmin) {
+    return sendHtml(res, 404, page({ title: "לא נמצא", session: ctx.session, body: `<p>הדף הזה עדיין לא נפתח - בואי נחזור <a href="/">הביתה</a> ❤️</p>` }));
+  }
+  if (infPruneStatuses(d)) db.save();
+  const pageName = infPageName(d);
+  const isCustomer = requireRole(ctx.session, "customer");
+  const all = infAll(d).filter((i) => i.active !== false);
+  const statusInfs = all.filter((i) => i.kind === "status");
+  const chatInfs = all.filter((i) => i.kind === "chat");
+  const usedCats = Array.from(new Set(all.map((i) => i.categoryId || "")));
+  const catChips = [`<button type="button" class="inf-chip active" data-cat="*" onclick="scInfFilter(this)">הכול</button>`]
+    .concat(usedCats.filter((c) => c).map((c) => `<button type="button" class="inf-chip" data-cat="${esc(c)}" onclick="scInfFilter(this)">${esc(categoryIcon(catName(d, c)))} ${esc(catName(d, c))}</button>`))
+    .concat(usedCats.includes("") ? [`<button type="button" class="inf-chip" data-cat="general" onclick="scInfFilter(this)">כללי</button>`] : []).join("");
+  const statusData = {};
+  statusInfs.forEach((i) => {
+    statusData[i.id] = {
+      name: i.name,
+      items: infActiveStatuses(d, i.id).map((s) => ({ id: s.id, type: s.type, url: s.url || "", text: s.text || "" })),
+    };
+  });
+  const ringHtml = (inf) => {
+    const has = statusData[inf.id] && statusData[inf.id].items.length;
+    return has
+      ? `<button type="button" class="inf-ring" onclick="scInfOpen('${esc(inf.id)}')" aria-label="צפייה בסטטוס של ${esc(inf.name)}">${infAvatarHtml(inf, 72)}</button>`
+      : `<span class="inf-ring inf-ring-none">${infAvatarHtml(inf, 72)}</span>`;
+  };
+  const rank = infRanking(d).filter((r) => r.count > 0).slice(0, 10);
+  const topHtml = rank.length ? `
+  <div class="panel" style="text-align:center;">
+    <h2 class="section-title" style="margin:0 0 4px;">🏆 TOP 10</h2>
+    <p class="muted" style="margin:0 0 6px;">המשפיעניות שהביאו הכי הרבה עצמאיות לקהילה</p>
+    <div class="inf-top-rail">
+      ${rank.map((r, i) => `<div class="inf-top-item"><span class="inf-top-rank">${i + 1}</span>${ringHtml(r.inf)}<strong style="margin-top:4px;">${esc(r.inf.name)}</strong><span class="muted">${r.count} עצמאיות</span></div>`).join("")}
+    </div>
+  </div>` : "";
+  const statusCard = (inf) => `
+    <div class="inf-card" data-cat="${esc(inf.categoryId || "general")}">
+      ${ringHtml(inf)}
+      <h3>${esc(inf.name)}</h3>
+      <p class="muted">${esc(infFieldLabel(d, inf))}</p>
+      ${inf.bio ? `<p style="font-size:14px;margin:0;">${esc(inf.bio)}</p>` : ""}
+      ${statusData[inf.id] && statusData[inf.id].items.length ? `<button type="button" class="btn btn-small" onclick="scInfOpen('${esc(inf.id)}')">לצפייה בסטטוס</button>` : `<span class="muted">אין סטטוס פעיל כרגע</span>`}
+    </div>`;
+  const groupCard = (inf) => `
+    <div class="inf-card inf-group-card" data-cat="${esc(inf.categoryId || "general")}">
+      ${infAvatarHtml(inf, 56)}
+      <div class="inf-body">
+        <h3>${esc(inf.groupName || ("הקבוצה של " + inf.name))}</h3>
+        <p class="muted">מנהלת הקבוצה: <strong>${esc(inf.name)}</strong> · ${esc(infFieldLabel(d, inf))}</p>
+        ${inf.groupDescription ? `<p style="font-size:14px;margin:0;">${esc(clip(inf.groupDescription, 160))}</p>` : ""}
+        ${/^https?:\/\//i.test(inf.groupLink || "") ? `<a class="btn btn-small" href="${esc(inf.groupLink)}" target="_blank" rel="noopener nofollow">להצטרפות לקבוצה</a>` : ""}
+      </div>
+    </div>`;
+  const body = `
+  ${INF_CSS}
+  ${isAdmin && !d.settings.influencersEnabled ? `<div class="flash flash-err">העמוד הזה כבוי כרגע ורק את רואה אותו. אפשר לפתוח אותו לכולן באזור הניהול ← "משפיעניות".</div>` : ""}
+  <h1 class="section-title">${esc(pageName)}</h1>
+  <p class="muted" style="text-align:center;max-width:620px;margin:0 auto 10px;">המשפיעניות והקבוצות שאנחנו אוהבות - סטטוסים עדכניים וקבוצות צ'אט שאפשר להצטרף אליהן בלחיצה.</p>
+  <div class="inf-section-nav">
+    <a class="btn btn-small" href="#inf-statuses">📱 משפיעניות בסטטוסים</a>
+    <a class="btn btn-small btn-outline" href="#inf-chats">💬 קבוצות צ'אט</a>
+  </div>
+  ${topHtml}
+  ${usedCats.length > 1 ? `<div class="inf-chips">${catChips}</div>` : ""}
+  <h2 class="section-title" id="inf-statuses">📱 משפיעניות בסטטוסים</h2>
+  ${statusInfs.length ? `<div class="inf-grid">${statusInfs.map(statusCard).join("")}</div>` : `<p class="muted" style="text-align:center;">בקרוב כאן.</p>`}
+  <h2 class="section-title" id="inf-chats" style="margin-top:34px;">💬 קבוצות צ'אט</h2>
+  ${chatInfs.length ? `<div class="inf-grid">${chatInfs.map(groupCard).join("")}</div>` : `<p class="muted" style="text-align:center;">בקרוב כאן.</p>`}
+
+  <div class="inf-viewer" id="scInfViewer" onclick="if(event.target===this)scInfClose()">
+    <div class="inf-viewer-bar"><span id="scInfViewerName"></span><button type="button" class="btn btn-small btn-outline" onclick="scInfClose()" style="background:#fff;">✕ סגירה</button></div>
+    <button type="button" class="inf-viewer-nav" style="right:10px;" onclick="scInfStep(1)" aria-label="הקודם">›</button>
+    <button type="button" class="inf-viewer-nav" style="left:10px;" onclick="scInfStep(-1)" aria-label="הבא">‹</button>
+    <div class="inf-viewer-media" id="scInfViewerMedia"></div>
+    <div class="inf-viewer-reply" id="scInfViewerReply">
+      ${isCustomer ? `
+        <textarea id="scInfReplyText" maxlength="1000" placeholder="הגיבי לסטטוס..."></textarea>
+        <button type="button" class="btn btn-small" style="margin-top:6px;" onclick="scInfSend()">שליחת תגובה</button>
+        <span id="scInfReplyNote" style="color:#fff;margin-inline-start:8px;"></span>`
+        : `<p style="color:#fff;text-align:center;"><a href="/login?next=${encodeURIComponent("/influencers")}" style="color:#fff;text-decoration:underline;font-weight:800;">התחברי כלקוחה</a> כדי להגיב לסטטוס.</p>`}
+    </div>
+  </div>
+  <script>
+  var SC_INF = ${JSON.stringify(statusData).replace(/</g, "\\u003c")};
+  var scInfCur = null, scInfIdx = 0;
+  function scInfFilter(btn){
+    document.querySelectorAll('.inf-chip').forEach(function(c){c.classList.remove('active');}); btn.classList.add('active');
+    var cat = btn.getAttribute('data-cat');
+    document.querySelectorAll('.inf-card').forEach(function(c){ c.style.display = (cat==='*' || c.getAttribute('data-cat')===cat) ? '' : 'none'; });
+  }
+  function scInfOpen(id){ if(!SC_INF[id]||!SC_INF[id].items.length) return; scInfCur=id; scInfIdx=0; document.getElementById('scInfViewer').classList.add('open'); scInfRender(); }
+  function scInfClose(){ document.getElementById('scInfViewer').classList.remove('open'); document.getElementById('scInfViewerMedia').innerHTML=''; }
+  function scInfStep(dir){ var n=SC_INF[scInfCur].items.length; scInfIdx=(scInfIdx+(dir>0?-1:1)+n)%n; scInfRender(); }
+  function scInfRender(){
+    var inf=SC_INF[scInfCur], it=inf.items[scInfIdx], m=document.getElementById('scInfViewerMedia');
+    document.getElementById('scInfViewerName').textContent=inf.name+' ('+(scInfIdx+1)+'/'+inf.items.length+')';
+    m.innerHTML='';
+    if(it.type==='video'){ var v=document.createElement('video'); v.src=it.url; v.controls=true; v.autoplay=true; v.playsInline=true; m.appendChild(v); }
+    else if(it.type==='image'){ var im=document.createElement('img'); im.src=it.url; im.alt=''; m.appendChild(im); }
+    else { var t=document.createElement('div'); t.className='inf-viewer-text'; t.textContent=it.text; m.appendChild(t); }
+    var note=document.getElementById('scInfReplyNote'); if(note) note.textContent='';
+  }
+  function scInfSend(){
+    var ta=document.getElementById('scInfReplyText'), note=document.getElementById('scInfReplyNote');
+    var text=(ta.value||'').trim(); if(!text) return;
+    var it=SC_INF[scInfCur].items[scInfIdx];
+    fetch('/influencers/'+encodeURIComponent(scInfCur)+'/message',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'text='+encodeURIComponent(text)+'&statusId='+encodeURIComponent(it.id)})
+      .then(function(r){return r.json();}).then(function(j){ if(j.ok){ ta.value=''; note.textContent='נשלח! התשובה תופיע באזור האישי שלך 💌'; } else { note.textContent=j.error||'לא הצלחנו לשלוח'; } })
+      .catch(function(){ note.textContent='לא הצלחנו לשלוח'; });
+  }
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape') scInfClose(); });
+  </script>
+  `;
+  sendHtml(res, 200, page({
+    title: pageName, session: ctx.session, body, query,
+    description: `${pageName} - משפיעניות וקבוצות צ'אט מומלצות מהקהילה של SheCan.`,
+    canonicalUrl: `${getOrigin(req)}/influencers`,
+  }));
+});
+
+// תגובה של לקוחה לסטטוס (או הודעה כללית) - נכנסת לתיבת ההודעות של המשפיענית באזור האישי שלה.
+route("POST", "/influencers/:id/message", async (req, res, params, query, ctx) => {
+  const json = (status, obj) => sendHtml(res, status, JSON.stringify(obj), { "Content-Type": "application/json; charset=utf-8" });
+  if (!requireRole(ctx.session, "customer")) return json(401, { ok: false, error: "צריך להתחבר כלקוחה כדי להגיב." });
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === params.id && i.active !== false);
+  if (!inf) return json(404, { ok: false, error: "לא נמצא." });
+  const body = await readBody(req);
+  const text = clip((body.get("text") || "").trim(), 1000);
+  if (!text) return json(400, { ok: false, error: "ההודעה ריקה." });
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (!customer) return json(401, { ok: false, error: "צריך להתחבר מחדש." });
+  const recent = infMessagesAll(d).filter((m) => m.customerId === customer.id && m.fromRole === "customer" && Date.now() - new Date(m.date).getTime() < 60 * 60 * 1000).length;
+  if (recent >= 20) return json(429, { ok: false, error: "שלחת הרבה הודעות - נסי שוב בעוד שעה." });
+  infMessagesAll(d).push({ id: db.nextId("influencerMessage"), influencerId: inf.id, customerId: customer.id, statusId: body.get("statusId") || "", fromRole: "customer", text, date: new Date().toISOString(), read: false });
+  db.save();
+  notify(inf, {
+    pushTitle: `הודעה חדשה מ${customer.name || "לקוחה"}`, pushBody: clip(text, 100), url: "/influencer-dashboard",
+    emailSubject: "יש לך הודעה חדשה ב-SheCan",
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(inf.name)},</p><p>${esc(customer.name || "לקוחה")} הגיבה אלייך:</p><blockquote style="border-right:3px solid #c1b2a1;margin:8px 0;padding:4px 10px;">${esc(text)}</blockquote><p><a href="${getOrigin(req)}/influencer-dashboard">לתשובה באזור האישי</a></p></div>`,
+  }).catch(() => {});
+  json(200, { ok: true });
+});
+
+// הלקוחה עונה בתוך שיחה קיימת מהאזור האישי שלה
+route("POST", "/account/influencer-message/:id", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === params.id);
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  const body = await readBody(req);
+  const text = clip((body.get("text") || "").trim(), 1000);
+  if (!inf || !customer || !text) return redirect(res, "/account#inf-threads");
+  infMessagesAll(d).push({ id: db.nextId("influencerMessage"), influencerId: inf.id, customerId: customer.id, statusId: "", fromRole: "customer", text, date: new Date().toISOString(), read: false });
+  db.save();
+  notify(inf, {
+    pushTitle: `הודעה חדשה מ${customer.name || "לקוחה"}`, pushBody: clip(text, 100), url: "/influencer-dashboard",
+    emailSubject: "יש לך הודעה חדשה ב-SheCan",
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(inf.name)},</p><p>${esc(customer.name || "לקוחה")} כתבה לך:</p><blockquote style="border-right:3px solid #c1b2a1;margin:8px 0;padding:4px 10px;">${esc(text)}</blockquote><p><a href="${getOrigin(req)}/influencer-dashboard">לתשובה באזור האישי</a></p></div>`,
+  }).catch(() => {});
+  redirect(res, `/account?ok=${encodeURIComponent("ההודעה נשלחה.")}#inf-threads`);
+});
+
+// מקטע "שיחות עם משפיעניות" באזור האישי של הלקוחה (מוזרק ב-GET /account)
+function infCustomerThreadsHtml(d, customer) {
+  const msgs = infMessagesAll(d).filter((m) => m.customerId === customer.id);
+  if (!msgs.length) return "";
+  const byInf = {};
+  msgs.forEach((m) => { (byInf[m.influencerId] = byInf[m.influencerId] || []).push(m); });
+  let marked = false;
+  const html = Object.keys(byInf).map((iid) => {
+    const inf = infAll(d).find((i) => i.id === iid);
+    if (!inf) return "";
+    const thread = byInf[iid].slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+    thread.forEach((m) => { if (m.fromRole === "influencer" && !m.read) { m.read = true; marked = true; } });
+    return `<div style="margin-bottom:20px;">
+      <strong>${esc(inf.name)}</strong>
+      <div class="chat-thread" style="margin-top:8px;">${thread.map((m) => `<div class="chat-msg from-${m.fromRole === "influencer" ? "freelancer" : "customer"}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
+      <form method="post" action="/account/influencer-message/${esc(inf.id)}"><textarea name="text" placeholder="כתבי הודעה..." style="min-height:60px;" required></textarea><button class="btn btn-small" style="margin-top:6px;" type="submit">שליחה</button></form>
+    </div>`;
+  }).join("");
+  if (marked) db.save();
+  return `<div class="panel" id="inf-threads"><h3>שיחות עם משפיעניות ✨</h3>${html}</div>`;
+}
+
+// ----- אזור אישי למשפיענית -----
+route("GET", "/influencer-dashboard", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "influencer")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === ctx.session.id);
+  if (!inf) return redirect(res, "/logout");
+  if (infPruneStatuses(d)) db.save();
+  const registered = infRegistered(d, inf).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const msgs = infMessagesAll(d).filter((m) => m.influencerId === inf.id);
+  const byCustomer = {};
+  msgs.forEach((m) => { (byCustomer[m.customerId] = byCustomer[m.customerId] || []).push(m); });
+  let marked = false;
+  msgs.forEach((m) => { if (m.fromRole === "customer" && !m.read) { m.read = true; marked = true; } });
+  if (marked) db.save();
+  const myStatuses = infStatusesAll(d).filter((s) => s.influencerId === inf.id).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const origin = getOrigin(req);
+  const waNum = (d.settings.influencersWhatsapp || "").trim();
+  const statusLabel = (s) => s.status === "pending" ? "⏳ ממתין לאישור" : s.status === "rejected" ? "✖ נדחה" : (new Date(s.expiresAt).getTime() > Date.now() ? "✅ פעיל" : "⌛ פג תוקף");
+  const body = `
+  ${INF_CSS}
+  <div style="display:flex;gap:14px;align-items:center;justify-content:center;margin-bottom:10px;">
+    ${infAvatarHtml(inf, 72)}
+    <div><h1 class="section-title" style="margin:0;">היי ${esc(inf.name)} ✨</h1><p class="muted" style="margin:0;">${inf.kind === "chat" ? "מנהלת קבוצת צ'אט" : "משפיענית בסטטוסים"} · ${esc(infFieldLabel(d, inf))}</p></div>
+  </div>
+
+  <div class="panel" style="text-align:center;">
+    <h3>🎟️ קוד הקופון האישי שלך</h3>
+    <p style="font-size:30px;font-weight:900;letter-spacing:2px;margin:6px 0;" dir="ltr">${esc(inf.couponCode || "-")}</p>
+    <p class="muted">כל עצמאית שתירשם לאתר ותכתוב את הקוד הזה בטופס ההרשמה - תיספר על שמך. אפשר גם לשתף את הקישור הישיר:</p>
+    <input type="text" readonly dir="ltr" value="${esc(`${origin}/join?c=${encodeURIComponent(inf.couponCode || "")}`)}" onclick="this.select()" style="max-width:480px;" />
+  </div>
+
+  <div class="panel">
+    <h3>👩‍💼 העצמאיות שנרשמו דרכך (${registered.length})</h3>
+    ${registered.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>#</th><th>עסק</th><th>שם</th><th>תחום</th><th>עיר</th><th>נרשמה</th><th>סטטוס</th></tr>
+      ${registered.map((f, i) => `<tr><td>${i + 1}</td><td>${esc(f.businessName || "-")}</td><td>${esc(f.name || "-")}</td><td>${esc(catName(d, f.categoryId))}</td><td>${esc(f.cityId ? cityName(d, f.cityId) : "-")}</td><td>${esc(new Date(f.createdAt).toLocaleDateString("he-IL"))}</td><td>${f.status === "approved" ? "מאושרת" : f.status === "pending" ? "ממתינה לאישור" : esc(f.status || "")}</td></tr>`).join("")}
+    </table></div>` : `<p class="muted">עדיין אף עצמאית לא נרשמה עם הקוד שלך - כשזה יקרה, היא תופיע כאן.</p>`}
+  </div>
+
+  <div class="panel" id="inf-inbox">
+    <h3>💌 הודעות מלקוחות</h3>
+    ${Object.keys(byCustomer).length ? Object.keys(byCustomer).map((cid) => {
+      const c = d.customers.find((x) => x.id === cid);
+      const thread = byCustomer[cid].slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+      return `<div style="margin-bottom:20px;"><strong>${esc((c && c.name) || "לקוחה")}</strong>
+        <div class="chat-thread" style="margin-top:8px;">${thread.map((m) => `<div class="chat-msg from-${m.fromRole === "influencer" ? "freelancer" : "customer"}">${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
+        <form method="post" action="/influencer-dashboard/reply/${esc(cid)}"><textarea name="text" placeholder="כתבי תשובה..." style="min-height:60px;" required></textarea><button class="btn btn-small" style="margin-top:6px;" type="submit">שליחה</button></form></div>`;
+    }).join("") : `<p class="muted">עוד אין הודעות. לקוחות יכולות להגיב לסטטוסים שלך והתגובות יופיעו כאן.</p>`}
+  </div>
+
+  ${inf.kind === "status" ? `
+  <div class="panel" id="inf-my-statuses">
+    <h3>📱 הסטטוסים שלך</h3>
+    <p class="muted">הדרך הרגילה: שולחות את הסטטוס בוואטסאפ ${waNum ? `למספר העסקי <strong dir="ltr">${esc(waNum)}</strong>` : "למספר העסקי (יעודכן בקרוב)"} וספיר מעלה אחרי אישור. אפשר גם להעלות כאן ישירות - הסטטוס יעלה לעמוד אחרי אישור.</p>
+    <form method="post" action="/influencer-dashboard/status" enctype="multipart/form-data">
+      <label>תמונה או סרטון <input type="file" name="media" accept="image/*,video/*" /></label>
+      <label>או טקסט (אם אין קובץ) <textarea name="text" maxlength="300"></textarea></label>
+      <button class="btn btn-small" type="submit" style="margin-top:6px;">שליחה לאישור</button>
+    </form>
+    ${myStatuses.length ? `<div class="table-scroll" style="margin-top:10px;"><table class="table-simple"><tr><th>סוג</th><th>תוכן</th><th>נוצר</th><th>מצב</th><th></th></tr>
+      ${myStatuses.map((s) => `<tr><td>${s.type === "video" ? "סרטון" : s.type === "image" ? "תמונה" : "טקסט"}</td><td>${s.type === "text" ? esc(clip(s.text, 50)) : `<a href="${esc(s.url)}" target="_blank" rel="noopener">צפייה</a>`}</td><td>${esc(new Date(s.createdAt).toLocaleString("he-IL"))}</td><td>${statusLabel(s)}</td>
+      <td><form method="post" action="/influencer-dashboard/status/${esc(s.id)}/delete"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form></td></tr>`).join("")}
+    </table></div>` : ""}
+  </div>` : `
+  <div class="panel">
+    <h3>💬 הקבוצה שלך בעמוד</h3>
+    <p><strong>${esc(inf.groupName || "-")}</strong></p>
+    <p class="muted">${esc(inf.groupDescription || "")}</p>
+    <p class="muted">לעדכון פרטי הקבוצה או הקישור - לפני לספיר.</p>
+  </div>`}
+
+  <div class="panel">
+    <h3>👤 הפרופיל שלי</h3>
+    <form method="post" action="/influencer-dashboard/profile" enctype="multipart/form-data">
+      <label>כמה מילים עליי <textarea name="bio" maxlength="200">${esc(inf.bio || "")}</textarea></label>
+      <label>תמונה <input type="file" name="photo" accept="image/*" /></label>
+      <button class="btn btn-small" type="submit" style="margin-top:6px;">שמירה</button>
+    </form>
+    <form method="post" action="/influencer-dashboard/password" style="margin-top:16px;">
+      <label>סיסמה חדשה <input type="password" name="password" minlength="6" required /></label>
+      <button class="btn btn-small" type="submit" style="margin-top:6px;">החלפת סיסמה</button>
+    </form>
+  </div>
+  `;
+  sendHtml(res, 200, page({ title: "האזור שלי", session: ctx.session, body, query, noSidebars: true }));
+});
+
+route("POST", "/influencer-dashboard/reply/:customerId", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "influencer")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === ctx.session.id);
+  const customer = d.customers.find((c) => c.id === params.customerId);
+  const body = await readBody(req);
+  const text = clip((body.get("text") || "").trim(), 1000);
+  if (!inf || !customer || !text) return redirect(res, "/influencer-dashboard#inf-inbox");
+  infMessagesAll(d).push({ id: db.nextId("influencerMessage"), influencerId: inf.id, customerId: customer.id, statusId: "", fromRole: "influencer", text, date: new Date().toISOString(), read: false });
+  db.save();
+  notify(customer, {
+    pushTitle: `תשובה מ${inf.name}`, pushBody: clip(text, 100), url: "/account#inf-threads",
+    emailSubject: `${inf.name} ענתה לך ב-SheCan`,
+    emailHtml: () => `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc((customer.name || "").split(" ")[0])},</p><p>${esc(inf.name)} ענתה לך:</p><blockquote style="border-right:3px solid #c1b2a1;margin:8px 0;padding:4px 10px;">${esc(text)}</blockquote><p><a href="${getOrigin(req)}/account#inf-threads">לשיחה באזור האישי</a></p></div>`,
+  }).catch(() => {});
+  redirect(res, `/influencer-dashboard?ok=${encodeURIComponent("התשובה נשלחה.")}#inf-inbox`);
+});
+
+route("POST", "/influencer-dashboard/status", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "influencer")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === ctx.session.id && i.kind === "status");
+  if (!inf) return redirect(res, "/influencer-dashboard");
+  const body = await readBody(req);
+  const saved = saveStatusFile(body.files.media);
+  const text = clip((body.get("text") || "").trim(), 300);
+  if (!saved && !text) return redirect(res, `/influencer-dashboard?err=${encodeURIComponent("צריך להעלות קובץ תקין (תמונה/סרטון) או לכתוב טקסט.")}#inf-my-statuses`);
+  infStatusesAll(d).push({
+    id: db.nextId("influencerStatus"), influencerId: inf.id,
+    type: saved ? saved.type : "text", url: saved ? saved.url : "", text: saved ? "" : text,
+    createdAt: new Date().toISOString(), expiresAt: null, status: "pending", source: "influencer",
+  });
+  db.save();
+  const admin = d.admins[0];
+  if (admin) notify(admin, {
+    pushTitle: "סטטוס חדש ממשפיענית לאישור", pushBody: inf.name, url: "/admin#influencers",
+    emailSubject: `סטטוס חדש לאישור מ${inf.name}`, emailHtml: () => `<div dir="rtl"><p>${esc(inf.name)} שלחה סטטוס חדש לאישור באזור הניהול ← משפיעניות.</p></div>`,
+  }).catch(() => {});
+  redirect(res, `/influencer-dashboard?ok=${encodeURIComponent("הסטטוס נשלח לאישור.")}#inf-my-statuses`);
+});
+
+route("POST", "/influencer-dashboard/status/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "influencer")) return redirect(res, "/login");
+  const d = db.load();
+  const list = infStatusesAll(d);
+  const s = list.find((x) => x.id === params.id && x.influencerId === ctx.session.id);
+  if (s) {
+    const filename = (s.url || "").split("/").pop();
+    if (filename) { try { fs.unlinkSync(path.join(UPLOADS_DIR, filename)); } catch (e) {} }
+    d.influencerStatuses = list.filter((x) => x.id !== s.id);
+    db.save();
+  }
+  redirect(res, "/influencer-dashboard#inf-my-statuses");
+});
+
+route("POST", "/influencer-dashboard/profile", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "influencer")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === ctx.session.id);
+  if (!inf) return redirect(res, "/login");
+  const body = await readBody(req);
+  if (body.tooBig) return redirect(res, `/influencer-dashboard?err=${encodeURIComponent("התמונה גדולה מדי.")}`);
+  inf.bio = clip((body.get("bio") || "").trim(), 200);
+  const photo = fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES);
+  if (photo) inf.photo = photo;
+  db.save();
+  redirect(res, `/influencer-dashboard?ok=${encodeURIComponent("הפרופיל עודכן.")}`);
+});
+
+route("POST", "/influencer-dashboard/password", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "influencer")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === ctx.session.id);
+  const body = await readBody(req);
+  const pw = body.get("password") || "";
+  if (!inf || pw.length < 6) return redirect(res, `/influencer-dashboard?err=${encodeURIComponent("הסיסמה צריכה להיות לפחות 6 תווים.")}`);
+  inf.passwordHash = auth.hashPassword(pw);
+  db.save();
+  redirect(res, `/influencer-dashboard?ok=${encodeURIComponent("הסיסמה הוחלפה.")}`);
+});
+
+// ----- ניהול -----
+function influencersAdminPanelHtml(d) {
+  const st = d.settings;
+  const list = infAll(d).slice().sort((a, b) => (a.kind === b.kind ? String(a.name).localeCompare(String(b.name), "he") : a.kind === "status" ? -1 : 1));
+  const pending = infStatusesAll(d).filter((s) => s.status === "pending");
+  const catOptions = (sel) => `<option value="">כללי</option>` + d.categories.map((c) => `<option value="${esc(c.id)}" ${c.id === sel ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const rows = list.map((i) => {
+    const reg = infRegistered(d, i);
+    return `<tr>
+      <td>${esc(i.name)}${i.active === false ? ' <span class="muted">(מושבתת)</span>' : ""}<br><span class="muted" dir="ltr">${esc(i.email)}</span></td>
+      <td>${i.kind === "chat" ? "צ'אט" : "סטטוסים"}</td>
+      <td>${esc(infFieldLabel(d, i))}</td>
+      <td dir="ltr"><strong>${esc(i.couponCode || "-")}</strong></td>
+      <td>${reg.length}${reg.length ? `<details><summary>רשימה</summary>${reg.map((f) => `<div style="font-size:13px;">${esc(f.businessName || f.name)} (${esc(f.name || "")}) · <span dir="ltr">${esc(f.email || "")}</span> · ${esc(new Date(f.createdAt).toLocaleDateString("he-IL"))}</div>`).join("")}</details>` : ""}</td>
+      <td>
+        <details><summary>עריכה / פעולות</summary>
+          <form method="post" action="/admin/influencers/${esc(i.id)}/update" enctype="multipart/form-data" style="min-width:260px;">
+            <label>שם<input type="text" name="name" value="${esc(i.name)}" required /></label>
+            <label>מייל<input type="email" name="email" value="${esc(i.email)}" dir="ltr" required /></label>
+            <label>סוג<select name="kind"><option value="status" ${i.kind === "status" ? "selected" : ""}>משפיענית בסטטוסים</option><option value="chat" ${i.kind === "chat" ? "selected" : ""}>מנהלת קבוצת צ'אט</option></select></label>
+            <label>תחום<select name="categoryId">${catOptions(i.categoryId)}</select></label>
+            <label>כמה מילים<textarea name="bio" maxlength="200">${esc(i.bio || "")}</textarea></label>
+            <label>שם הקבוצה<input type="text" name="groupName" value="${esc(i.groupName || "")}" maxlength="80" /></label>
+            <label>קישור לקבוצה<input type="text" name="groupLink" value="${esc(i.groupLink || "")}" dir="ltr" placeholder="https://chat.whatsapp.com/..." /></label>
+            <label>תיאור קצר לקבוצה<input type="text" name="groupDescription" value="${esc(i.groupDescription || "")}" maxlength="160" /></label>
+            <label>תמונה${i.photo ? " (קיימת)" : ""}<input type="file" name="photo" accept="image/*" /></label>
+            <button class="btn btn-small" type="submit">שמירה</button>
+          </form>
+          <form method="post" action="/admin/influencers/${esc(i.id)}/coupon" style="margin-top:8px;">
+            <label>קוד קופון (ריק = הנפקת קוד חדש אוטומטי)<input type="text" name="code" dir="ltr" placeholder="${esc(i.couponCode || "")}" /></label>
+            <button class="btn btn-small btn-outline" type="submit">${i.couponCode ? "החלפת קוד" : "הנפקת קוד"}</button>
+          </form>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+            <form method="post" action="/admin/influencers/${esc(i.id)}/toggle-active"><button class="btn btn-small btn-outline" type="submit">${i.active === false ? "הפעלה" : "השבתה"}</button></form>
+            <form method="post" action="/admin/influencers/${esc(i.id)}/resend-credentials"><button class="btn btn-small btn-outline" type="submit">שליחת פרטי כניסה</button></form>
+            <form method="post" action="/admin/influencers/${esc(i.id)}/delete" onsubmit="return confirm('למחוק את ${esc(i.name)}?');"><button class="btn btn-small btn-outline" type="submit">מחיקה</button></form>
+          </div>
+        </details>
+      </td></tr>`;
+  }).join("");
+  return `
+  <div class="panel" id="influencers" style="scroll-margin-top:90px;">
+    <h3>✨ משפיעניות</h3>
+    <p class="muted">עמוד ציבורי עם משפיעניות בסטטוסים וקבוצות צ'אט, קוד קופון אישי לכל אחת (נכתב בהרשמת עצמאית ונספר על שמה), וטבלה של מי שנרשמה דרכה. העמוד <strong>כבוי</strong> עד שתדליקי אותו כאן.</p>
+    <form method="post" action="/admin/influencers/settings" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:700;width:auto;"><input type="checkbox" name="enabled" value="1" ${st.influencersEnabled ? "checked" : ""} style="width:auto;" /> להציג את העמוד באתר (ובתפריט)</label>
+      <label style="min-width:180px;">שם העמוד<input type="text" name="pageName" maxlength="40" value="${esc(st.influencersPageName || "")}" placeholder="SheCan Muses" /></label>
+      <label style="min-width:180px;">מספר וואטסאפ עסקי לקבלת סטטוסים<input type="text" name="whatsapp" dir="ltr" maxlength="30" value="${esc(st.influencersWhatsapp || "")}" placeholder="050-0000000" /></label>
+      <button class="btn btn-small" type="submit">שמירה</button>
+    </form>
+    ${pending.length ? `<h4 style="margin-top:18px;">סטטוסים שממתינים לאישור (${pending.length})</h4>
+    <div class="table-scroll"><table class="table-simple"><tr><th>משפיענית</th><th>תוכן</th><th></th></tr>
+      ${pending.map((s) => { const inf = infAll(d).find((x) => x.id === s.influencerId); return `<tr><td>${esc(inf ? inf.name : "?")}</td><td>${s.type === "text" ? esc(s.text) : s.type === "video" ? `<video src="${esc(s.url)}" controls style="max-width:160px;"></video>` : `<img src="${esc(s.url)}" alt="" style="max-width:120px;border-radius:8px;" />`}</td>
+        <td style="display:flex;gap:6px;"><form method="post" action="/admin/influencers/status/${esc(s.id)}/approve"><button class="btn btn-small" type="submit">אישור והעלאה</button></form><form method="post" action="/admin/influencers/status/${esc(s.id)}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form></td></tr>`; }).join("")}
+    </table></div>` : ""}
+
+    <h4 style="margin-top:18px;">הוספת סטטוס שהתקבל בוואטסאפ (עולה מיד)</h4>
+    <form method="post" action="/admin/influencers/status/add" enctype="multipart/form-data" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <label>משפיענית<select name="influencerId" required><option value="">בחרי</option>${infAll(d).filter((i) => i.kind === "status" && i.active !== false).map((i) => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join("")}</select></label>
+      <label>תמונה/סרטון<input type="file" name="media" accept="image/*,video/*" /></label>
+      <label>או טקסט<input type="text" name="text" maxlength="300" /></label>
+      <button class="btn btn-small" type="submit">העלאה לסטטוס</button>
+    </form>
+    <p class="muted" style="font-size:13px;">סטטוס נשאר באתר 24 שעות מרגע האישור/ההעלאה, כמו בוואטסאפ.</p>
+
+    <h4 style="margin-top:18px;">הוספת משפיענית / מנהלת קבוצה</h4>
+    <form method="post" action="/admin/influencers/add" enctype="multipart/form-data" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
+      <label>סוג<select name="kind"><option value="status">משפיענית בסטטוסים</option><option value="chat">מנהלת קבוצת צ'אט</option></select></label>
+      <label>שם<input type="text" name="name" required /></label>
+      <label>מייל (לכניסה לאזור האישי)<input type="email" name="email" dir="ltr" required /></label>
+      <label>תחום<select name="categoryId">${catOptions("")}</select></label>
+      <label>כמה מילים<input type="text" name="bio" maxlength="200" /></label>
+      <label>תמונה<input type="file" name="photo" accept="image/*" /></label>
+      <label>שם הקבוצה (לקבוצות צ'אט)<input type="text" name="groupName" maxlength="80" /></label>
+      <label>קישור לקבוצה<input type="text" name="groupLink" dir="ltr" placeholder="https://chat.whatsapp.com/..." /></label>
+      <label>תיאור קצר לקבוצה<input type="text" name="groupDescription" maxlength="160" /></label>
+      <div style="align-self:end;"><button class="btn btn-small" type="submit">הוספה והנפקת קוד קופון + פרטי כניסה</button></div>
+    </form>
+
+    <h4 style="margin-top:18px;">כל המשפיעניות והעצמאיות שנרשמו דרכן (${list.length})</h4>
+    ${list.length ? `<div class="table-scroll"><table class="table-simple"><tr><th>שם</th><th>סוג</th><th>תחום</th><th>קוד</th><th>נרשמו</th><th></th></tr>${rows}</table></div>` : `<p class="muted">עדיין לא הוספת משפיעניות.</p>`}
+  </div>`;
+}
+
+route("POST", "/admin/influencers/settings", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const body = await readBody(req);
+  d.settings.influencersEnabled = body.get("enabled") === "1";
+  d.settings.influencersPageName = clip((body.get("pageName") || "").trim(), 40);
+  d.settings.influencersWhatsapp = clip((body.get("whatsapp") || "").trim(), 30);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.influencersEnabled ? "עמוד המשפיעניות פתוח עכשיו באתר." : "הגדרות נשמרו - עמוד המשפיעניות כבוי.")}#influencers`);
+});
+
+route("POST", "/admin/influencers/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const name = clip((body.get("name") || "").trim(), 80);
+  const email = clip((body.get("email") || "").trim(), 120);
+  if (!name || !email) return redirect(res, `/admin?err=${encodeURIComponent("צריך שם ומייל.")}#influencers`);
+  if (infAll(d).some((i) => i.email.toLowerCase() === email.toLowerCase())) return redirect(res, `/admin?err=${encodeURIComponent("כבר יש משפיענית עם המייל הזה.")}#influencers`);
+  const tempPassword = generateTempPassword();
+  const inf = {
+    id: db.nextId("influencer"), kind: body.get("kind") === "chat" ? "chat" : "status", name, email,
+    passwordHash: auth.hashPassword(tempPassword), categoryId: body.get("categoryId") || "",
+    bio: clip((body.get("bio") || "").trim(), 200), photo: fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES) || null,
+    groupName: clip((body.get("groupName") || "").trim(), 80), groupLink: clip((body.get("groupLink") || "").trim(), 300),
+    groupDescription: clip((body.get("groupDescription") || "").trim(), 160),
+    couponCode: infGenerateCode(d), active: true, pushSubscriptions: [], createdAt: new Date().toISOString(),
+  };
+  infAll(d).push(inf);
+  db.save();
+  const result = await sendEmail(inf.email, "האזור האישי שלך ב-SheCan מוכן",
+    `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(inf.name)}, ✨</p>
+     <p>שמחות שאת איתנו! הנה פרטי הכניסה לאזור האישי שלך:</p>
+     <p>🔑 אימייל: <strong>${esc(inf.email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong><br/>כניסה: <a href="${getOrigin(req)}/login">${getOrigin(req)}/login</a> (לבחור "משפיענית")</p>
+     <p>🎟️ קוד הקופון האישי שלך: <strong>${esc(inf.couponCode)}</strong> - כל עצמאית שתירשם ותכתוב אותו תיספר על שמך.</p>
+     <p>כדאי להחליף את הסיסמה בכניסה הראשונה.</p><p>צוות SheCan 🌸</p></div>`
+  ).catch(() => ({ ok: false }));
+  if (result && result.ok) return redirect(res, `/admin?ok=${encodeURIComponent(`${inf.name} נוספה. קוד הקופון שלה: ${inf.couponCode}. נשלח אליה מייל עם פרטי כניסה.`)}#influencers`);
+  redirect(res, `/admin?err=${encodeURIComponent(`${inf.name} נוספה (קוד קופון: ${inf.couponCode}), אבל שליחת המייל נכשלה. סיסמה זמנית שלה: ${tempPassword} - כדאי לשמור ולמסור לה.`)}#influencers`);
+});
+
+route("POST", "/admin/influencers/:id/update", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === params.id);
+  if (!inf) return redirect(res, `/admin#influencers`);
+  const email = clip((body.get("email") || "").trim(), 120);
+  if (email && infAll(d).some((i) => i.id !== inf.id && i.email.toLowerCase() === email.toLowerCase())) return redirect(res, `/admin?err=${encodeURIComponent("המייל הזה כבר שייך למשפיענית אחרת.")}#influencers`);
+  inf.name = clip((body.get("name") || inf.name).trim(), 80) || inf.name;
+  if (email) inf.email = email;
+  inf.kind = body.get("kind") === "chat" ? "chat" : "status";
+  inf.categoryId = body.get("categoryId") || "";
+  inf.bio = clip((body.get("bio") || "").trim(), 200);
+  inf.groupName = clip((body.get("groupName") || "").trim(), 80);
+  inf.groupLink = clip((body.get("groupLink") || "").trim(), 300);
+  inf.groupDescription = clip((body.get("groupDescription") || "").trim(), 160);
+  const photo = fileToDataUri(body.files.photo, MAX_UPLOAD_BYTES);
+  if (photo) inf.photo = photo;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("הפרטים נשמרו.")}#influencers`);
+});
+
+route("POST", "/admin/influencers/:id/coupon", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === params.id);
+  if (!inf) return redirect(res, `/admin#influencers`);
+  const typed = infNormalizeCode(body.get("code"));
+  if (typed) {
+    if (!/^[A-Z0-9_-]{3,20}$/.test(typed)) return redirect(res, `/admin?err=${encodeURIComponent("הקוד צריך להיות 3-20 תווים: אותיות באנגלית, מספרים, מקף או קו תחתון.")}#influencers`);
+    if (infAll(d).some((i) => i.id !== inf.id && infNormalizeCode(i.couponCode) === typed)) return redirect(res, `/admin?err=${encodeURIComponent("הקוד הזה כבר קיים אצל משפיענית אחרת.")}#influencers`);
+    inf.couponCode = typed;
+  } else {
+    inf.couponCode = infGenerateCode(d);
+  }
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`קוד הקופון של ${inf.name}: ${inf.couponCode}`)}#influencers`);
+});
+
+route("POST", "/admin/influencers/:id/toggle-active", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === params.id);
+  if (inf) { inf.active = inf.active === false; db.save(); }
+  redirect(res, `/admin?ok=${encodeURIComponent(inf && inf.active !== false ? "הופעלה." : "הושבתה - לא מופיעה בעמוד והקוד שלה לא פעיל.")}#influencers`);
+});
+
+route("POST", "/admin/influencers/:id/resend-credentials", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === params.id);
+  if (!inf) return redirect(res, `/admin#influencers`);
+  const tempPassword = generateTempPassword();
+  inf.passwordHash = auth.hashPassword(tempPassword);
+  db.save();
+  const result = await sendEmail(inf.email, "פרטי הכניסה שלך ל-SheCan",
+    `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(inf.name)},</p><p>🔑 אימייל: <strong>${esc(inf.email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong><br/>כניסה: <a href="${getOrigin(req)}/login">${getOrigin(req)}/login</a> (לבחור "משפיענית")</p><p>צוות SheCan 🌸</p></div>`
+  ).catch(() => ({ ok: false }));
+  if (result && result.ok) return redirect(res, `/admin?ok=${encodeURIComponent(`נשלח מייל עם פרטי כניסה חדשים ל${inf.name}.`)}#influencers`);
+  redirect(res, `/admin?err=${encodeURIComponent(`השליחה נכשלה. הסיסמה הזמנית החדשה של ${inf.name}: ${tempPassword}`)}#influencers`);
+});
+
+route("POST", "/admin/influencers/:id/delete", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === params.id);
+  if (!inf) return redirect(res, `/admin#influencers`);
+  if (infRegistered(d, inf).length) return redirect(res, `/admin?err=${encodeURIComponent("יש עצמאיות שנרשמו דרכה - כדי לא לאבד את הנתונים עדיף להשבית אותה ולא למחוק.")}#influencers`);
+  infStatusesAll(d).filter((s) => s.influencerId === inf.id).forEach((s) => { const fn = (s.url || "").split("/").pop(); if (fn) { try { fs.unlinkSync(path.join(UPLOADS_DIR, fn)); } catch (e) {} } });
+  d.influencerStatuses = infStatusesAll(d).filter((s) => s.influencerId !== inf.id);
+  d.influencerMessages = infMessagesAll(d).filter((m) => m.influencerId !== inf.id);
+  d.influencers = infAll(d).filter((i) => i.id !== inf.id);
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent("נמחקה.")}#influencers`);
+});
+
+route("POST", "/admin/influencers/status/add", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const inf = infAll(d).find((i) => i.id === body.get("influencerId") && i.kind === "status");
+  if (!inf) return redirect(res, `/admin?err=${encodeURIComponent("צריך לבחור משפיענית.")}#influencers`);
+  const saved = saveStatusFile(body.files.media);
+  const text = clip((body.get("text") || "").trim(), 300);
+  if (!saved && !text) return redirect(res, `/admin?err=${encodeURIComponent("צריך קובץ תקין (תמונה/סרטון עד 30MB) או טקסט.")}#influencers`);
+  const now = Date.now();
+  infStatusesAll(d).push({
+    id: db.nextId("influencerStatus"), influencerId: inf.id, type: saved ? saved.type : "text", url: saved ? saved.url : "", text: saved ? "" : text,
+    createdAt: new Date(now).toISOString(), expiresAt: new Date(now + INF_STATUS_TTL_MS).toISOString(), status: "approved", source: "admin",
+  });
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(`הסטטוס של ${inf.name} עלה לעמוד ל-24 שעות.`)}#influencers`);
+});
+
+route("POST", "/admin/influencers/status/:id/approve", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const s = infStatusesAll(d).find((x) => x.id === params.id);
+  if (s) { s.status = "approved"; s.approvedAt = new Date().toISOString(); s.expiresAt = new Date(Date.now() + INF_STATUS_TTL_MS).toISOString(); db.save(); }
+  redirect(res, `/admin?ok=${encodeURIComponent("הסטטוס אושר ועלה לעמוד ל-24 שעות.")}#influencers`);
+});
+
+route("POST", "/admin/influencers/status/:id/reject", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const list = infStatusesAll(d);
+  const s = list.find((x) => x.id === params.id);
+  if (s) {
+    const fn = (s.url || "").split("/").pop();
+    if (fn) { try { fs.unlinkSync(path.join(UPLOADS_DIR, fn)); } catch (e) {} }
+    d.influencerStatuses = list.filter((x) => x.id !== s.id);
+    db.save();
+  }
+  redirect(res, `/admin?ok=${encodeURIComponent("הסטטוס נדחה ונמחק.")}#influencers`);
+});
+
 // ---------- server ----------
 // Site-visit tracking, per explicit request - counts real page loads only (skips the admin
 // area itself, the freelancer dashboard, static/asset routes and anything that isn't a GET),
@@ -13683,7 +14508,7 @@ route("GET", "/sitemap.xml", async (req, res, params, query, ctx) => {
 // follow-up request, so the number reflects real visitor traffic rather than her own testing/
 // browsing. Kept as a simple hit counter (not unique visitors) to match how per-freelancer
 // f.viewCount already works elsewhere in the app - same trade-off, same reasoning.
-const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/icons/", "/push/"];
+const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/influencer-dashboard", "/icons/", "/push/"];
 // /support/poll: found and fixed 2026-08-25, while answering Sapir's question about whether the
 // visit numbers could be inflated. The support chat's own live-update script (see GET /support)
 // polls this endpoint every 3 seconds for as long as that page stays open - each tick is a
