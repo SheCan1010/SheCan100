@@ -501,16 +501,20 @@ a{color:inherit;text-decoration:none;}
 /* "עדיין לא נרשמתי" + "אזור אישי" pinned to the far (visual) left of the bar, per explicit request. */
 .nav-side{display:flex;flex-direction:column;gap:6px;align-items:center;font-size:14px;margin-inline-start:auto;padding-inline-start:10px;flex-shrink:0;}
 @media (max-width:720px){.main-nav{flex:1 1 100%;} .nav-side{flex-direction:row;flex-wrap:wrap;justify-content:center;width:100%;margin-inline-start:0;padding-inline-start:0;}}
-/* מסך רחב: כל הסרגל (הניווט + אזור אישי/שם הלקוחה + עדיין לא נרשמתי/יציאה) בשורה אחת, עם פס שחור דקיק בין כל שני
-   פריטים - לפי בקשה מפורשת. במסכים צרים יותר הסרגל נשבר לכמה שורות כמו קודם (בלי הפסים, שלא יופיעו בתחילת שורה). */
-@media (min-width:1180px){
-  .header-inner{flex-wrap:nowrap;gap:0 4px;padding-inline:14px;}
-  .main-nav{flex:0 1 auto;flex-wrap:nowrap;gap:0;}
-  .nav-side{flex-direction:row;gap:0;margin-inline-start:0;padding-inline-start:0;}
-  .main-nav .nav-link,.nav-side .nav-link,.nav-side .nav-btn{font-size:13px;padding:6px 7px;position:relative;}
-  .nav-side .nav-btn{margin-inline-start:4px;}
-  .main-nav>a:not(:first-child)::before,.nav-side>*:first-child::before{content:"";position:absolute;inset-inline-start:-1px;top:24%;bottom:24%;width:1px;background:#1b1b1b;pointer-events:none;}
-  .nav-side>*:not(:first-child)::before{content:"";position:absolute;inset-inline-start:-1px;top:24%;bottom:24%;width:1px;background:#1b1b1b;pointer-events:none;}
+/* מסך רחב: כל הסרגל (הניווט + אזור אישי/שם הלקוחה + עדיין לא נרשמתי/יציאה) בשורה אחת, מרווחת, עם פס שחור דקיק בין
+   שני פריטים *בלי מסגרת* (פריט עם מסגרת - קהילה / יש לי עסק / הזירה / העמוד הפעיל / עדיין לא נרשמתי - לא מקבל פס,
+   וגם לא הפריט שצמוד אליו), ובלי פס לפני "אזור אישי"/שם הלקוחה - לפי בקשה מפורשת. במסכים צרים יותר הסרגל נשבר
+   לכמה שורות כמו קודם (בלי הפסים, שלא יופיעו בתחילת שורה). */
+@media (min-width:1240px){
+  .header-inner{flex-wrap:nowrap;gap:0 8px;padding-inline:16px;}
+  .site-header .header-inner{max-width:1360px;}
+  .main-nav{flex:0 1 auto;flex-wrap:nowrap;gap:2px;}
+  .nav-side{flex-direction:row;gap:2px;margin-inline-start:0;padding-inline-start:0;}
+  .main-nav .nav-link,.nav-side .nav-link,.nav-side .nav-btn{font-size:13.5px;padding:7px 11px;position:relative;}
+  .nav-side .nav-btn{margin-inline-start:6px;}
+  .main-nav>a:not(:first-child)::before,.nav-side>*:not(:first-child)::before{content:"";position:absolute;inset-inline-start:-2px;top:24%;bottom:24%;width:1px;background:#5a4636;pointer-events:none;}
+  .main-nav>a:is(.nav-link-community,.nav-link-cta,.nav-link-arena,.nav-active)::before,
+  .main-nav>a:is(.nav-link-community,.nav-link-cta,.nav-link-arena,.nav-active)+a::before,
   .nav-side .nav-btn::before{display:none;}
 }
 .nav-btn{display:inline-flex;align-items:center;gap:6px;background:var(--rose);color:var(--white);padding:6px 12px;border-radius:8px;font-size:14px;font-weight:700;border:1.5px solid var(--rose-dark);transition:background .15s ease;white-space:nowrap;}
