@@ -339,7 +339,7 @@ function nav(session) {
           <a class="nav-link" href="/deals">הטבות SheCan</a>
           <a class="nav-link" href="/stories">SheCan Stories</a>
           <a class="nav-link" href="/magazine">מגזין SheCan</a>
-          <a class="nav-link" href="/influencers">✨ ${esc((settings.influencersPageName || "").trim() || "SheCan Muses")}</a>
+          <a class="nav-link" href="/influencers">${esc((settings.influencersPageName || "").trim() || "SheCan Muses")}</a>
           <a class="nav-link nav-link-community" href="/community">קהילת SheCan${badge(communityUnseenCount(session))}</a>
           <a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${badge(arenaUnseenPollCount(session))}</a>
@@ -568,9 +568,9 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
    כדי שהם לעולם לא יתנגשו זה בזה. */
 .sc-support-widget{position:fixed;bottom:20px;right:20px;z-index:500;}
 /* חתימה עדינה מוצמדת בתחתית כל הדפים (2026-10-10) - קטנה, שקופה למחצה, ולא תופסת לחיצות. */
-.sc-signature{position:fixed;bottom:84px;left:12px;width:104px;transform:rotate(-6deg);z-index:5;opacity:.62;pointer-events:none;user-select:none;}
+.sc-signature{position:fixed;bottom:76px;left:10px;width:66px;transform:rotate(-4deg);z-index:5;opacity:.55;pointer-events:none;user-select:none;}
 .sc-signature img{display:block;width:100%;height:auto;}
-@media(max-width:600px){.sc-signature{width:78px;bottom:78px;left:8px;opacity:.5;}}
+@media(max-width:600px){.sc-signature{width:56px;bottom:72px;left:8px;}}
 @media print{.sc-signature{display:none;}}
 .sc-support-widget-btn{display:flex;align-items:center;gap:6px;background:var(--rose-dark);color:var(--white);border:none;border-radius:999px;padding:12px 18px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.25);text-decoration:none;}
 .sc-support-widget-btn:hover{background:var(--dark);}
@@ -2978,7 +2978,7 @@ function scArenaCopyLink(id, btn){
     <a href="/accessibility" class="sc-a11y-row-btn" style="display:block;text-align:center;text-decoration:none;">הצהרת נגישות</a>
   </div>
 </div>
-<div class="sc-signature" aria-hidden="true"><img src="/signature.svg" alt="" width="104" height="30" /></div>
+<div class="sc-signature" aria-hidden="true"><img src="/signature.svg?v=2" alt="" width="66" height="19" /></div>
 ${NF ? "" : `<div class="sc-support-widget">
   <a href="/support" class="sc-support-widget-btn" aria-label="לתמיכה לחצי כאן"><span class="sc-support-icon" aria-hidden="true">🎧</span><span class="sc-support-label">לתמיכה לחצי כאן</span></a>
 </div>
