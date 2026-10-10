@@ -297,10 +297,10 @@ function nav(session) {
   if (mode.isNetfree()) return netfreeNav();
   const d = db.load();
   const settings = d.settings;
-  let right = `
-    <a class="nav-link" href="/login">אזור אישי</a>
-    <a class="nav-btn" href="/signup">עדיין לא נרשמתי</a>
-  `;
+  // החשבון מחולק לשניים: rightFirst (אזור אישי / שם הלקוחה) יושב בראש עמודת החשבון בצד שמאל של הסרגל, ו-right
+  // (עדיין לא נרשמתי / יציאה) יושב מתחתיו - לפי בקשה מפורשת.
+  let rightFirst = `<a class="nav-link" href="/login">אזור אישי</a>`;
+  let right = `<a class="nav-btn" href="/signup">עדיין לא נרשמתי</a>`;
   if (session && session.role === "customer") {
     const customer = d.customers.find((c) => c.id === session.id);
     const label = customer ? esc(customer.name) : "האזור שלי";
@@ -312,13 +312,17 @@ function nav(session) {
       <form method="post" action="/account/switch-to-freelancer" style="display:inline;">
         <button type="submit" class="nav-link" style="background:none;border:1px solid transparent;cursor:pointer;font:inherit;" title="יש לך הודעות ממתינות כעצמאית">🧵 הודעות כעצמאית${badge(freelancerUnread)}</button>
       </form>` : "";
-    right = `${switchToFreelancerBtn}<a class="nav-link" href="/account" title="אזור אישי">${label}${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
+    rightFirst = `<a class="nav-link" href="/account" title="אזור אישי">${label}${badge(unreadChatCount(session))}</a>`;
+    right = `${switchToFreelancerBtn}<a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "freelancer") {
-    right = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי${badge(unreadChatCount(session))}</a><a class="nav-link" href="/logout">יציאה</a>`;
+    rightFirst = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי${badge(unreadChatCount(session))}</a>`;
+    right = `<a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "influencer") {
-    right = `<a class="nav-link" href="/influencer-dashboard" title="אזור אישי">האזור שלי</a><a class="nav-link" href="/logout">יציאה</a>`;
+    rightFirst = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי</a>`;
+    right = `<a class="nav-link" href="/logout">יציאה</a>`;
   } else if (session && session.role === "admin") {
-    right = `<a class="nav-link" href="/admin" title="ניהול">ניהול${pendingBadge(pendingAdminCount())}</a><a class="nav-link" href="/logout">יציאה</a>`;
+    rightFirst = `<a class="nav-link" href="/admin" title="ניהול">ניהול${pendingBadge(pendingAdminCount())}</a>`;
+    right = `<a class="nav-link" href="/logout">יציאה</a>`;
   }
   // Per explicit request, the top nav no longer shows the "SheCan" wordmark or heart as a
   // text fallback - only a custom uploaded logo image is shown there; without one, the brand
@@ -345,7 +349,7 @@ function nav(session) {
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${badge(arenaUnseenPollCount(session))}</a>
           <a class="nav-link" href="/patternmakers">✂️ מודליסטיות</a>
         </nav>
-        <nav class="nav-side" aria-label="חשבון">${right}</nav>
+        <nav class="nav-side" aria-label="חשבון">${rightFirst}${right}</nav>
       </div>
     </header>
     ${dealsTickerHtml()}
@@ -491,11 +495,24 @@ a{color:inherit;text-decoration:none;}
 .card, .panel, .price-card, .search-box, .weekly-tip, .review, .table-simple, .site-footer{background:var(--white);}
 /* Nav links pulled close together (not spread across the full header width) - only the
    account-area links (nav-side, below) stay pinned to the far left, per explicit request. */
-.main-nav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1 1 auto;justify-content:flex-start;}
+.main-nav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1 1 0;min-width:0;justify-content:flex-start;}
 .nav-link{display:inline-flex;align-items:center;gap:4px;font-size:14px;color:var(--gray);padding:6px 8px;font-weight:600;border-radius:8px;border:1px solid transparent;transition:border-color .15s ease,background .15s ease;white-space:nowrap;}
 .nav-link:hover, .nav-link.nav-active{background:var(--cream);border-color:var(--rose-dark);}
 /* "עדיין לא נרשמתי" + "אזור אישי" pinned to the far (visual) left of the bar, per explicit request. */
-.nav-side{display:flex;gap:8px;align-items:center;font-size:14px;margin-inline-start:auto;padding-inline-start:10px;flex-shrink:0;}
+.nav-side{display:flex;flex-direction:column;gap:6px;align-items:center;font-size:14px;margin-inline-start:auto;padding-inline-start:10px;flex-shrink:0;}
+@media (max-width:720px){.main-nav{flex:1 1 100%;} .nav-side{flex-direction:row;flex-wrap:wrap;justify-content:center;width:100%;margin-inline-start:0;padding-inline-start:0;}}
+/* מסך רחב: כל הסרגל (הניווט + אזור אישי/שם הלקוחה + עדיין לא נרשמתי/יציאה) בשורה אחת, עם פס שחור דקיק בין כל שני
+   פריטים - לפי בקשה מפורשת. במסכים צרים יותר הסרגל נשבר לכמה שורות כמו קודם (בלי הפסים, שלא יופיעו בתחילת שורה). */
+@media (min-width:1180px){
+  .header-inner{flex-wrap:nowrap;gap:0 4px;padding-inline:14px;}
+  .main-nav{flex:0 1 auto;flex-wrap:nowrap;gap:0;}
+  .nav-side{flex-direction:row;gap:0;margin-inline-start:0;padding-inline-start:0;}
+  .main-nav .nav-link,.nav-side .nav-link,.nav-side .nav-btn{font-size:13px;padding:6px 7px;position:relative;}
+  .nav-side .nav-btn{margin-inline-start:4px;}
+  .main-nav>a:not(:first-child)::before,.nav-side>*:first-child::before{content:"";position:absolute;inset-inline-start:-1px;top:24%;bottom:24%;width:1px;background:#1b1b1b;pointer-events:none;}
+  .nav-side>*:not(:first-child)::before{content:"";position:absolute;inset-inline-start:-1px;top:24%;bottom:24%;width:1px;background:#1b1b1b;pointer-events:none;}
+  .nav-side .nav-btn::before{display:none;}
+}
 .nav-btn{display:inline-flex;align-items:center;gap:6px;background:var(--rose);color:var(--white);padding:6px 12px;border-radius:8px;font-size:14px;font-weight:700;border:1.5px solid var(--rose-dark);transition:background .15s ease;white-space:nowrap;}
 .nav-btn:hover{background:var(--rose-dark);}
 /* "יש לי עסק" - emphasized CTA within the regular nav flow. */

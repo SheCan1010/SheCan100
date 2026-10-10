@@ -14240,12 +14240,12 @@ route("GET", "/influencers", async (req, res, params, query, ctx) => {
   <h1 class="section-title">${esc(pageName)}</h1>
   <p class="muted" style="text-align:center;max-width:620px;margin:0 auto 10px;">המשפיעניות והקבוצות שאנחנו אוהבות - סטטוסים עדכניים וקבוצות צ'אט שאפשר להצטרף אליהן בלחיצה.</p>
   <div class="inf-section-nav">
-    <a class="btn btn-small" href="#inf-statuses">📱 משפיעניות בסטטוסים</a>
+    <a class="btn btn-small" href="#inf-statuses">📱 סטטוסים</a>
     <a class="btn btn-small btn-outline" href="#inf-chats">💬 קבוצות צ'אט</a>
   </div>
   ${topHtml}
   ${usedCats.length > 1 ? `<div class="inf-chips">${catChips}</div>` : ""}
-  <h2 class="section-title" id="inf-statuses">📱 משפיעניות בסטטוסים</h2>
+  <h2 class="section-title" id="inf-statuses">📱 סטטוסים</h2>
   ${statusInfs.length ? `<div class="inf-grid">${statusInfs.map(statusCard).join("")}</div>` : `<p class="muted" style="text-align:center;">בקרוב כאן.</p>`}
   <h2 class="section-title" id="inf-chats" style="margin-top:34px;">💬 קבוצות צ'אט</h2>
   ${chatInfs.length ? `<div class="inf-grid">${chatInfs.map(groupCard).join("")}</div>` : `<p class="muted" style="text-align:center;">בקרוב כאן.</p>`}
