@@ -6167,7 +6167,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <h2>⏰ תפסת אותנו בזמן!</h2>
       <p>ההרשמה לנבחרת המייסדות של SheCan נפתחה! ✨<br/>זה הזמן להצטרף ל-SheCan ולהיות חלק ממאגר העצמאיות כבר מההתחלה.</p>
       <p style="font-weight:800;font-size:16.5px;color:var(--ok);background:#e9f1e8;border-radius:10px;padding:10px 12px;">🎉 ההצטרפות כרגע ב-<span style="font-size:20px;">0 ₪</span> - ללא דמי הצטרפות וללא תשלום! 🎁</p>
-      <p>🚀 מסלול המייסדות פתוח עד שהמאגר יגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות בלבד. אחרי שנגיע ליעד, ההצטרפות תעבור למסלולים בתשלום.</p>
+      <p>🚀 מסלול המייסדות פתוח כרגע, וההרשמה החינמית יכולה להסתיים בכל רגע נתון. אחרי שתסתיים, ההצטרפות תעבור למסלולים בתשלום.</p>
       <p>💪 אז אם יש לך עסק - זה בדיוק הזמן לתפוס את המקום שלך ב-SheCan.<br/>מצטרפת עכשיו, בונה נוכחות, נהנית מההזדמנות. והכי חשוב: את יכולה להגיד - הייתי כאן מההתחלה. 💛</p>
       <button type="button" class="btn sc-modal-btn" onclick="scCloseModal()">מצטרפת!</button>
     </div>
@@ -7357,7 +7357,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
           <input type="text" id="scFreelancerRefLinkPopup" value="${esc(freelancerRefLinkPopup)}" readonly />
           <button type="button" class="btn btn-small" onclick="scCopyLink('scFreelancerRefLinkPopup')">העתקת קישור</button>
         </div>
-        <p class="muted" style="font-size:11.5px;margin-top:10px;">*התחרות פעילה עד שנגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות - ברגע שמגיעים ליעד, מסתיימת ההרשמה החינמית ומתחילה הרשמה בתשלום, ופרסום העסק המוביל יחל בסמוך לכך.</p>
+        <p class="muted" style="font-size:11.5px;margin-top:10px;">*התחרות פעילה כל עוד ההרשמה החינמית פתוחה, והיא יכולה להסתיים בכל רגע נתון - ברגע שהיא מסתיימת מתחילה הרשמה בתשלום, ופרסום העסק המוביל יחל בסמוך לכך.</p>
         ` : ""}
         <button type="button" class="btn sc-modal-btn" onclick="this.closest('.sc-modal-overlay').remove()">הבנתי, תודה</button>
       </div>
@@ -7506,13 +7506,13 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
       <input type="text" id="scFreelancerRefLink" value="${getOrigin(req)}/join?ref=${f.id}" readonly />
       <button type="button" class="btn btn-small" onclick="scCopyLink('scFreelancerRefLink')">העתקת קישור</button>
     </div>
-    <p class="muted" style="font-size:11.5px;margin-top:10px;">*התחרות פעילה עד שנגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות - ברגע שמגיעים ליעד, מסתיימת ההרשמה החינמית ומתחילה הרשמה בתשלום, ופרסום העסק המוביל יחל בסמוך לכך.</p>
+    <p class="muted" style="font-size:11.5px;margin-top:10px;">*התחרות פעילה כל עוד ההרשמה החינמית פתוחה, והיא יכולה להסתיים בכל רגע נתון - ברגע שהיא מסתיימת מתחילה הרשמה בתשלום, ופרסום העסק המוביל יחל בסמוך לכך.</p>
     ${d.settings.freelancerReferralPromoNote ? `<p style="font-weight:700;margin-top:8px;">📢 ${esc(d.settings.freelancerReferralPromoNote)}</p>` : ""}
   </div>
   ${referralStatusHtml({
     entities: d.freelancers, refField: "referredByFreelancerId", selfId: f.id,
     nameOf: (x) => x.businessName || x.name, firstNameOf: (x) => (x.name || "").split(" ")[0],
-    goalLabel: `שנגיע ל-${String(d.settings.freelancerRaceGoal || 700)} עצמאיות מייסדות`, noun: "חברות", rivalNoun: "עצמאיות",
+    goalLabel: `שההרשמה החינמית תסתיים (וזה יכול לקרות בכל רגע)`, noun: "חברות", rivalNoun: "עצמאיות",
   })}` : ""}
 
   <div class="panel" style="text-align:center;">
@@ -12996,7 +12996,7 @@ route("GET", "/how-it-works", async (req, res, params, query, ctx) => {
 
   <div class="panel" style="max-width:680px;margin:0 auto 18px;text-align:right;">
     <h3 style="margin-top:0;">🏆 "מירוץ ${esc(String(raceGoal))} המייסדות" - מה זה בעצם</h3>
-    <p>עד שנגיע ל-${esc(String(raceGoal))} עצמאיות באתר, ההרשמה חינמית לגמרי לכל עצמאית - וכל מי שנרשמת בתקופה הזו (ה"מייסדות") ממשיכה בחינם גם אחרי שנגיע ליעד. התשלום, כשהוא יתחיל, יחול רק על עצמאית מספר ${esc(String(raceGoal + 1))} ואילך. זו הסיבה שהמספר הזה מוצג בכל מקום באתר - זה לא גימיק שיווקי, זה פשוט השקיפות שלנו לגבי מתי ואיך המודל העסקי משתנה. אפשר לקרוא עוד על זה, כולל על "מירוץ ההפניות" והפרסים, <a href="/race" style="color:var(--rose-dark);font-weight:800;">בעמוד הזה</a>.</p>
+    <p>כרגע ההרשמה חינמית לגמרי לכל עצמאית, והיא יכולה להסתיים בכל רגע נתון - וכל מי שנרשמת בתקופה הזו (ה"מייסדות") ממשיכה בחינם גם אחרי שהיא תסתיים. התשלום, כשהוא יתחיל, יחול רק על עצמאיות שיירשמו אחרי סיום ההרשמה החינמית. זו הסיבה שהמספר הזה מוצג בכל מקום באתר - זה לא גימיק שיווקי, זה פשוט השקיפות שלנו לגבי מתי ואיך המודל העסקי משתנה. אפשר לקרוא עוד על זה, כולל על "מירוץ ההפניות" והפרסים, <a href="/race" style="color:var(--rose-dark);font-weight:800;">בעמוד הזה</a>.</p>
   </div>
 
   <div class="panel" style="max-width:680px;margin:0 auto 18px;text-align:right;">
@@ -13029,7 +13029,7 @@ route("GET", "/race", async (req, res, params, query, ctx) => {
   <div class="panel" id="freelancers" style="scroll-margin-top:90px;max-width:680px;margin:0 auto 20px;text-align:right;">
     <h3 style="margin-top:0;">מירוץ ${esc(String(d.settings.freelancerRaceGoal || 700))} העצמאיות</h3>
     <p>אנחנו שואפות להגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))}+ עצמאיות באתר - וכל עצמאית יכולה לעזור להגיע לשם. לכל עצמאית יש קישור אישי משלה (מהאזור האישי שלה): כל עצמאית חדשה שנרשמת דרך הקישור הזה מזכה אותה ב-10 נקודות.</p>
-    <p><strong>הפרסים:</strong> 3 המקומות הראשונים (נכון לרגע שבו נגיע ל-${esc(String(d.settings.freelancerRaceGoal || 700))} עצמאיות מייסדות והמירוץ יסתיים) זוכות בפרסום חינם באתר: מקום 1 - חודש שלם, מקום 2 - שבועיים, מקום 3 - שבוע. הפרסום מוצג לכל אורך האתר (תג "📣 מודעה"), בדיוק כמו מודעה בתשלום רגילה.</p>
+    <p><strong>הפרסים:</strong> 3 המקומות הראשונים (נכון לרגע שבו ההרשמה החינמית תסתיים והמירוץ יסתיים) זוכות בפרסום חינם באתר: מקום 1 - חודש שלם, מקום 2 - שבועיים, מקום 3 - שבוע. הפרסום מוצג לכל אורך האתר (תג "📣 מודעה"), בדיוק כמו מודעה בתשלום רגילה.</p>
     ${d.settings.freelancerReferralAnnounceDate ? `<p class="muted">הזוכות יוכרזו ב-${esc(d.settings.freelancerReferralAnnounceDate)}.</p>` : ""}
   </div>
   <div class="panel" id="customers" style="scroll-margin-top:90px;max-width:680px;margin:0 auto;text-align:right;">
