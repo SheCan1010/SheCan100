@@ -1628,6 +1628,157 @@ function hasVerifiedDeal(d, freelancerId) {
 }
 const VERIFIED_DEAL_BADGE_TITLE = "יש כבר לקוחות שסגרו עם העסק הזה דרך SheCan ומימשו את ההטבה בפועל";
 
+// ----- חיפוש לפי מיקום ("בסביבה שלי") -----
+// קואורדינטות מרכז-עיר משוערות (רמת דיוק של עיר, לא כתובת) לפי שם העיר. ערים שנוספו ידנית בלי קואורדינטות
+// פשוט לא יקבלו חישוב מרחק. המיקום המדויק של הלקוחה לעולם לא נשלח לשרת - רק מזהה העיר הקרובה אליה.
+const CITY_COORDS = {
+  "תל אביב": [32.0853, 34.7818],
+  "ירושלים": [31.7683, 35.2137],
+  "חיפה": [32.7940, 34.9896],
+  "ראשון לציון": [31.9730, 34.7925],
+  "פתח תקווה": [32.0841, 34.8878],
+  "אשדוד": [31.8044, 34.6553],
+  "נתניה": [32.3215, 34.8532],
+  "באר שבע": [31.2530, 34.7915],
+  "חולון": [32.0158, 34.7874],
+  "רמת גן": [32.0684, 34.8248],
+  "בת ים": [32.0171, 34.7503],
+  "רחובות": [31.8928, 34.8113],
+  "אשקלון": [31.6688, 34.5743],
+  "הרצליה": [32.1624, 34.8447],
+  "כפר סבא": [32.1780, 34.9066],
+  "רעננה": [32.1848, 34.8713],
+  "מודיעין": [31.8969, 35.0104],
+  "נס ציונה": [31.9293, 34.7987],
+  "קריית אונו": [32.0636, 34.8553],
+  "הוד השרון": [32.1500, 34.8888],
+  "עפולה": [32.6078, 35.2897],
+  "נהריה": [33.0036, 35.0950],
+  "אילת": [29.5577, 34.9519],
+  "טבריה": [32.7959, 35.5300],
+  "כרמיאל": [32.9190, 35.2957],
+  "בני ברק": [32.0809, 34.8338],
+  "בית שמש": [31.7514, 34.9886],
+  "חדרה": [32.4340, 34.9196],
+  "לוד": [31.9515, 34.8955],
+  "רמלה": [31.9279, 34.8625],
+  "נצרת": [32.6996, 35.3035],
+  "גבעתיים": [32.0707, 34.8123],
+  "קריית אתא": [32.8097, 35.1053],
+  "רהט": [31.3925, 34.7544],
+  "קריית גת": [31.6100, 34.7642],
+  "קריית מוצקין": [32.8369, 35.0753],
+  "אור יהודה": [32.0292, 34.8570],
+  "צפת": [32.9646, 35.4960],
+  "נתיבות": [31.4200, 34.5890],
+  "דימונה": [31.0700, 35.0330],
+  "יבנה": [31.8780, 34.7390],
+  "אום אל-פחם": [32.5160, 35.1530],
+  "שפרעם": [32.8056, 35.1700],
+  "קריית ים": [32.8497, 35.0690],
+  "קריית מלאכי": [31.7290, 34.7440],
+  "קריית ביאליק": [32.8270, 35.0830],
+  "אריאל": [32.1060, 35.1690],
+  "טייבה": [32.2660, 35.0100],
+  "סח'נין": [32.8650, 35.3000],
+  "טירה": [32.2340, 34.9500],
+  "אור עקיבא": [32.5070, 34.9190],
+  "נשר": [32.7720, 35.0400],
+  "מגדל העמק": [32.6740, 35.2400],
+  "יהוד-מונוסון": [32.0330, 34.8890],
+  "קריית שמונה": [33.2070, 35.5700],
+  "ראש העין": [32.0956, 34.9567],
+  "גבעת שמואל": [32.0780, 34.8530],
+  "אלעד": [32.0520, 34.9510],
+  "באקה אל-גרביה": [32.4150, 35.0400],
+  "טמרה": [32.8530, 35.1980],
+  "ג'לג'וליה": [32.1530, 34.9540],
+  "עכו": [32.9281, 35.0820],
+  "בית שאן": [32.4990, 35.4970],
+  "יקנעם עילית": [32.6590, 35.1070],
+  "כפר קאסם": [32.1140, 34.9760],
+  "כפר יונה": [32.3170, 34.9350],
+  "נוף הגליל": [32.7080, 35.3270],
+  "מעלה אדומים": [31.7770, 35.2980],
+  "ביתר עילית": [31.6960, 35.1150],
+  "מודיעין עילית": [31.9330, 35.0430],
+  "שוהם": [31.9970, 34.9460],
+  "פרדס חנה-כרכור": [32.4750, 34.9740],
+  "זכרון יעקב": [32.5700, 34.9540],
+  "גדרה": [31.8130, 34.7790],
+  "כוכב יאיר-צור יגאל": [32.2220, 34.9930],
+  "קדימה-צורן": [32.2760, 34.9180],
+  "אבן יהודה": [32.2700, 34.8880],
+  "בנימינה-גבעת עדה": [32.5200, 34.9490],
+  "גני תקווה": [32.0610, 34.8730],
+  "קריית טבעון": [32.7220, 35.1260],
+  "מזכרת בתיה": [31.8560, 34.8420],
+  "באר יעקב": [31.9440, 34.8350],
+  "עתלית": [32.6890, 34.9420],
+  "דלית אל-כרמל": [32.6930, 35.0450],
+  "עוספיה": [32.7190, 35.0690],
+  "כפר מנדא": [32.8120, 35.2580],
+  "כפר קרע": [32.5000, 35.0580],
+  "ערערה": [32.5130, 35.0900],
+  "ג'ת": [32.3980, 35.0430],
+  "כאבול": [32.8650, 35.2160],
+  "ריינה": [32.7250, 35.3200],
+  "איכסאל": [32.6850, 35.3250],
+  "כפר כנא": [32.7460, 35.3400],
+  "מע'אר": [32.8920, 35.2700],
+  "דבוריה": [32.6900, 35.3750],
+  "נחף": [32.9270, 35.3230],
+  "ג'דיידה-מכר": [32.9300, 35.1450],
+  "אעבלין": [32.8330, 35.2000],
+  "כפר יאסיף": [32.9530, 35.1650],
+  "אבו סנאן": [32.9570, 35.1750],
+  "שגב-שלום": [31.3650, 34.8300],
+  "ערד": [31.2600, 35.2130],
+  "מצפה רמון": [30.6100, 34.8010],
+  "ירוחם": [30.9880, 34.9310],
+  "כסייפה": [31.2330, 35.0640],
+  "לקיה": [31.3200, 34.8700],
+  "חורה": [31.2980, 34.9330],
+  "תל שבע": [31.2490, 34.8620],
+  "אבו גוש": [31.8070, 35.1090],
+  "מבשרת ציון": [31.7970, 35.1500],
+  "הר אדר": [31.8430, 35.1380],
+  "אלקנה": [32.1090, 35.0330],
+  "אורנית": [32.1300, 35.0400],
+  "קרני שומרון": [32.1660, 35.0970],
+  "אפרת": [31.6560, 35.1550],
+  "קריית ארבע": [31.5320, 35.1210],
+  "מעלות-תרשיחא": [33.0160, 35.2750],
+  "שלומי": [33.0750, 35.1480],
+  "ראש פינה": [32.9690, 35.5410],
+  "חצור הגלילית": [32.9810, 35.5430],
+  "כפר ורדים": [32.9840, 35.2670],
+  "מגדל": [32.8400, 35.5170],
+  "בית ג'ן": [32.9640, 35.3790],
+  "ג'סר א-זרקא": [32.5370, 34.9020],
+  "פוריידיס": [32.6050, 34.9510],
+  "בוקעאתא": [33.1960, 35.7580],
+  "מג'דל שמס": [33.2710, 35.7700],
+  "יאנוח-ג'ת": [32.9890, 35.2200],
+  "חריש": [32.4600, 35.0440],
+};
+function cityCoords(d, cityId) {
+  const c = (d.cities || []).find((x) => x.id === cityId);
+  return c && CITY_COORDS[c.name] ? CITY_COORDS[c.name] : null;
+}
+function haversineKm(a, b) {
+  const R = 6371, rad = (x) => x * Math.PI / 180;
+  const dLat = rad(b[0] - a[0]), dLng = rad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+// תווית מרחק לכרטיס: null אם אין מרחק.
+function distanceLabelHtml(dist, online) {
+  if (dist == null) return online ? `<div class="card-meta-row">💻 אונליין</div>` : "";
+  if (dist < 0.5) return `<div class="card-meta-row sc-dist">📍 באותה העיר</div>`;
+  return `<div class="card-meta-row sc-dist">📍 כ-${Math.round(dist)} ק״מ ממך</div>`;
+}
+
 function freelancerCard(f, d, opts = {}) {
   // Only badges that still make sense on the compact grid card - the delivery-method and
   // whatsapp badges moved to live below the contact details on the full profile page
@@ -1689,6 +1840,7 @@ function freelancerCard(f, d, opts = {}) {
       <div class="card-meta-block">
         ${cardLocation ? `<div class="card-meta-row">${cardLocationIcon} ${esc(cardLocation)}</div>` : ""}
         ${f.yearsInField ? `<div class="card-meta-row">🌱 ${esc(yearsInFieldShortLabel(f.yearsInField))}</div>` : ""}
+        ${opts.distanceHtml || ""}
       </div>
       ${badges.length ? `<div class="card-badges">${badges.join(" ")}</div>` : ""}
       <div class="card-info">
@@ -1708,7 +1860,7 @@ function freelancerCard(f, d, opts = {}) {
 // regular freelancer card - it links to its own detail page, but contact info (phone,
 // whatsapp, email, city) is shared from the parent freelancer record since that's the
 // same real person underneath.
-function additionalListingCard(f, listing, d) {
+function additionalListingCard(f, listing, d, opts = {}) {
   const catNameStr = catName(d, listing.categoryId);
   const badges = [];
   if (listing.tier === "premium") badges.push(`<span class="badge">מומלצת</span>`);
@@ -1732,6 +1884,7 @@ function additionalListingCard(f, listing, d) {
       <div class="card-meta-block">
         ${listingLocation ? `<div class="card-meta-row">${listingLocationIcon} ${esc(listingLocation)}</div>` : ""}
         ${listing.yearsInField ? `<div class="card-meta-row">🌱 ${esc(yearsInFieldShortLabel(listing.yearsInField))}</div>` : ""}
+        ${opts.distanceHtml || ""}
       </div>
       ${badges.length ? `<div class="card-badges">${badges.join(" ")}</div>` : ""}
       <div class="card-info">
@@ -2746,6 +2899,13 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   const sortQuality = query.get("sortQuality") === "1";
   const aiUsed = query.get("ai") === "1";
   const NF = mode.isNetfree();
+  // "בסביבה שלי": from = עיר המוצא של הלקוחה (נבחרה ידנית, או נבחרה ע"י כפתור המיקום בדפדפן - הקואורדינטות
+  // המדויקות שלה לא מגיעות לשרת, רק מזהה העיר הקרובה אליה). radius = ק"מ (0 = בלי הגבלה). לא פעיל בנטפרי.
+  const fromId = (!NF && d.cities.some((c) => c.id === (query.get("from") || ""))) ? query.get("from") : "";
+  const fromCoords = fromId ? cityCoords(d, fromId) : null;
+  const RADIUS_OPTIONS = [5, 10, 25, 50, 100, 0];
+  const radiusRaw = parseInt(query.get("radius"), 10);
+  const radius = RADIUS_OPTIONS.includes(radiusRaw) ? radiusRaw : 25;
   const results = d.freelancers.filter((f) => {
     if (f.status !== "approved") return false;
     if (f.active === false) return false;
@@ -2801,9 +2961,36 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     });
   });
 
-  const combinedCards = results.map((f) => ({ tier: f.tier, reviewCount: reviewCountFor(d, f.id), avgRating: avgRatingFor(d, f.id), html: freelancerCard(f, d) }))
-    .concat(listingMatches.map(({ f, l }) => ({ tier: l.tier, reviewCount: reviewCountFor(d, f.id, l.id), avgRating: avgRatingFor(d, f.id, l.id), html: additionalListingCard(f, l, d) })))
-    .sort((a, b) => ((b.tier === "premium") - (a.tier === "premium")) || (sortQuality ? (b.avgRating - a.avgRating) || (b.reviewCount - a.reviewCount) : (b.reviewCount - a.reviewCount)));
+  // מרחק מעיר המוצא. null = אין נתון (אין עיר/קואורדינטות). עצמאית אונליין שמחוץ לרדיוס נשארת בתוצאות
+  // (מסומנת "אונליין" ומדורגת אחרי הקרובות); אחרת מי שמחוץ לרדיוס יוצאת.
+  const nearInfo = (cityId, online) => {
+    if (!fromId) return { keep: true, dist: null, far: false };
+    let dist = null;
+    if (cityId && cityId === fromId) dist = 0;
+    else if (fromCoords) { const cc = cityCoords(d, cityId); if (cc) dist = haversineKm(fromCoords, cc); }
+    const inside = dist != null && (radius === 0 || dist <= radius);
+    if (inside) return { keep: true, dist, far: false };
+    if (online) return { keep: true, dist, far: true };
+    if (radius === 0) return { keep: true, dist, far: dist == null };
+    return { keep: false, dist, far: true };
+  };
+  const cardEntries = [];
+  results.forEach((f) => {
+    const ni = nearInfo(f.cityId, f.offersOnline);
+    if (!ni.keep) return;
+    const distanceHtml = fromId ? distanceLabelHtml(ni.far ? null : ni.dist, ni.far && f.offersOnline) : "";
+    cardEntries.push({ tier: f.tier, reviewCount: reviewCountFor(d, f.id), avgRating: avgRatingFor(d, f.id), dist: ni.dist, far: ni.far, html: freelancerCard(f, d, { distanceHtml }) });
+  });
+  listingMatches.forEach(({ f, l }) => {
+    const ni = nearInfo(f.cityId, l.offersOnline);
+    if (!ni.keep) return;
+    const distanceHtml = fromId ? distanceLabelHtml(ni.far ? null : ni.dist, ni.far && l.offersOnline) : "";
+    cardEntries.push({ tier: l.tier, reviewCount: reviewCountFor(d, f.id, l.id), avgRating: avgRatingFor(d, f.id, l.id), dist: ni.dist, far: ni.far, html: additionalListingCard(f, l, d, { distanceHtml }) });
+  });
+  const combinedCards = cardEntries
+    .sort((a, b) => ((b.tier === "premium") - (a.tier === "premium"))
+      || (fromId ? ((a.far ? 1 : 0) - (b.far ? 1 : 0)) || ((a.dist == null ? 1e9 : a.dist) - (b.dist == null ? 1e9 : b.dist)) : 0)
+      || (sortQuality ? (b.avgRating - a.avgRating) || (b.reviewCount - a.reviewCount) : (b.reviewCount - a.reviewCount)));
 
   // סטטוסים של משפיעניות + כפתורי הצטרפות לקבוצות שמשולבים בין התוצאות (רק כשעמוד המשפיעניות פתוח,
   // ולא בנטפרי). מותאמים לתחום החיפוש; המומלצות (featured) תמיד ראשונות.
@@ -2826,6 +3013,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     if (subcategory) breadcrumbItems.push({ label: subcatName(d, category, subcategory), href: `/search?category=${category}&subcategory=${subcategory}` });
   }
   // תיבת "חיפוש חכם" (AI) הוסרה מעמוד החיפוש לפי בקשה מפורשת (2026-10-04) - נשאר רק החיפוש הרגיל.
+  const nearClear = new URLSearchParams(query);
+  nearClear.delete("from"); nearClear.delete("radius");
+  const nearClearHref = `/search${nearClear.toString() ? `?${nearClear.toString()}` : ""}`;
+  const nearCitiesJson = NF ? "{}" : JSON.stringify(Object.fromEntries(d.cities.filter((c) => CITY_COORDS[c.name]).map((c) => [c.id, [...CITY_COORDS[c.name], c.name]]))).replace(/</g, "\\u003c");
   const body = `
   ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
@@ -2838,6 +3029,12 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
           <select name="subcategory" id="scSearchSubcat"><option value="">${category ? "כל תת-התחומים" : "בחרי קודם תחום"}</option>${subcatOptions}</select>
           ${cityAutocompleteHtml({ fieldName: "city", selectedId: city, selectedName: city ? cityName(d, city) : "", placeholder: "מאיזו עיר?" })}
         </div>
+        ${NF ? "" : `<div class="search-row sc-near-row" style="margin-top:10px;align-items:center;">
+          <button type="button" class="btn" id="scNearBtn" onclick="scNearMe()" style="flex:0 0 auto;white-space:nowrap;">📍 בסביבה שלי</button>
+          ${cityAutocompleteHtml({ fieldName: "from", selectedId: fromId, selectedName: fromId ? cityName(d, fromId) : "", placeholder: "או: איפה את?" })}
+          <select name="radius" id="scRadius" aria-label="רדיוס חיפוש" style="flex:0 1 150px;min-width:130px;">${RADIUS_OPTIONS.map((r) => `<option value="${r}" ${r === radius ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>
+        </div>
+        <p id="scNearNote" class="muted" style="text-align:center;margin:6px 0 0;font-size:.85rem;" aria-live="polite"></p>`}
         <div class="search-row" style="margin-top:10px;justify-content:center;">
           <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0;">
             <input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} style="width:auto;margin:0;" onchange="scLiveFilter()" /><span>🚗 מגיעה עד הבית</span>
@@ -2858,10 +3055,41 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
           </div>
         </div>
       </form>
+      ${fromId ? `<p class="sc-near-banner" style="text-align:center;font-weight:700;margin:12px 0 0;">📍 מוצגות לפי קרבה ל${esc(cityName(d, fromId))}${radius ? ` · עד ${radius} ק״מ` : ""} · <a href="${esc(nearClearHref)}" style="color:var(--rose-dark);">ביטול</a></p>` : ""}
       <div id="scResultsGrid">
       ${combinedCards.length ? `<div class="grid" id="scCardsGrid" data-view="medium">${resultsGridHtml}</div>${infStrips ? infStrips.footerHtml : ""}` : `<p class="muted" style="text-align:center;">הפעם לא מצאנו התאמה... נסי לפתוח קצת את החיפוש, בטוח יש מישהי בשבילך.</p>`}
       </div>
       <p id="scNoLiveMatch" class="muted" style="text-align:center;display:none;">אין כרגע עצמאית שמתאימה לזה... נסי לשנות קצת את החיפוש.</p>
+      ${NF ? "" : `<script>
+      var SC_NEAR_CITIES = ${nearCitiesJson};
+      function scNearMe() {
+        var note = document.getElementById("scNearNote");
+        var btn = document.getElementById("scNearBtn");
+        function say(t) { if (note) note.textContent = t; }
+        if (!navigator.geolocation) { say("הדפדפן לא תומך בזיהוי מיקום - אפשר לבחור עיר ידנית בשדה \u201Cאיפה את?\u201D."); return; }
+        say("מאתרת את המיקום שלך..."); if (btn) btn.disabled = true;
+        navigator.geolocation.getCurrentPosition(function (pos) {
+          if (btn) btn.disabled = false;
+          var la = pos.coords.latitude, lo = pos.coords.longitude, best = null, bestD = 1e9;
+          Object.keys(SC_NEAR_CITIES).forEach(function (id) {
+            var c = SC_NEAR_CITIES[id], r = Math.PI / 180;
+            var h = Math.pow(Math.sin((c[0] - la) * r / 2), 2) + Math.cos(la * r) * Math.cos(c[0] * r) * Math.pow(Math.sin((c[1] - lo) * r / 2), 2);
+            var km = 12742 * Math.asin(Math.sqrt(h));
+            if (km < bestD) { bestD = km; best = id; }
+          });
+          if (!best || bestD > 60) { say("לא הצלחנו לקשר את המיקום שלך לעיר ברשימה - אפשר לבחור עיר ידנית בשדה \u201Cאיפה את?\u201D."); return; }
+          var form = document.querySelector("form.search-box");
+          var wrap = form.querySelector('input[name="from"]').closest(".city-autocomplete");
+          wrap.querySelector(".city-autocomplete-hidden").value = best;
+          wrap.querySelector(".city-autocomplete-input").value = SC_NEAR_CITIES[best][2];
+          say("זוהה: " + SC_NEAR_CITIES[best][2] + " (המיקום המדויק שלך לא נשמר ולא נשלח לאתר)");
+          form.submit();
+        }, function () {
+          if (btn) btn.disabled = false;
+          say("לא קיבלנו אישור למיקום - אפשר לבחור עיר ידנית בשדה \u201Cאיפה את?\u201D.");
+        }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 });
+      }
+      </script>`}
       ${(category && !NF) ? `<p class="muted" style="text-align:center;margin-top:18px;">לא מצאת בדיוק את מי שאת מחפשת? <a href="/service-requests?category=${category}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום הזה יוכלו לפנות אלייך.</p>` : ""}
   `;
   // כותרת/תיאור/canonical דינמיים לפי הסינון (נוסף 2026-08-27, לפי בקשה מפורשת לשיפור הדירוג
