@@ -278,7 +278,7 @@ function netfreeNav(session) {
   ${settings.netfreeTopBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${esc(settings.netfreeTopBannerDataUri)}" alt="${esc(brand)}" class="top-banner" /></a></div>` : ""}
   <div class="site-header-sticky">
     <header class="site-header" role="banner">
-      <div class="container header-inner">
+      <div class="container header-inner nf-header">
         <a href="/" class="brand">${logo}</a>
         <nav class="main-nav" dir="rtl" aria-label="ניווט ראשי">
           <a class="nav-link" href="/">דף הבית</a>
@@ -778,30 +778,38 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-box{max-width:820px;padding:18px 20px;}
 .sc-s-main{display:flex;gap:10px;align-items:stretch;}
 .sc-s-inputwrap{position:relative;flex:1;min-width:0;}
-.sc-s-inputwrap input{font-size:18px;padding:15px 18px;border-radius:14px;border:2px solid var(--rose);}
-.sc-s-go{border-radius:14px;padding:0 30px;font-size:18px;white-space:nowrap;}
+.sc-s-inputwrap input{font-size:16px;padding:11px 16px;border-radius:12px;border:2px solid var(--rose);}
+.sc-s-go{border-radius:12px;padding:0 22px;font-size:16px;white-space:nowrap;}
 .sc-s-suggest{position:absolute;top:100%;right:0;left:0;z-index:60;background:var(--white);border:1px solid #ddd3c4;border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.16);margin-top:4px;max-height:340px;overflow:auto;}
 .sc-s-opt{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;font-weight:600;border-bottom:1px solid #f0e8de;min-height:46px;}
 .sc-s-opt:last-child{border-bottom:0;}
 .sc-s-opt small{color:var(--gray);font-weight:500;opacity:.85;}
 .sc-s-opt:hover, .sc-s-opt[aria-selected="true"]{background:var(--cream);}
 .sc-s-loc{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;}
-.sc-s-near{flex:0 0 auto;white-space:nowrap;}
+.sc-s-near{flex:0 0 auto;white-space:nowrap;padding:8px 16px;font-size:14px;border-radius:20px;}
 .sc-s-loc .city-autocomplete{flex:1;min-width:170px;}
-.sc-s-loc select{flex:0 1 165px;min-width:130px;width:auto;}
+.sc-s-loc select{flex:0 1 150px;min-width:120px;width:auto;padding:9px 12px;font-size:14px;}
+.sc-s-loc input{padding:9px 14px;font-size:14px;}
 .sc-s-chips{display:flex;gap:8px;overflow-x:auto;padding:6px 2px 8px;margin-top:8px;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
-.sc-s-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:9px 16px;min-height:44px;border-radius:999px;border:1.5px solid #ddd3c4;background:var(--white);color:var(--dark) !important;font-weight:700;font-size:15px;text-decoration:none;white-space:nowrap;}
+.sc-s-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:5px 13px;min-height:36px;border-radius:999px;border:1.5px solid #ddd3c4;background:var(--white);color:var(--dark) !important;font-weight:700;font-size:13.5px;text-decoration:none;white-space:nowrap;}
 .sc-s-chip:hover{border-color:var(--rose-dark);background:var(--cream);}
 .sc-s-chip.active{background:var(--rose-dark);border-color:var(--rose-dark);color:#fff !important;}
 .sc-s-subchips{margin-top:0;}
-.sc-s-subchips .sc-s-chip{font-size:14px;padding:6px 14px;min-height:38px;font-weight:600;}
+.sc-s-subchips .sc-s-chip{font-size:13px;padding:3px 11px;min-height:30px;font-weight:600;}
 .sc-s-more{margin-top:6px;border-top:1px solid #efe6db;padding-top:4px;}
 .sc-s-more summary{cursor:pointer;font-weight:700;color:var(--rose-dark);min-height:44px;display:flex;align-items:center;gap:6px;list-style:none;}
 .sc-s-more summary::-webkit-details-marker{display:none;}
 .sc-s-more summary::after{content:"▾";margin-inline-start:4px;}
 .sc-s-more[open] summary::after{content:"▴";}
-.sc-s-check{display:flex;align-items:center;gap:6px;font-weight:600;width:auto;white-space:nowrap;margin:0;min-height:40px;}
-.sc-s-check input{width:20px;height:20px;margin:0;flex:0 0 auto;}
+/* מתגי סינון מהירים (הטבה / מגיעה עד הבית) - בולטים מתחת לתיבת החיפוש; לחיצה מפעילה את הסינון מיד. */
+.sc-s-toggles{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.sc-s-toggle{display:inline-flex;margin:0;cursor:pointer;width:auto;}
+.sc-s-toggle input{position:absolute;opacity:0;width:1px;height:1px;margin:0;}
+.sc-s-toggle span{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:38px;border-radius:999px;border:1.5px solid var(--rose-dark);background:var(--white);color:var(--rose-dark);font-weight:800;font-size:14px;}
+.sc-s-toggle:hover span{background:var(--cream);}
+.sc-s-toggle input:checked + span{background:var(--rose-dark);color:#fff;}
+.sc-s-toggle input:checked + span::before{content:"✓";font-weight:900;}
+.sc-s-toggle input:focus-visible + span{outline:3px solid #7a6a5c;outline-offset:2px;}
 .sc-s-status{max-width:820px;margin:8px auto 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;}
 .sc-s-count{font-weight:800;margin-inline-end:4px;}
 .sc-s-tag{display:inline-flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;border-radius:999px;background:var(--white);border:1px solid #ddd3c4;font-weight:600;font-size:14px;}
@@ -1149,7 +1157,7 @@ form .field{margin-bottom:6px;}
 /* 2026-10-04: העמודות נמתחות לכל אורך הדף, וכל המודעות יושבות בתוך .side-stack שנדבק לחלון בזמן
    הגלילה - כך תמיד רואים מודעות לכל אורך העמוד. אם יש יותר מודעות ממה שנכנס בגובה המסך,
    סקריפט קטן מחליף בין "עמודים" של מודעות כל כמה שניות (ר' scSideAdsRotate בתחתית העמוד). */
-.side-stack{position:sticky;top:90px;max-height:calc(100vh - 110px);overflow-y:auto;scrollbar-width:none;transition:opacity .45s ease;}
+.side-stack{position:static;}
 .side-stack::-webkit-scrollbar{display:none;}
 .side-stack.sc-fade{opacity:0;}
 .side-stack .sc-side-hidden{display:none !important;}
@@ -1176,7 +1184,6 @@ form .field{margin-bottom:6px;}
   /* טלפון/טאבלט: המודעות נשארות בצדדים (לא יורדות למטה) כסמל קטן עם שם העסק מתחתיו */
   .page-with-sidebars{flex-direction:row;gap:6px;}
   .page-with-sidebars .side-col{width:58px;}
-  .side-stack{top:70px;max-height:calc(100vh - 90px);}
   .side-ad-card{padding:7px 2px 6px;margin-bottom:8px;border-radius:12px;border-width:1px;box-shadow:0 1px 4px rgba(0,0,0,.05);text-align:center;}
   .side-ad-card .badge,.side-ad-card .muted{display:none;}
   .side-ad-card-row{flex-direction:column;gap:3px;}
@@ -1193,6 +1200,10 @@ form .field{margin-bottom:6px;}
   .side-ad-photo,.side-ad-photo-initial{width:30px;height:30px;}
   .side-ad-card h4,.side-ad-card-text h4{font-size:9px;}
 }
+/* נטפרי: כל כפתורי הסרגל ממורכזים בדיוק באמצע העמוד (הלוגו למעלה, הניווט והחשבון מתחתיו) */
+.header-inner.nf-header{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;}
+.nf-header .brand{margin:0 auto;}
+.nf-header .main-nav,.nf-header .nav-side{flex:0 0 auto;flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:center;width:100%;margin:0 auto;padding:0;gap:6px;}
 .tabs{display:flex;gap:10px;margin-bottom:18px;}
 .tab{padding:8px 18px;border-radius:20px;background:var(--white);font-size:14px;}
 .tab.active{background:var(--rose);color:var(--white);}
@@ -3077,40 +3088,6 @@ ${NF ? "" : `<div class="sc-support-widget">
 <script>
 (function(){ setTimeout(function(){ var w=document.querySelector(".sc-support-widget"); if(w) w.classList.add("sc-support-collapsed"); }, 6000); })();
 </script>`}
-<script>
-/* סיבוב מודעות בצדדים - מציג כל פעם "עמוד" של מודעות שנכנס בגובה המסך, ומחליף כל כמה שניות */
-(function(){
-  var timers=[];
-  function build(){
-    timers.forEach(clearInterval); timers=[];
-    document.querySelectorAll('.side-stack').forEach(function(st){
-      var cards=[].slice.call(st.children);
-      cards.forEach(function(c){c.classList.remove('sc-side-hidden');});
-      if(cards.length<2) return;
-      var avail=st.clientHeight||(window.innerHeight-110), pages=[], cur=[], h=0;
-      cards.forEach(function(c){
-        var ch=c.offsetHeight+14;
-        if(cur.length&&h+ch>avail){pages.push(cur);cur=[];h=0;}
-        cur.push(c);h+=ch;
-      });
-      if(cur.length) pages.push(cur);
-      if(pages.length<2) return;
-      var i=0, paused=false;
-      function show(n){pages.forEach(function(pg,k){pg.forEach(function(c){c.classList.toggle('sc-side-hidden',k!==n);});});}
-      show(0);
-      st.addEventListener('mouseenter',function(){paused=true;});
-      st.addEventListener('mouseleave',function(){paused=false;});
-      timers.push(setInterval(function(){
-        if(paused||document.hidden) return;
-        st.classList.add('sc-fade');
-        setTimeout(function(){i=(i+1)%pages.length;show(i);st.classList.remove('sc-fade');},450);
-      },7000));
-    });
-  }
-  var rt; window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(build,250);});
-  if(document.readyState==='complete') build(); else window.addEventListener('load',build);
-})();
-</script>
 </body>
 </html>`;
 }

@@ -3065,7 +3065,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (!NF || mode.freelancerVisible(f))).slice(0, 400)
     .forEach((f) => suggestData.push(["b", f.businessName || f.name, `/freelancer/${encodeURIComponent(f.id)}`]));
   const suggestJson = JSON.stringify(suggestData).replace(/</g, "\\u003c");
-  const advOpen = !!(city || homeVisit || withDeal);
+  const advOpen = !!city;
   const body = `
   ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
@@ -3083,6 +3083,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
           <select name="radius" id="scRadius" aria-label="עד כמה רחוק">${RADIUS_OPTIONS.map((r) => `<option value="${r}" ${r === radius ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>
         </div>
         <p id="scNearNote" class="muted" style="text-align:center;margin:6px 0 0;font-size:.85rem;" aria-live="polite"></p>`}
+        <div class="sc-s-toggles" role="group" aria-label="סינון מהיר">
+          <label class="sc-s-toggle"><input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${withDeal ? "checked" : ""} onchange="this.form.submit()" /><span>🎁 עם הטבה</span></label>
+          <label class="sc-s-toggle"><input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} onchange="this.form.submit()" /><span>🚗 מגיעה עד הבית</span></label>
+        </div>
         <div class="sc-s-chips" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
         ${subChipsHtml ? `<div class="sc-s-chips sc-s-subchips" role="group" aria-label="בחירת תת-תחום">${subChipsHtml}</div>` : ""}
         <details class="sc-s-more" ${advOpen ? "open" : ""}>
@@ -3091,10 +3095,6 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
             <select name="category" aria-label="תחום" onchange="scUpdateSubcats(this, document.getElementById('scSearchSubcat'), '', 'כל תת-התחומים');"><option value="">כל התחומים</option>${catOptions}</select>
             <select name="subcategory" id="scSearchSubcat" aria-label="תת-תחום"><option value="">${category ? "כל תת-התחומים" : "בחרי קודם תחום"}</option>${subcatOptions}</select>
             ${cityAutocompleteHtml({ fieldName: "city", selectedId: city, selectedName: city ? cityName(d, city) : "", placeholder: "רק בעיר מסוימת" })}
-          </div>
-          <div class="search-row" style="margin-top:10px;">
-            <label class="sc-s-check"><input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} onchange="scLiveFilter()" /><span>🚗 מגיעה עד הבית</span></label>
-            <label class="sc-s-check"><input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${withDeal ? "checked" : ""} onchange="scLiveFilter()" /><span>🎁 עם הטבה</span></label>
           </div>
           <div class="search-row" style="margin-top:10px;">
             <div class="view-toggle" role="group" aria-label="בחירת תצוגה">
