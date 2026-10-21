@@ -2148,16 +2148,38 @@ function supportKeyReadOnly(req, ctx) {
 // כיבוי אוטומטי יומי (2026-10-10, לפי בקשה): השירות נכבה מעצמו ב-16:00 (שעון ישראל, ניתן לשינוי
 // ב-d.settings.supportAutoOffHour) אלא אם כן ספיר הדליקה אותו ידנית *אחרי* אותה שעה - הדלקה
 // אחרי 16:00 מחזיקה עד ה-16:00 הבא. כלומר: ברירת המחדל אחרי 16:00 היא כבוי.
+// 2026-10-21 (לפי בקשה): ברירת המחדל היא *דלוק אוטומטית* בכל יום מ-09:00 עד 16:00 (שעון ישראל;
+// d.settings.supportAutoOnHour / supportAutoOffHour), בלי לשאול. כפתור בראש עמוד הניהול מאפשר
+// להדליק/לכבות ידנית - ההחלטה הידנית (d.settings.supportOverride = {on, at}) תקפה עד "שינוי השעה
+// האוטומטי" הקרוב (09:00 או 16:00), ואז חוזרים לשעות הרגילות. כך אין צורך לזכור להחזיר.
+function supportHours(d) {
+  const on = Number.isFinite(Number(d.settings.supportAutoOnHour)) ? Number(d.settings.supportAutoOnHour) : 9;
+  const off = Number.isFinite(Number(d.settings.supportAutoOffHour)) ? Number(d.settings.supportAutoOffHour) : 16;
+  return { on, off };
+}
+function israelMinuteOfDay(ms) {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(ms));
+  return (Number(parts.find((p) => p.type === "hour").value) % 24) * 60 + Number(parts.find((p) => p.type === "minute").value);
+}
+function supportScheduledOn(d, ms) {
+  const { on, off } = supportHours(d);
+  const m = israelMinuteOfDay(ms);
+  return m >= on * 60 && m < off * 60;
+}
 function supportToggleStillValid(d) {
-  if (!d.settings.adminSupportOnline) return false;
-  const hour = Number.isFinite(Number(d.settings.supportAutoOffHour)) ? Number(d.settings.supportAutoOffHour) : 16;
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
-  const hh = Number(parts.find((p) => p.type === "hour").value) % 24;
-  const mm = Number(parts.find((p) => p.type === "minute").value);
-  const minutesSinceCutoff = (((hh - hour) * 60 + mm) % 1440 + 1440) % 1440;
-  const lastCutoff = Date.now() - minutesSinceCutoff * 60 * 1000;
-  const onSince = d.settings.adminSupportOnSince ? new Date(d.settings.adminSupportOnSince).getTime() : 0;
-  return onSince >= lastCutoff;
+  const now = Date.now();
+  const ov = d.settings.supportOverride;
+  if (ov && ov.at) {
+    const at = new Date(ov.at).getTime();
+    if (Number.isFinite(at)) {
+      const { on, off } = supportHours(d);
+      const m = israelMinuteOfDay(at);
+      const deltas = [on * 60, off * 60].map((t) => ((t - m) % 1440 + 1440) % 1440 || 1440);
+      const expires = at + Math.min(...deltas) * 60 * 1000;
+      if (now < expires) return !!ov.on;
+    }
+  }
+  return supportScheduledOn(d, now);
 }
 
 function isAdminOnline(d) {
@@ -3036,8 +3058,9 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   if (homeVisit) activeTags.push({ label: "🚗 מגיעה עד הבית", href: searchUrl({ homeVisit: null }) });
   if (withDeal) activeTags.push({ label: "🎁 עם הטבה", href: searchUrl({ withDeal: null }) });
   const resultCountText = combinedCards.length === 1 ? "נמצאה עצמאית אחת" : `נמצאו ${combinedCards.length} עצמאיות`;
-  const statusBarHtml = (combinedCards.length || activeTags.length) ? `<div class="sc-s-status" aria-live="polite">
-        ${combinedCards.length ? `<span class="sc-s-count">${resultCountText}</span>` : ""}
+  const showResultCount = d.settings.showSearchResultCount !== false;
+  const statusBarHtml = ((showResultCount && combinedCards.length) || activeTags.length) ? `<div class="sc-s-status" aria-live="polite">
+        ${(showResultCount && combinedCards.length) ? `<span class="sc-s-count">${resultCountText}</span>` : ""}
         ${activeTags.map((t) => `<span class="sc-s-tag">${esc(t.label)}<a href="${esc(t.href)}" aria-label="הסרת הסינון: ${esc(t.label)}" title="הסרה">✕</a></span>`).join("")}
         ${activeTags.length > 1 ? `<a class="sc-s-clear" href="/search">ניקוי הכל</a>` : ""}
       </div>` : "";
@@ -3056,37 +3079,40 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       ${emptyActions.length ? `<div class="sc-s-empty-actions">${emptyActions.join("")}</div>` : ""}
       ${(!NF && category) ? `<p class="muted" style="margin-top:14px;">או <a href="/service-requests?category=${esc(category)}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום יפנו אלייך.</p>` : ""}
     </div>`;
-  // הצעות תוך כדי הקלדה: תחומים, תתי-תחומים ושמות עסקים (עד 400). הכל מוצג בטקסט בלבד (בלי HTML).
+  // הצעות תוך כדי הקלדה: תחומים ותתי-תחומים בלבד. הכל מוצג בטקסט בלבד (בלי HTML).
   const suggestData = [];
   d.categories.forEach((c) => {
     suggestData.push(["c", c.name, `/search?category=${encodeURIComponent(c.id)}`]);
     subcategoriesOf(d, c.id).forEach((sc) => suggestData.push(["s", `${sc.name} (${c.name})`, `/search?category=${encodeURIComponent(c.id)}&subcategory=${encodeURIComponent(sc.id)}`]));
   });
-  d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (!NF || mode.freelancerVisible(f))).slice(0, 400)
-    .forEach((f) => suggestData.push(["b", f.businessName || f.name, `/freelancer/${encodeURIComponent(f.id)}`]));
+  // הצעות בהקלדה: רק תחומים ותתי-תחומים כלליים (בלי שמות עצמאיות/עסקים) - לפי בקשה מפורשת.
   const suggestJson = JSON.stringify(suggestData).replace(/</g, "\\u003c");
+  const viewRowHtml = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button></div>`;
   const advOpen = !!city;
   const body = `
   ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
       <form class="search-box sc-s-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות" style="margin-right:auto;margin-left:auto;">
+        <label class="sc-s-label" for="scSearchQ">מה את מחפשת?</label>
         <div class="sc-s-main">
           <div class="sc-s-inputwrap">
-            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="מה את מחפשת? (למשל: מאפרת)" oninput="scLiveFilter()" autocomplete="off" data-no-draft="1" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" />
+            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="הקלידי את שם העסק או התחום, למשל: מאפרת, טיפול בילדים, עורכת וידאו..." oninput="scLiveFilter()" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
             <div id="scSuggest" class="sc-s-suggest" role="listbox" hidden></div>
           </div>
         </div>
         ${NF ? "" : `<div class="sc-s-loc">
-          ${cityAutocompleteHtml({ fieldName: "from", selectedId: fromId, selectedName: fromId ? cityName(d, fromId) : "", placeholder: "או: איפה את? (עיר)" })}
+          ${cityAutocompleteHtml({ fieldName: "from", selectedId: fromId, selectedName: fromId ? cityName(d, fromId) : "", placeholder: "עיר" })}
           <button type="button" class="btn sc-s-near" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
           <select name="radius" id="scRadius" aria-label="עד כמה רחוק">${RADIUS_OPTIONS.map((r) => `<option value="${r}" ${r === radius ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>
         </div>
         <p id="scNearNote" class="muted" style="text-align:center;margin:6px 0 0;font-size:.85rem;" aria-live="polite"></p>`}
-        <div class="sc-s-toggles" role="group" aria-label="סינון מהיר">
+        <div class="sc-s-actions">
+          <div class="sc-s-toggles" role="group" aria-label="סינון מהיר">
           <label class="sc-s-toggle"><input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${withDeal ? "checked" : ""} onchange="this.form.submit()" /><span>🎁 עם הטבה</span></label>
           <label class="sc-s-toggle"><input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} onchange="this.form.submit()" /><span>🚗 מגיעה עד הבית</span></label>
         </div>
-        <div class="sc-s-gorow"><button class="btn sc-s-go" type="submit">🔍 חפשי</button></div>
+          <button class="btn sc-s-go" type="submit">🔍 חפשי</button>
+        </div>
         <div class="sc-s-chips" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
         ${subChipsHtml ? `<div class="sc-s-chips sc-s-subchips" role="group" aria-label="בחירת תת-תחום">${subChipsHtml}</div>` : ""}
         <details class="sc-s-more" ${advOpen ? "open" : ""}>
@@ -3096,17 +3122,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
             <select name="subcategory" id="scSearchSubcat" aria-label="תת-תחום"><option value="">${category ? "כל תת-התחומים" : "בחרי קודם תחום"}</option>${subcatOptions}</select>
             ${cityAutocompleteHtml({ fieldName: "city", selectedId: city, selectedName: city ? cityName(d, city) : "", placeholder: "רק בעיר מסוימת" })}
           </div>
-          <div class="search-row" style="margin-top:10px;">
-            <div class="view-toggle" role="group" aria-label="בחירת תצוגה">
-              <span class="view-toggle-label">תצוגה</span>
-              <button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')" title="תצוגה מורחבת" aria-label="תצוגה מורחבת"><span class="view-icon view-icon-expanded"><i></i><i></i><i></i><i></i></span></button>
-              <button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')" title="תצוגה בינונית" aria-label="תצוגה בינונית"><span class="view-icon view-icon-medium"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></button>
-              <button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')" title="תצוגה קומפקטית" aria-label="תצוגה קומפקטית"><span class="view-icon view-icon-compact"><i></i><i></i><i></i><i></i></span></button>
-            </div>
-          </div>
         </details>
       </form>
       ${statusBarHtml}
+      ${combinedCards.length ? viewRowHtml : ""}
       <div id="scResultsGrid">
       ${combinedCards.length ? `<div class="grid" id="scCardsGrid" data-view="medium">${resultsGridHtml}</div>${infStrips ? infStrips.footerHtml : ""}` : emptyStateHtml}
       </div>
@@ -9553,24 +9572,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
   // מפורשת 2026-08-30 - "רק כשהוא דלוק יופיע ללקוחות שאני מחוברת".
   const adminSupportOnlineNow = supportToggleStillValid(d);
   const supportTogglePanelHtml = `
-  <div class="panel" id="admin-support-toggle-panel">
-    <h3>שירות תמיכה ללקוחות 💬</h3>
-    <p class="muted">כשהשירות פעיל, לקוחות ועצמאיות שנכנסות ל"לתמיכה לחצי" רואות שאת מחוברת עכשיו ומקבלות ממך תשובה מיידית בצ'אט. כשהוא כבוי, הן משאירות הודעה ומקבלות תשובה בהמשך - גם באתר וגם במייל. <strong>השירות נכבה אוטומטית כל יום ב-16:00</strong> - אלא אם הדלקת אותו ידנית אחרי השעה הזו (אז הוא נשאר פעיל עד 16:00 הבא).</p>
-    <p id="scSupportToggleStatus" style="font-weight:800;${adminSupportOnlineNow ? "color:var(--rose-dark);" : ""}">${adminSupportOnlineNow ? "🟢 השירות פעיל עכשיו" : "⚪ השירות כבוי כרגע"}</p>
-    <button type="button" id="scSupportToggleBtn" class="btn btn-small${adminSupportOnlineNow ? " btn-outline" : ""}" onclick="scToggleAdminSupport(${adminSupportOnlineNow ? "false" : "true"})">${adminSupportOnlineNow ? "כיבוי שירות התמיכה" : "הפעלת שירות התמיכה"}</button>
-  </div>
-  ${!adminSupportOnlineNow ? `
-  <div class="sc-modal-overlay" id="scSupportPromptModal" onclick="if(event.target===this) this.remove();">
-    <div class="sc-modal" style="max-width:420px;">
-      <button type="button" class="sc-modal-close" onclick="this.closest('.sc-modal-overlay').remove()" aria-label="סגירה">✕</button>
-      <h2 style="font-size:21px;">להפעיל את שירות התמיכה ללקוחות? 💬</h2>
-      <p style="text-align:right;font-size:14.5px;">כשהשירות פעיל, לקוחות ועצמאיות שנכנסות ל"לתמיכה לחצי" רואות שאת מחוברת עכשיו ויכולות לקבל ממך תשובה מיידית. אפשר תמיד לכבות מאוחר יותר מהפאנל למטה.</p>
-      <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
-        <button type="button" class="btn sc-modal-btn" onclick="scToggleAdminSupport(true); this.closest('.sc-modal-overlay').remove();">כן, הפעילי 🟢</button>
-        <button type="button" class="btn btn-outline sc-modal-btn" onclick="this.closest('.sc-modal-overlay').remove()">לא כרגע</button>
-      </div>
+  <div class="panel" id="admin-support-toggle-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 16px;">
+    <div>
+      <strong>שירות תמיכה ללקוחות 💬</strong>
+      <span id="scSupportToggleStatus" style="font-weight:800;margin-inline-start:8px;${adminSupportOnlineNow ? "color:var(--rose-dark);" : ""}">${adminSupportOnlineNow ? "🟢 פעיל עכשיו" : "⚪ כבוי כרגע"}</span>
+      <div class="muted" style="font-size:12.5px;margin-top:2px;">נדלק אוטומטית כל יום בין ${supportHours(d).on}:00 ל-${supportHours(d).off}:00. אפשר להדליק או לכבות כאן ידנית, וההחלטה תקפה עד השעה האוטומטית הקרובה.</div>
     </div>
-  </div>` : ""}
+    <button type="button" id="scSupportToggleBtn" class="btn btn-small${adminSupportOnlineNow ? " btn-outline" : ""}" onclick="scToggleAdminSupport(${adminSupportOnlineNow ? "false" : "true"})">${adminSupportOnlineNow ? "כיבוי" : "הפעלה"}</button>
+  </div>
   <script>
   function scToggleAdminSupport(on){
     fetch('/admin/support/toggle', { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body: 'on=' + (on ? '1' : '0') })
@@ -9579,11 +9588,11 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         var statusEl = document.getElementById('scSupportToggleStatus');
         var btnEl = document.getElementById('scSupportToggleBtn');
         if (statusEl) {
-          statusEl.textContent = data.online ? '🟢 השירות פעיל עכשיו' : '⚪ השירות כבוי כרגע';
+          statusEl.textContent = data.online ? '🟢 פעיל עכשיו' : '⚪ כבוי כרגע';
           statusEl.style.color = data.online ? 'var(--rose-dark)' : '';
         }
         if (btnEl) {
-          btnEl.textContent = data.online ? 'כיבוי שירות התמיכה' : 'הפעלת שירות התמיכה';
+          btnEl.textContent = data.online ? 'כיבוי' : 'הפעלה';
           btnEl.setAttribute('onclick', 'scToggleAdminSupport(' + (data.online ? 'false' : 'true') + ')');
           btnEl.className = data.online ? 'btn btn-small btn-outline' : 'btn btn-small';
         }
@@ -10735,6 +10744,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
     <p class="muted">${d.settings.searchEngineVisible ? "האתר פתוח עכשיו למנועי חיפוש - גוגל יכול לסרוק ולהציג אותו בתוצאות חיפוש." : "האתר כרגע חסום למנועי חיפוש (למשל גוגל) - הוא באוויר וכל מי שיש לה את הקישור יכולה להיכנס, אבל הוא לא יופיע בתוצאות חיפוש ולא ייסרק. מומלץ להשאיר כך עד שתהיי בטוחה שהאתר מוכן להשקה אמיתית."}</p>
     <form method="post" action="/admin/toggle-search-visibility">
       <button class="btn btn-small" type="submit">${d.settings.searchEngineVisible ? "לחסום שוב ממנועי חיפוש" : "אני מוכנה - לפתוח לגוגל"}</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h3>מספר התוצאות בחיפוש</h3>
+    <p class="muted">${d.settings.showSearchResultCount !== false ? "מוצג עכשיו בדף החיפוש המשפט \"נמצאו X עצמאיות\"." : "המשפט \"נמצאו X עצמאיות\" מוסתר כרגע בדף החיפוש."}</p>
+    <form method="post" action="/admin/toggle-search-count">
+      <button class="btn btn-small" type="submit">${d.settings.showSearchResultCount !== false ? "להסתיר את מספר העצמאיות שנמצאו" : "להציג את מספר העצמאיות שנמצאו"}</button>
     </form>
   </div>
 
@@ -12487,6 +12504,14 @@ route("POST", "/admin/toggle-deal-badge-logo", async (req, res, params, query, c
   redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showLogoOnDealBadge ? "הלוגו יופיע עכשיו ליד תגית ההטבה." : "הלוגו הוסר מתגית ההטבה.")}`);
 });
 
+route("POST", "/admin/toggle-search-count", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  d.settings.showSearchResultCount = d.settings.showSearchResultCount === false;
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(d.settings.showSearchResultCount !== false ? "מספר העצמאיות שנמצאו יוצג בחיפוש." : "מספר העצמאיות שנמצאו הוסתר מהחיפוש.")}`);
+});
+
 route("POST", "/admin/toggle-search-visibility", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -13637,8 +13662,8 @@ route("POST", "/admin/support/toggle", async (req, res, params, query, ctx) => {
   const d = db.load();
   const body = await readBody(req);
   const on = body.get("on") === "1";
-  d.settings.adminSupportOnline = on;
-  if (on) { d.settings.adminSupportActiveAt = new Date().toISOString(); d.settings.adminSupportOnSince = new Date().toISOString(); }
+  d.settings.supportOverride = { on, at: new Date().toISOString() };
+  if (on) d.settings.adminSupportActiveAt = new Date().toISOString();
   db.save();
   sendHtml(res, 200, JSON.stringify({ ok: true, online: isAdminOnline(d) }), { "Content-Type": "application/json; charset=utf-8" });
 });

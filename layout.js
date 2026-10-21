@@ -775,20 +775,22 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .search-row select, .search-row input:not([type=checkbox]){flex:1;min-width:160px;}
 .search-row .city-autocomplete{flex:1;min-width:160px;}
 /* ----- חיפוש ידידותי (עמוד /search): תיבה גדולה, הצעות, כפתורי תחומים, סינונים מתקפלים, תגיות פעילות ----- */
-.sc-s-box{max-width:640px;padding:18px 20px;text-align:center;}
+.sc-s-box{max-width:640px;padding:16px 20px;text-align:center;}
+.sc-s-label{display:block;font-weight:800;font-size:15px;margin:0 0 6px;color:var(--dark);}
 .sc-s-main{display:flex;gap:10px;align-items:stretch;}
 .sc-s-inputwrap{position:relative;flex:1;min-width:0;}
 .sc-s-inputwrap input{font-size:16px;padding:11px 16px;border-radius:12px;border:2px solid var(--rose);}
-.sc-s-gorow{display:flex;justify-content:center;margin-top:14px;}
-.sc-s-go{border-radius:14px;padding:8px 30px;font-size:15px;white-space:nowrap;box-shadow:none;border-width:1px;}
+.sc-s-actions{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:12px;}
+.sc-s-actions .sc-s-toggles{margin-top:0;}
+.sc-s-go{border-radius:14px;padding:8px 26px;font-size:15px;white-space:nowrap;box-shadow:none;border-width:1px;}
 .sc-s-suggest{position:absolute;top:100%;right:0;left:0;z-index:60;background:var(--white);border:1px solid #ddd3c4;border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.16);margin-top:4px;max-height:340px;overflow:auto;}
 .sc-s-opt{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;font-weight:600;border-bottom:1px solid #f0e8de;min-height:46px;}
 .sc-s-opt:last-child{border-bottom:0;}
 .sc-s-opt small{color:var(--gray);font-weight:500;opacity:.85;}
 .sc-s-opt:hover, .sc-s-opt[aria-selected="true"]{background:var(--cream);}
-.sc-s-loc{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:10px;}
+.sc-s-loc{display:flex;gap:8px;align-items:center;margin-top:10px;}
 .sc-s-near{flex:0 0 auto;white-space:nowrap;padding:6px 13px;font-size:13px;border-radius:16px;box-shadow:none;border-width:1px;}
-.sc-s-loc .city-autocomplete{flex:0 1 190px;min-width:150px;}
+.sc-s-loc .city-autocomplete{flex:1 1 auto;min-width:0;}
 .sc-s-loc select{flex:0 0 auto;min-width:0;width:auto;padding:6px 8px;font-size:12.5px;border-radius:10px;}
 .sc-s-loc input{padding:7px 12px;font-size:13.5px;}
 .sc-s-chips{display:flex;gap:6px;justify-content:safe center;overflow-x:auto;padding:6px 2px 8px;margin-top:8px;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
@@ -803,7 +805,12 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-more summary::after{content:"▾";margin-inline-start:4px;}
 .sc-s-more[open] summary::after{content:"▴";}
 /* מתגי סינון מהירים (הטבה / מגיעה עד הבית) - בולטים מתחת לתיבת החיפוש; לחיצה מפעילה את הסינון מיד. */
-.sc-s-toggles{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px;}
+.sc-s-toggles{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start;margin-top:12px;}
+.sc-s-view{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;margin:0 auto 12px;}
+.sc-s-view-label{font-size:13px;font-weight:700;color:var(--gray);}
+.sc-s-view .view-btn{width:auto;height:auto;padding:4px 14px;border-radius:999px;border:1px solid #ddd3c4;background:var(--white);color:var(--dark);font-family:inherit;font-size:13px;font-weight:700;}
+.sc-s-view .view-btn:hover{background:var(--cream);}
+.sc-s-view .view-btn.active{background:var(--rose-dark);border-color:var(--rose-dark);color:#fff;}
 .sc-s-toggle{display:inline-flex;margin:0;cursor:pointer;width:auto;}
 .sc-s-toggle input{position:absolute;opacity:0;width:1px;height:1px;margin:0;}
 .sc-s-toggle span{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;min-height:32px;border-radius:999px;border:1px solid var(--rose-dark);background:var(--white);color:var(--rose-dark);font-weight:700;font-size:13px;}
@@ -820,7 +827,7 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-empty{max-width:560px;margin:10px auto;text-align:center;}
 .sc-s-empty-title{font-size:20px;font-weight:800;margin:0 0 4px;}
 .sc-s-empty-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px;}
-@media (max-width:640px){.sc-s-box{padding:14px 12px;}.sc-s-loc .city-autocomplete{flex:1 1 100%;}}
+@media (max-width:640px){.sc-s-box{padding:14px 12px;}.sc-s-loc{flex-wrap:wrap;}.sc-s-loc .city-autocomplete{flex:1 1 100%;}.sc-s-actions{justify-content:center;}.sc-s-toggles{justify-content:center;}}
 
 select, input[type=text], input[type=email], input[type=password], input[type=tel], textarea{
   padding:11px 14px;border:1px solid #ddd3c4;border-radius:8px;font-size:16px;background:var(--white);color:var(--dark);width:100%;font-family:inherit;font-weight:500;
@@ -2045,6 +2052,41 @@ function scSetupFormAutosave() {
   });
 }
 document.addEventListener("DOMContentLoaded", scSetupFormAutosave);
+
+// שחזור מיקום הגלילה בכל האתר: כשטופס נשלח (סימון, שמירה, מחיקה, סינון וכו') והעמוד נטען מחדש
+// על אותה כתובת - חוזרים בדיוק לאותו מקום בעמוד ולא לראש העמוד. נשמר רק לשליחת טופס, תקף ל-30
+// שניות, פעם אחת, ולא כשיש עוגן (#) בכתובת.
+(function () {
+  var KEY = "scFormScroll";
+  function save() {
+    try {
+      sessionStorage.setItem(KEY, JSON.stringify({ p: location.pathname, y: window.scrollY || window.pageYOffset || 0, t: Date.now() }));
+    } catch (err) {}
+  }
+  document.addEventListener("submit", function (e) {
+    if (!e.target || e.target.tagName !== "FORM" || e.defaultPrevented) return;
+    save();
+  });
+  try {
+    var origSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function () { save(); return origSubmit.apply(this, arguments); };
+  } catch (err) {}
+  try {
+    var raw = sessionStorage.getItem(KEY);
+    if (raw) {
+      sessionStorage.removeItem(KEY);
+      var s = JSON.parse(raw);
+      if (s && s.p === location.pathname && !location.hash && Date.now() - s.t < 30000 && s.y > 0) {
+        var restore = function () { window.scrollTo(0, s.y); };
+        restore();
+        document.addEventListener("DOMContentLoaded", restore);
+        window.addEventListener("load", restore);
+        setTimeout(restore, 150);
+        setTimeout(restore, 500);
+      }
+    }
+  } catch (err) {}
+})();
 
 // הגנה מפני שליחה כפולה של כל טופס POST (לחיצה כפולה/לחיצה חוזרת כשהשרת איטי): אחרי השליחה הראשונה
 // הטופס "נעול" והכפתור מושבת, ושליחה נוספת של אותו טופס נחסמת. נפתח מחדש אחרי 20 שניות (למקרה של
