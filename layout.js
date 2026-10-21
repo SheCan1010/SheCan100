@@ -256,10 +256,21 @@ function dealsTickerHtml() {
   </div>`;
 }
 
-function netfreeNav() {
+function netfreeNav(session) {
   const d = db.load();
   const settings = d.settings;
   const brand = mode.brandName();
+  // הצטרפות/הרשמה/אזור אישי בנטפרי (נפתחו לפי בקשה מפורשת; ניתנים לכיבוי בהגדרות נטפרי בניהול).
+  const accountsOn = mode.accountsEnabled();
+  let accountLinks = `<a class="nav-link" href="/login">אזור אישי</a><a class="nav-btn" href="/signup">הרשמה כלקוחה</a>`;
+  if (session && session.role === "customer") {
+    const c = d.customers.find((x) => x.id === session.id);
+    accountLinks = `<a class="nav-link" href="/account" title="אזור אישי">${c ? esc(c.name) : "האזור שלי"}</a><a class="nav-link" href="/logout">יציאה</a>`;
+  } else if (session && session.role === "freelancer") {
+    accountLinks = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי</a><a class="nav-link" href="/logout">יציאה</a>`;
+  } else if (session) {
+    accountLinks = `<a class="nav-link" href="/logout">יציאה</a>`;
+  }
   const logo = settings.netfreeLogoDataUri
     ? `<img src="${esc(settings.netfreeLogoDataUri)}" alt="${esc(brand)}" class="brand-logo" />`
     : `<span style="font-weight:800;font-size:22px;color:var(--dark);">${esc(brand)}</span>`;
@@ -269,12 +280,14 @@ function netfreeNav() {
     <header class="site-header" role="banner">
       <div class="container header-inner">
         <a href="/" class="brand">${logo}</a>
-        <nav class="main-nav" aria-label="ניווט ראשי">
+        <nav class="main-nav" dir="rtl" aria-label="ניווט ראשי">
           <a class="nav-link" href="/">דף הבית</a>
           <a class="nav-link" href="/search"><span>חיפוש</span><span aria-hidden="true" style="color:var(--rose-dark);">🔍</span></a>
           <a class="nav-link" href="/deals">הטבות</a>
           <a class="nav-link" href="/about">אודות</a>
+          ${accountsOn ? `<a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>` : ""}
         </nav>
+        ${accountsOn ? `<nav class="nav-side" dir="rtl" aria-label="חשבון">${accountLinks}</nav>` : ""}
       </div>
     </header>
   </div>`;
@@ -294,7 +307,7 @@ function netfreeFooter() {
 }
 
 function nav(session) {
-  if (mode.isNetfree()) return netfreeNav();
+  if (mode.isNetfree()) return netfreeNav(session);
   const d = db.load();
   const settings = d.settings;
   // החשבון מחולק לשניים: rightFirst (אזור אישי / שם הלקוחה) יושב בראש עמודת החשבון בצד שמאל של הסרגל, ו-right
@@ -1981,6 +1994,31 @@ function scSetupFormAutosave() {
   });
 }
 document.addEventListener("DOMContentLoaded", scSetupFormAutosave);
+
+// הגנה מפני שליחה כפולה של כל טופס POST (לחיצה כפולה/לחיצה חוזרת כשהשרת איטי): אחרי השליחה הראשונה
+// הטופס "נעול" והכפתור מושבת, ושליחה נוספת של אותו טופס נחסמת. נפתח מחדש אחרי 20 שניות (למקרה של
+// תקלת רשת) או כשחוזרים לעמוד עם "חזרה" בדפדפן. טפסים ש-confirm/ולידציה כבר עצרו לא נעולים.
+(function () {
+  function unlock(form) {
+    form.removeAttribute("data-sc-sending");
+    Array.prototype.forEach.call(form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type])'), function (b) { b.disabled = false; });
+  }
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || form.tagName !== "FORM" || e.defaultPrevented) return;
+    if ((form.getAttribute("method") || "get").toLowerCase() !== "post") return;
+    if (form.getAttribute("data-sc-sending")) { e.preventDefault(); return; }
+    form.setAttribute("data-sc-sending", "1");
+    setTimeout(function () {
+      Array.prototype.forEach.call(form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type])'), function (b) { b.disabled = true; });
+    }, 0);
+    setTimeout(function () { unlock(form); }, 20000);
+  });
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted) Array.prototype.forEach.call(document.querySelectorAll("form[data-sc-sending]"), unlock);
+  });
+})();
+
 
 // Reveals the real deal text on a grid card's fixed "🎁 הטבת SheCan" badge - on hover/focus
 // for desktop, on tap for mobile (which has no hover). Uses one shared tooltip element

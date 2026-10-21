@@ -33,8 +33,8 @@ function hostIsNetfree(hostHeader) {
   return configuredHosts().includes(h);
 }
 
-// הרשימה הלבנה. כל נתיב שלא מופיע כאן => 404 בדומיין של נטפרי. אין POST בכלל (אין התחברות,
-// אין שליחת טפסים) - החיפוש הוא GET.
+// הרשימה הלבנה. כל נתיב שלא מופיע כאן => 404 בדומיין של נטפרי. החיפוש הוא GET; הרשמה/כניסה/אזור אישי
+// נפתחו בנפרד (ACCOUNT_GET / ACCOUNT_POST למטה) וניתנים לכיבוי מההגדרות.
 const ALLOWED_GET = [
   /^\/$/,
   /^\/search$/,
@@ -52,9 +52,28 @@ const ALLOWED_GET = [
   /^\/sitemap\.xml$/,
 ];
 
+// הרשמה/הצטרפות/כניסה והאזור האישי - נפתחו גם בנטפרי לפי בקשה מפורשת (2026-10-21). אפשר לכבות הכל
+// בבת אחת מהגדרות נטפרי בניהול (d.settings.netfreeAccountsEnabled), למקרה שנטפרי תחסום בגללם.
+// רק מה שנחוץ לבעלת עסק (הצטרפות, עריכת הפרופיל והתחומים שלה) וללקוחה (הרשמה, כניסה, שם) -
+// כל שאר הפעולות באזור האישי (הודעות, סטטוסים, סיפורים, משפיעניות וכו') נשארות חסומות.
+const ACCOUNT_GET = [
+  /^\/join$/, /^\/signup$/, /^\/login$/, /^\/logout$/, /^\/forgot-password$/, /^\/reset-password$/,
+  /^\/verify-email$/, /^\/account$/, /^\/freelancer-dashboard$/,
+];
+const ACCOUNT_POST = [
+  /^\/join$/, /^\/signup$/, /^\/login$/, /^\/forgot-password$/, /^\/reset-password$/,
+  /^\/account\/update-name$/, /^\/account\/resend-verification$/,
+  /^\/freelancer-dashboard$/, /^\/freelancer-dashboard\/listing\/add$/, /^\/freelancer-dashboard\/listing\/[^/]+$/,
+];
+function accountsEnabled() { return settings().netfreeAccountsEnabled !== false; }
+
 function pathAllowed(method, pathname) {
-  if (method !== "GET" && method !== "HEAD") return false;
-  return ALLOWED_GET.some((re) => re.test(pathname));
+  if (method === "GET" || method === "HEAD") {
+    if (ALLOWED_GET.some((re) => re.test(pathname))) return true;
+    return accountsEnabled() && ACCOUNT_GET.some((re) => re.test(pathname));
+  }
+  if (method === "POST") return accountsEnabled() && ACCOUNT_POST.some((re) => re.test(pathname));
+  return false;
 }
 
 function settings() {
@@ -87,7 +106,7 @@ function sanitizeHtml(html) {
   let out = html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, (m) => {
     const am = m.match(/^<form\b[^>]*\baction="([^"]*)"/i);
     const action = am ? linkPath(am[1]) : "";
-    if (am && action && SAFE_FORM_ACTIONS.has(action)) return m;
+    if (am && action && (SAFE_FORM_ACTIONS.has(action) || pathAllowed("POST", action))) return m;
     return "";
   });
   out = out.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (m, attrs, inner) => {
@@ -106,5 +125,5 @@ function sanitizeHtml(html) {
 
 module.exports = {
   runWith, isNetfree, hostIsNetfree, pathAllowed, normalizeHost, configuredHosts,
-  brandName, logosOnly, indexable, freelancerVisible, sanitizeHtml, ALLOWED_GET,
+  accountsEnabled, brandName, logosOnly, indexable, freelancerVisible, sanitizeHtml, ALLOWED_GET,
 };

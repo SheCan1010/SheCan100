@@ -3253,10 +3253,9 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
     (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     f.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(f.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
-    f.email ? (NF
-      ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="mailto:${esc(f.email)}">${esc(f.email)}</a></div>`
-      : `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>`) : "",
-    instagramLinkHtml(f.instagram),
+    // באתר נטפרי לא מציגים מייל ואינסטגרם של העסק (לפי בקשה מפורשת 2026-10-21).
+    (!NF && f.email) ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
+    NF ? "" : instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
   const body = `
   ${breadcrumbHtml([
@@ -3419,10 +3418,9 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     f.phone ? `<div class="profile-detail-row"><span class="profile-detail-icon">📞</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>` : "",
     (f.hasWhatsapp && f.phone) ? `<div class="profile-detail-row"><span class="profile-detail-icon">${whatsappIconSvg}</span><a class="whatsapp-link" href="https://wa.me/${esc(waPhoneDigits(f.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : "",
     l.portfolioUrl ? `<div class="profile-detail-row"><span class="profile-detail-icon">🔗</span><a href="${esc(l.portfolioUrl)}" target="_blank" rel="noopener">תיק עבודות</a></div>` : "",
-    f.email ? (NF
-      ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="mailto:${esc(f.email)}">${esc(f.email)}</a></div>`
-      : `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>`) : "",
-    instagramLinkHtml(f.instagram),
+    // באתר נטפרי לא מציגים מייל ואינסטגרם של העסק (לפי בקשה מפורשת 2026-10-21).
+    (!NF && f.email) ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
+    NF ? "" : instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
   const body = `
   <p class="muted" style="text-align:center;">תחום נוסף של <a href="/freelancer/${f.id}" style="color:var(--rose-dark);font-weight:800;">${esc(f.businessName || f.name)}</a></p>
@@ -3486,6 +3484,19 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   sendHtml(res, 200, page({ title: l.businessName, session: ctx.session, body, query }));
 });
 
+// הגנה מפני שליחה כפולה (לחיצה כפולה על "שליחה", או לחיצה חוזרת כשהשרת איטי/מתעורר) - אם אותה שולחת כבר
+// שלחה בדיוק את אותו טקסט לאותה שיחה ב-90 השניות האחרונות, זו אותה הודעה ולא נשמור/נשלח התראה פעם נוספת.
+function isDuplicateChatMessage(list, match, text, windowMs = 90 * 1000) {
+  const now = Date.now();
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    const t = new Date(m.date).getTime();
+    if (now - t > windowMs) continue;
+    if (match(m) && String(m.text || "").trim() === text) return true;
+  }
+  return false;
+}
+
 route("POST", "/freelancer/:id/message", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "customer")) return redirect(res, "/login");
   const body = await readBody(req);
@@ -3502,8 +3513,9 @@ route("POST", "/freelancer/:id/message", async (req, res, params, query, ctx) =>
   // אבל לא נשמרת ולא מגיעה לעצמאית בפועל - אותה גישת "נכשל בשקט" שכבר משמשת נגד בוטים ב-/join
   // וב-/signup, כדי לא להזין את הצד החוסם במידע על כך שהוא נחסם.
   if ((f.blockedCustomerIds || []).includes(ctx.session.id)) return successRedirect();
-  const id = db.nextId("chat");
   d.chatMessages = d.chatMessages || [];
+  if (isDuplicateChatMessage(d.chatMessages, (m) => m.freelancerId === f.id && m.customerId === ctx.session.id && m.fromRole === "customer" && String(m.listingId || "") === String(listing ? listing.id : ""), text)) return successRedirect();
+  const id = db.nextId("chat");
   d.chatMessages.push({
     id, freelancerId: f.id, customerId: ctx.session.id, fromRole: "customer",
     listingId: listing ? listing.id : null,
@@ -6454,7 +6466,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label>🌸 איך את נותנת את השירות? (אפשר לסמן כמה)</label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:0;"><input type="checkbox" name="offersOnline" value="1" ${p.offersOnline ? "checked" : ""} style="width:auto;" /> 💻 נותנת שירות אונליין / דיגיטלית</label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="offersHomeVisit" value="1" ${p.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
-    <label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>
+    ${mode.isNetfree() ? "" : `<label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>`}
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" id="joinLogoInput" accept="image/*" data-sc-crop="1" /></label>
     <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך${filesNote}
@@ -6728,7 +6740,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     cityId: body.get("cityId"), phone: body.get("phone"), hasWhatsapp: body.get("hasWhatsapp") === "1",
     offersOnline: body.get("offersOnline") === "1", offersHomeVisit: body.get("offersHomeVisit") === "1",
     active: true,
-    instagram: body.get("instagram"), portfolioUrl: (body.get("portfolioUrl") || "").trim(),
+    instagram: body.get("instagram") || "", portfolioUrl: (body.get("portfolioUrl") || "").trim(),
     photoDataUri: null,
     logoDataUri: fileToDataUri(body.files.logo, MAX_UPLOAD_BYTES),
     galleryPhotos,
@@ -7824,7 +7836,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <label>איך את נותנת את השירות? (אפשר לסמן כמה)</label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:0;"><input type="checkbox" name="offersOnline" value="1" ${f.offersOnline ? "checked" : ""} style="width:auto;" /> 💻 נותנת שירות אונליין / דיגיטלית</label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="offersHomeVisit" value="1" ${f.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
-    <label>אינסטגרם<input type="text" name="instagram" value="${esc(f.instagram || "")}" /></label>
+    ${mode.isNetfree() ? "" : `<label>אינסטגרם<input type="text" name="instagram" value="${esc(f.instagram || "")}" /></label>`}
     <label>קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(f.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="availableNow" value="1" ${f.availableNow ? "checked" : ""} style="width:auto;" /> 🟢 זמינה כרגע לעבודה - הראי את זה בכרטיסייה שלי</label>
     <label>קצת עלייך (עד 500 תווים)<textarea name="description" maxlength="500">${esc(f.description || "")}</textarea></label>
@@ -8374,8 +8386,9 @@ route("POST", "/freelancer-dashboard/message/:customerId/reply", async (req, res
   const f = d.freelancers.find((x) => x.id === ctx.session.id);
   const customer = d.customers.find((c) => c.id === params.customerId);
   if (!customer) return redirect(res, "/freelancer-dashboard");
-  const id = db.nextId("chat");
   d.chatMessages = d.chatMessages || [];
+  if (isDuplicateChatMessage(d.chatMessages, (m) => m.freelancerId === f.id && m.customerId === customer.id && m.fromRole === "freelancer", text)) return redirect(res, `/freelancer-dashboard?ok=${encodeURIComponent("התשובה נשלחה!")}`);
+  const id = db.nextId("chat");
   d.chatMessages.push({
     id, freelancerId: f.id, customerId: customer.id, fromRole: "freelancer",
     text, date: new Date().toISOString(), read: false,
@@ -8610,7 +8623,8 @@ route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   f.hasWhatsapp = body.get("hasWhatsapp") === "1";
   f.offersOnline = body.get("offersOnline") === "1";
   f.offersHomeVisit = body.get("offersHomeVisit") === "1";
-  f.instagram = body.get("instagram");
+  // בנטפרי שדה האינסטגרם לא מוצג בטופס - לא דורסים את מה ששמור אם הוא לא נשלח בכלל.
+  if (body.get("instagram") !== null && body.get("instagram") !== undefined) f.instagram = body.get("instagram");
   f.portfolioUrl = (body.get("portfolioUrl") || "").trim();
   f.availableNow = body.get("availableNow") === "1";
   f.description = clip(body.get("description"), 500);
@@ -9063,6 +9077,7 @@ function netfreeAdminPanelHtml(d) {
       <label>מייל ליצירת קשר (מוצג בתחתית, אופציונלי)
         <input type="text" name="contactEmail" maxlength="120" value="${esc(st.netfreeContactEmail || "")}" dir="ltr" /></label>
       <label style="display:flex;align-items:center;gap:6px;font-weight:700;"><input type="checkbox" name="indexable" value="1" ${st.netfreeIndexable !== false ? "checked" : ""} style="width:auto;" /> לאפשר לגוגל לאנדקס את אתר נטפרי (robots + מפת אתר נפרדת)</label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:700;"><input type="checkbox" name="accountsEnabled" value="1" ${st.netfreeAccountsEnabled !== false ? "checked" : ""} style="width:auto;" /> לאפשר באתר נטפרי הצטרפות כבעלת עסק, הרשמה כלקוחה, כניסה ואזור אישי (אם נטפרי חוסמת - אפשר לכבות כאן)</label>
       <label style="display:flex;align-items:center;gap:6px;font-weight:700;"><input type="checkbox" name="logosOnly" value="1" ${st.netfreeLogosOnly !== false ? "checked" : ""} style="width:auto;" /> לוגואים בלבד - בלי תמונות אישיות וגלריות (מומלץ לנטפרי)</label>
       <label>טקסט "אודות" (אם ריק - טקסט ברירת מחדל)
         <textarea name="aboutText" rows="4">${esc(st.netfreeAboutText || "")}</textarea></label>
@@ -11585,6 +11600,7 @@ route("POST", "/admin/netfree-settings", async (req, res, params, query, ctx) =>
   st.netfreeTermsText = clip((body.get("termsText") || "").trim(), 12000);
   st.netfreePrivacyText = clip((body.get("privacyText") || "").trim(), 12000);
   st.netfreeIndexable = body.get("indexable") === "1";
+  st.netfreeAccountsEnabled = body.get("accountsEnabled") === "1";
   st.netfreeLogosOnly = body.get("logosOnly") === "1";
   if (body.get("removeLogo") === "1") st.netfreeLogoDataUri = null;
   if (body.get("removeBanner") === "1") st.netfreeTopBannerDataUri = null;
@@ -14509,6 +14525,7 @@ route("POST", "/influencers/:id/message", async (req, res, params, query, ctx) =
   if (!customer) return json(401, { ok: false, error: "צריך להתחבר מחדש." });
   const recent = infMessagesAll(d).filter((m) => m.customerId === customer.id && m.fromRole === "customer" && Date.now() - new Date(m.date).getTime() < 60 * 60 * 1000).length;
   if (recent >= 20) return json(429, { ok: false, error: "שלחת הרבה הודעות - נסי שוב בעוד שעה." });
+  if (isDuplicateChatMessage(infMessagesAll(d), (m) => m.influencerId === inf.id && m.customerId === customer.id && m.fromRole === "customer", text)) return json(200, { ok: true });
   infMessagesAll(d).push({ id: db.nextId("influencerMessage"), influencerId: inf.id, customerId: customer.id, statusId: body.get("statusId") || "", fromRole: "customer", text, date: new Date().toISOString(), read: false });
   db.save();
   notify(infNotifyTarget(d, inf), {
@@ -14528,6 +14545,7 @@ route("POST", "/account/influencer-message/:id", async (req, res, params, query,
   const body = await readBody(req);
   const text = clip((body.get("text") || "").trim(), 1000);
   if (!inf || !customer || !text) return redirect(res, "/account#inf-threads");
+  if (isDuplicateChatMessage(infMessagesAll(d), (m) => m.influencerId === inf.id && m.customerId === customer.id && m.fromRole === "customer", text)) return redirect(res, `/account?ok=${encodeURIComponent("ההודעה נשלחה.")}#inf-threads`);
   infMessagesAll(d).push({ id: db.nextId("influencerMessage"), influencerId: inf.id, customerId: customer.id, statusId: "", fromRole: "customer", text, date: new Date().toISOString(), read: false });
   db.save();
   notify(infNotifyTarget(d, inf), {
@@ -15211,8 +15229,9 @@ const server = http.createServer((req, res) => {
 async function handleRequest(req, res, nf) {
   try {
     const u = new URL(req.url, `http://${req.headers.host}`);
-    // באתר נטפרי אין התחברות כלל - לא קוראים/יוצרים session משתמש, גם אם הגיע cookie.
-    const { session, sid } = nf ? { session: null, sid: null } : getSession(req);
+    // באתר נטפרי יש התחברות רק אם ההרשמה/אזור אישי פתוחים בהגדרות (mode.accountsEnabled); אחרת לא
+    // קוראים/יוצרים session משתמש, גם אם הגיע cookie.
+    const { session, sid } = (nf && !mode.accountsEnabled()) ? { session: null, sid: null } : getSession(req);
     if (nf && !mode.pathAllowed(req.method, u.pathname)) {
       return sendHtml(res, 404, page({ title: "לא נמצא", session, body: "<p>הדף הזה לא קיים - אפשר לחזור <a href=\"/\">לדף הבית</a>.</p>" }));
     }
