@@ -775,25 +775,27 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .search-row select, .search-row input:not([type=checkbox]){flex:1;min-width:160px;}
 .search-row .city-autocomplete{flex:1;min-width:160px;}
 /* ----- חיפוש ידידותי (עמוד /search): תיבה גדולה, הצעות, כפתורי תחומים, סינונים מתקפלים, תגיות פעילות ----- */
-.sc-s-box{max-width:640px;padding:16px 20px;text-align:center;}
-.sc-s-label{display:block;font-weight:800;font-size:15px;margin:0;color:var(--dark);white-space:nowrap;}
-.sc-s-main{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;}
-.sc-s-inputwrap{position:relative;flex:0 1 270px;min-width:0;}
-.sc-s-inputwrap input{font-size:15px;padding:8px 14px;border-radius:12px;border:1.5px solid var(--rose);}
-.sc-s-actions{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:12px;}
+.sc-s-box{max-width:460px;padding:16px 20px;text-align:center;}
+.sc-s-box input[type=text],.sc-s-box select{height:38px;box-sizing:border-box;}
+.sc-s-label{display:block;flex:0 0 auto;font-weight:800;font-size:18px;margin:0;color:var(--dark);white-space:nowrap;}
+.sc-s-label-sm{font-size:15px;}
+.sc-s-main{display:flex;gap:10px;align-items:center;}
+.sc-s-inputwrap{position:relative;flex:1 1 auto;min-width:0;}
+.sc-s-inputwrap input{font-size:15px;padding:0 14px;border-radius:10px;border:1.5px solid var(--rose);}
+.sc-s-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;}
 .sc-s-actions .sc-s-toggles{margin-top:0;}
-.sc-s-go{border-radius:14px;padding:8px 26px;font-size:15px;white-space:nowrap;box-shadow:none;border-width:1px;}
+.sc-s-go{height:38px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;padding:0 22px;font-size:15px;white-space:nowrap;box-shadow:none;border-width:1px;}
 .sc-s-suggest{position:absolute;top:100%;right:0;left:0;z-index:60;background:var(--white);border:1px solid #ddd3c4;border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.16);margin-top:4px;max-height:340px;overflow:auto;}
 .sc-s-opt{display:flex;gap:10px;align-items:center;justify-content:flex-start;text-align:right;padding:9px 14px;cursor:pointer;font-weight:600;font-size:14.5px;border-bottom:1px solid #f0e8de;min-height:40px;}
 .sc-s-opt:last-child{border-bottom:0;}
 .sc-s-opt small{color:var(--gray);font-weight:500;opacity:.85;}
 .sc-s-opt:hover, .sc-s-opt[aria-selected="true"]{background:var(--cream);}
-.sc-s-loc{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:10px;}
-.sc-s-near{flex:0 0 auto;white-space:nowrap;padding:6px 13px;font-size:13px;border-radius:16px;box-shadow:none;border-width:1px;}
-.sc-s-loc .city-autocomplete{flex:0 0 112px;min-width:0;}
-.sc-s-loc .city-autocomplete-list{min-width:170px;right:0;left:auto;}
-.sc-s-loc select{flex:0 0 auto;min-width:0;width:auto;padding:6px 8px;font-size:12.5px;border-radius:10px;}
-.sc-s-loc input{padding:6px 10px;font-size:13.5px;}
+.sc-s-loc{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:10px;}
+.sc-s-near{flex:0 0 auto;height:38px;display:inline-flex;align-items:center;white-space:nowrap;padding:0 12px;font-size:13px;border-radius:10px;box-shadow:none;border-width:1px;}
+.sc-s-loc .city-autocomplete{flex:1 1 100px;max-width:140px;min-width:0;}
+.sc-s-loc .city-autocomplete-list{min-width:170px;right:0;left:auto;text-align:right;}
+.sc-s-loc select{flex:0 0 auto;min-width:0;width:auto;padding:0 6px;font-size:13px;border-radius:10px;}
+.sc-s-loc input{padding:0 10px;font-size:14px;border-radius:10px;}
 .sc-s-chips{display:flex;gap:6px;justify-content:safe center;overflow-x:auto;padding:6px 2px 8px;margin-top:8px;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
 .sc-s-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:3px 11px;min-height:30px;border-radius:999px;border:1px solid #ddd3c4;background:var(--white);color:var(--dark) !important;font-weight:700;font-size:13px;text-decoration:none;white-space:nowrap;}
 .sc-s-chip:hover{border-color:var(--rose-dark);background:var(--cream);}
@@ -806,7 +808,7 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-more summary::after{content:"▾";margin-inline-start:4px;}
 .sc-s-more[open] summary::after{content:"▴";}
 /* מתגי סינון מהירים (הטבה / מגיעה עד הבית) - בולטים מתחת לתיבת החיפוש; לחיצה מפעילה את הסינון מיד. */
-.sc-s-toggles{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start;margin-top:12px;}
+.sc-s-toggles{display:flex;gap:8px;flex-wrap:nowrap;justify-content:flex-start;margin-top:12px;}
 .sc-s-view{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;margin:0 auto 12px;}
 .sc-s-view-label{font-size:13px;font-weight:700;color:var(--gray);}
 .sc-s-view .view-btn{width:auto;height:auto;padding:4px 14px;border-radius:999px;border:1px solid #ddd3c4;background:var(--white);color:var(--dark);font-family:inherit;font-size:13px;font-weight:700;}
@@ -814,7 +816,7 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-view .view-btn.active{background:var(--rose-dark);border-color:var(--rose-dark);color:#fff;}
 .sc-s-toggle{display:inline-flex;margin:0;cursor:pointer;width:auto;}
 .sc-s-toggle input{position:absolute;opacity:0;width:1px;height:1px;margin:0;}
-.sc-s-toggle span{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;min-height:32px;border-radius:999px;border:1px solid var(--rose-dark);background:var(--white);color:var(--rose-dark);font-weight:700;font-size:13px;}
+.sc-s-toggle span{display:inline-flex;align-items:center;gap:6px;padding:0 12px;height:38px;box-sizing:border-box;border-radius:10px;border:1px solid var(--rose-dark);background:var(--white);color:var(--rose-dark);font-weight:700;font-size:13px;white-space:nowrap;}
 .sc-s-toggle:hover span{background:var(--cream);}
 .sc-s-toggle input:checked + span{background:var(--rose-dark);color:#fff;}
 .sc-s-toggle input:checked + span::before{content:"✓";font-weight:900;}
@@ -828,18 +830,22 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-empty{max-width:560px;margin:10px auto;text-align:center;}
 .sc-s-empty-title{font-size:20px;font-weight:800;margin:0 0 4px;}
 .sc-s-empty-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px;}
-@media (max-width:640px){
+@media (max-width:480px){
   .sc-s-box{padding:14px 12px;}
-  .sc-s-main{flex-direction:column;gap:6px;}
-  .sc-s-inputwrap{flex:1 1 auto;width:100%;}
-  .sc-s-inputwrap input{font-size:16px;padding:10px 14px;}
-  .sc-s-loc{gap:6px;}
-  .sc-s-loc .city-autocomplete{flex:1 1 90px;max-width:130px;}
-  .sc-s-near{padding:8px 12px;}
-  .sc-s-actions{flex-direction:column;align-items:stretch;gap:12px;}
-  .sc-s-toggles{justify-content:center;}
-  .sc-s-go{width:100%;padding:10px 20px;font-size:16px;}
+  .sc-s-main{flex-direction:column;align-items:stretch;gap:6px;}
+  .sc-s-label{text-align:right;}
+  .sc-s-inputwrap input{font-size:16px;}
+  .sc-s-loc{flex-wrap:wrap;gap:6px 8px;}
+  .sc-s-loc .city-autocomplete{flex:1 1 calc(100% - 44px);max-width:none;}
+  .sc-s-near{flex:1 1 0;justify-content:center;padding:0 8px;}
+  .sc-s-loc select{flex:1 1 100%;font-size:14px;padding:0 8px;}
+  .sc-s-actions{flex-direction:column;align-items:stretch;gap:10px;}
+  .sc-s-toggles{justify-content:space-between;margin-top:0;}
+  .sc-s-toggle{flex:1 1 0;}
+  .sc-s-toggle span{width:100%;justify-content:center;padding:0 6px;}
+  .sc-s-go{width:100%;font-size:16px;}
 }
+@media (max-width:400px){.sc-s-near{padding:0 8px;font-size:12.5px;}.sc-s-loc{gap:6px;}}
 
 select, input[type=text], input[type=email], input[type=password], input[type=tel], textarea{
   padding:11px 14px;border:1px solid #ddd3c4;border-radius:8px;font-size:16px;background:var(--white);color:var(--dark);width:100%;font-family:inherit;font-weight:500;
@@ -1238,10 +1244,6 @@ form .field{margin-bottom:6px;}
   .page-with-sidebars .side-col{width:46px;}
   .side-ad-photo,.side-ad-photo-initial{width:28px;height:28px;}
   .page-with-sidebars{gap:4px;}
-  .sc-s-near{font-size:12.5px;padding:7px 10px;}
-  .sc-s-toggle span{font-size:12.5px;padding:4px 10px;}
-  .sc-s-loc .city-autocomplete{flex:0 0 108px;max-width:none;}
-  .sc-s-loc select{font-size:12px;}
 }
 .tabs{display:flex;gap:10px;margin-bottom:18px;}
 .tab{padding:8px 18px;border-radius:20px;background:var(--white);font-size:14px;}
@@ -1291,9 +1293,9 @@ function subcatsJsMap() {
 // input actually submitted with the form ("cityId" on POST forms, "city" on the GET search
 // filters), `selectedId`/`selectedName` pre-fill it when editing something that already has
 // a city, and `placeholder` is the text shown in the empty field.
-function cityAutocompleteHtml({ fieldName, selectedId, selectedName, placeholder }) {
+function cityAutocompleteHtml({ fieldName, selectedId, selectedName, placeholder, ariaLabel }) {
   return `<div class="city-autocomplete">
-    <input type="text" class="city-autocomplete-input" placeholder="${esc(placeholder || "הקלידי שם עיר...")}" autocomplete="off" value="${esc(selectedName || "")}" />
+    <input type="text" class="city-autocomplete-input" placeholder="${esc(placeholder || "הקלידי שם עיר...")}"${ariaLabel ? ` aria-label="${esc(ariaLabel)}"` : ""} autocomplete="off" value="${esc(selectedName || "")}" />
     <input type="hidden" name="${esc(fieldName)}" class="city-autocomplete-hidden" value="${esc(selectedId || "")}" />
     <div class="city-autocomplete-list" hidden></div>
   </div>`;

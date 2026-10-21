@@ -3096,12 +3096,13 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
         <div class="sc-s-main">
           <label class="sc-s-label" for="scSearchQ">מה את מחפשת?</label>
           <div class="sc-s-inputwrap">
-            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="שם עסק או תחום, למשל: מאפרת" oninput="scLiveFilter()" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
+            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="למשל: מאפרת, עורכת וידאו" oninput="scLiveFilter()" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
             <div id="scSuggest" class="sc-s-suggest" role="listbox" hidden></div>
           </div>
         </div>
         ${NF ? "" : `<div class="sc-s-loc">
-          ${cityAutocompleteHtml({ fieldName: "from", selectedId: fromId, selectedName: fromId ? cityName(d, fromId) : "", placeholder: "עיר" })}
+          <span class="sc-s-label sc-s-label-sm" aria-hidden="true">עיר</span>
+          ${cityAutocompleteHtml({ fieldName: "from", selectedId: fromId, selectedName: fromId ? cityName(d, fromId) : "", placeholder: "רמת גן", ariaLabel: "עיר" })}
           <button type="button" class="btn sc-s-near" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
           <select name="radius" id="scRadius" aria-label="עד כמה רחוק">${RADIUS_OPTIONS.map((r) => `<option value="${r}" ${r === radius ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>
         </div>
