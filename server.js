@@ -3072,14 +3072,13 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       <form class="search-box sc-s-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות" style="margin-right:auto;margin-left:auto;">
         <div class="sc-s-main">
           <div class="sc-s-inputwrap">
-            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="מה את מחפשת? למשל: מאפרת, ניקיון, שיעורי אנגלית" oninput="scLiveFilter()" autocomplete="off" data-no-draft="1" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" />
+            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="מה את מחפשת? (למשל: מאפרת)" oninput="scLiveFilter()" autocomplete="off" data-no-draft="1" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" />
             <div id="scSuggest" class="sc-s-suggest" role="listbox" hidden></div>
           </div>
-          <button class="btn sc-s-go" type="submit">🔍 חפשי</button>
         </div>
         ${NF ? "" : `<div class="sc-s-loc">
-          <button type="button" class="btn sc-s-near" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
           ${cityAutocompleteHtml({ fieldName: "from", selectedId: fromId, selectedName: fromId ? cityName(d, fromId) : "", placeholder: "או: איפה את? (עיר)" })}
+          <button type="button" class="btn sc-s-near" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
           <select name="radius" id="scRadius" aria-label="עד כמה רחוק">${RADIUS_OPTIONS.map((r) => `<option value="${r}" ${r === radius ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>
         </div>
         <p id="scNearNote" class="muted" style="text-align:center;margin:6px 0 0;font-size:.85rem;" aria-live="polite"></p>`}
@@ -3087,6 +3086,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
           <label class="sc-s-toggle"><input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${withDeal ? "checked" : ""} onchange="this.form.submit()" /><span>🎁 עם הטבה</span></label>
           <label class="sc-s-toggle"><input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} onchange="this.form.submit()" /><span>🚗 מגיעה עד הבית</span></label>
         </div>
+        <div class="sc-s-gorow"><button class="btn sc-s-go" type="submit">🔍 חפשי</button></div>
         <div class="sc-s-chips" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
         ${subChipsHtml ? `<div class="sc-s-chips sc-s-subchips" role="group" aria-label="בחירת תת-תחום">${subChipsHtml}</div>` : ""}
         <details class="sc-s-more" ${advOpen ? "open" : ""}>

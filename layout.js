@@ -524,7 +524,7 @@ a{color:inherit;text-decoration:none;}
   .main-nav .nav-link,.nav-side .nav-link,.nav-side .nav-btn{font-size:13.5px;padding:7px 11px;position:relative;}
   .nav-side .nav-btn{margin-inline-start:6px;}
 }
-.nav-btn{display:inline-flex;align-items:center;gap:6px;background:var(--rose);color:var(--white);padding:6px 12px;border-radius:8px;font-size:14px;font-weight:700;border:1.5px solid var(--rose-dark);transition:background .15s ease;white-space:nowrap;}
+.nav-btn{display:inline-flex;align-items:center;gap:6px;background:var(--rose);color:var(--white);padding:6px 12px;border-radius:8px;font-size:14px;font-weight:700;border:1px solid var(--rose-dark);transition:background .15s ease;white-space:nowrap;}
 .nav-btn:hover{background:var(--rose-dark);}
 /* "יש לי עסק" - emphasized CTA within the regular nav flow. */
 .nav-link-cta{background:#fff7f0;border:1.5px solid #cfa193;color:#8a5240;font-weight:800;}
@@ -775,23 +775,24 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .search-row select, .search-row input:not([type=checkbox]){flex:1;min-width:160px;}
 .search-row .city-autocomplete{flex:1;min-width:160px;}
 /* ----- חיפוש ידידותי (עמוד /search): תיבה גדולה, הצעות, כפתורי תחומים, סינונים מתקפלים, תגיות פעילות ----- */
-.sc-s-box{max-width:820px;padding:18px 20px;}
+.sc-s-box{max-width:640px;padding:18px 20px;text-align:center;}
 .sc-s-main{display:flex;gap:10px;align-items:stretch;}
 .sc-s-inputwrap{position:relative;flex:1;min-width:0;}
 .sc-s-inputwrap input{font-size:16px;padding:11px 16px;border-radius:12px;border:2px solid var(--rose);}
-.sc-s-go{border-radius:12px;padding:0 22px;font-size:16px;white-space:nowrap;}
+.sc-s-gorow{display:flex;justify-content:center;margin-top:14px;}
+.sc-s-go{border-radius:14px;padding:8px 30px;font-size:15px;white-space:nowrap;box-shadow:none;border-width:1px;}
 .sc-s-suggest{position:absolute;top:100%;right:0;left:0;z-index:60;background:var(--white);border:1px solid #ddd3c4;border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.16);margin-top:4px;max-height:340px;overflow:auto;}
 .sc-s-opt{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;font-weight:600;border-bottom:1px solid #f0e8de;min-height:46px;}
 .sc-s-opt:last-child{border-bottom:0;}
 .sc-s-opt small{color:var(--gray);font-weight:500;opacity:.85;}
 .sc-s-opt:hover, .sc-s-opt[aria-selected="true"]{background:var(--cream);}
-.sc-s-loc{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;}
-.sc-s-near{flex:0 0 auto;white-space:nowrap;padding:8px 16px;font-size:14px;border-radius:20px;}
-.sc-s-loc .city-autocomplete{flex:1;min-width:170px;}
-.sc-s-loc select{flex:0 1 150px;min-width:120px;width:auto;padding:9px 12px;font-size:14px;}
-.sc-s-loc input{padding:9px 14px;font-size:14px;}
-.sc-s-chips{display:flex;gap:8px;overflow-x:auto;padding:6px 2px 8px;margin-top:8px;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
-.sc-s-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:5px 13px;min-height:36px;border-radius:999px;border:1.5px solid #ddd3c4;background:var(--white);color:var(--dark) !important;font-weight:700;font-size:13.5px;text-decoration:none;white-space:nowrap;}
+.sc-s-loc{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:10px;}
+.sc-s-near{flex:0 0 auto;white-space:nowrap;padding:6px 13px;font-size:13px;border-radius:16px;box-shadow:none;border-width:1px;}
+.sc-s-loc .city-autocomplete{flex:0 1 190px;min-width:150px;}
+.sc-s-loc select{flex:0 0 auto;min-width:0;width:auto;padding:6px 8px;font-size:12.5px;border-radius:10px;}
+.sc-s-loc input{padding:7px 12px;font-size:13.5px;}
+.sc-s-chips{display:flex;gap:6px;justify-content:safe center;overflow-x:auto;padding:6px 2px 8px;margin-top:8px;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
+.sc-s-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:3px 11px;min-height:30px;border-radius:999px;border:1px solid #ddd3c4;background:var(--white);color:var(--dark) !important;font-weight:700;font-size:13px;text-decoration:none;white-space:nowrap;}
 .sc-s-chip:hover{border-color:var(--rose-dark);background:var(--cream);}
 .sc-s-chip.active{background:var(--rose-dark);border-color:var(--rose-dark);color:#fff !important;}
 .sc-s-subchips{margin-top:0;}
@@ -802,10 +803,10 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-more summary::after{content:"▾";margin-inline-start:4px;}
 .sc-s-more[open] summary::after{content:"▴";}
 /* מתגי סינון מהירים (הטבה / מגיעה עד הבית) - בולטים מתחת לתיבת החיפוש; לחיצה מפעילה את הסינון מיד. */
-.sc-s-toggles{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.sc-s-toggles{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px;}
 .sc-s-toggle{display:inline-flex;margin:0;cursor:pointer;width:auto;}
 .sc-s-toggle input{position:absolute;opacity:0;width:1px;height:1px;margin:0;}
-.sc-s-toggle span{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:38px;border-radius:999px;border:1.5px solid var(--rose-dark);background:var(--white);color:var(--rose-dark);font-weight:800;font-size:14px;}
+.sc-s-toggle span{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;min-height:32px;border-radius:999px;border:1px solid var(--rose-dark);background:var(--white);color:var(--rose-dark);font-weight:700;font-size:13px;}
 .sc-s-toggle:hover span{background:var(--cream);}
 .sc-s-toggle input:checked + span{background:var(--rose-dark);color:#fff;}
 .sc-s-toggle input:checked + span::before{content:"✓";font-weight:900;}
@@ -819,7 +820,7 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
 .sc-s-empty{max-width:560px;margin:10px auto;text-align:center;}
 .sc-s-empty-title{font-size:20px;font-weight:800;margin:0 0 4px;}
 .sc-s-empty-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px;}
-@media (max-width:640px){.sc-s-main{flex-direction:column;}.sc-s-go{padding:14px;}.sc-s-box{padding:14px 14px;}.sc-s-near{flex:1 1 100%;}.sc-s-loc select{flex:1 1 100%;}}
+@media (max-width:640px){.sc-s-box{padding:14px 12px;}.sc-s-loc .city-autocomplete{flex:1 1 100%;}}
 
 select, input[type=text], input[type=email], input[type=password], input[type=tel], textarea{
   padding:11px 14px;border:1px solid #ddd3c4;border-radius:8px;font-size:16px;background:var(--white);color:var(--dark);width:100%;font-family:inherit;font-weight:500;
@@ -835,10 +836,10 @@ textarea{min-height:90px;}
 .sc-pw-toggle:hover{opacity:.75;}
 label{display:block;font-size:16px;color:var(--dark);margin:16px 0 6px;font-weight:800;}
 form .field{margin-bottom:6px;}
-.btn{display:inline-block;background:var(--rose);color:var(--white);padding:12px 26px;border-radius:24px;border:1.5px solid var(--rose-dark);font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(173,125,104,.25);}
+.btn{display:inline-block;background:var(--rose);color:var(--white);padding:9px 20px;border-radius:18px;border:1px solid var(--rose-dark);font-size:14.5px;font-weight:600;cursor:pointer;font-family:inherit;box-shadow:none;}
 .btn:hover{background:var(--rose-dark);}
-.btn-outline{background:transparent;border:1.5px solid var(--rose);color:var(--rose-dark);}
-.btn-small{padding:7px 16px;font-size:14px;border-radius:18px;}
+.btn-outline{background:transparent;border:1px solid var(--rose);color:var(--rose-dark);}
+.btn-small{padding:5px 12px;font-size:13px;border-radius:14px;}
 .city-autocomplete{position:relative;}
 .city-autocomplete-list{position:absolute;z-index:20;top:100%;right:0;left:0;margin-top:4px;max-height:240px;overflow-y:auto;background:var(--white);border:1px solid #ddd3c4;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.12);}
 .city-autocomplete-item{padding:10px 14px;font-size:15px;cursor:pointer;}
