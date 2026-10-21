@@ -774,6 +774,45 @@ body.sc-a11y-noanim, body.sc-a11y-noanim *{transition:none !important;animation:
    its own label text - per explicit bug report. */
 .search-row select, .search-row input:not([type=checkbox]){flex:1;min-width:160px;}
 .search-row .city-autocomplete{flex:1;min-width:160px;}
+/* ----- חיפוש ידידותי (עמוד /search): תיבה גדולה, הצעות, כפתורי תחומים, סינונים מתקפלים, תגיות פעילות ----- */
+.sc-s-box{max-width:820px;padding:18px 20px;}
+.sc-s-main{display:flex;gap:10px;align-items:stretch;}
+.sc-s-inputwrap{position:relative;flex:1;min-width:0;}
+.sc-s-inputwrap input{font-size:18px;padding:15px 18px;border-radius:14px;border:2px solid var(--rose);}
+.sc-s-go{border-radius:14px;padding:0 30px;font-size:18px;white-space:nowrap;}
+.sc-s-suggest{position:absolute;top:100%;right:0;left:0;z-index:60;background:var(--white);border:1px solid #ddd3c4;border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.16);margin-top:4px;max-height:340px;overflow:auto;}
+.sc-s-opt{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;font-weight:600;border-bottom:1px solid #f0e8de;min-height:46px;}
+.sc-s-opt:last-child{border-bottom:0;}
+.sc-s-opt small{color:var(--gray);font-weight:500;opacity:.85;}
+.sc-s-opt:hover, .sc-s-opt[aria-selected="true"]{background:var(--cream);}
+.sc-s-loc{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;}
+.sc-s-near{flex:0 0 auto;white-space:nowrap;}
+.sc-s-loc .city-autocomplete{flex:1;min-width:170px;}
+.sc-s-loc select{flex:0 1 165px;min-width:130px;width:auto;}
+.sc-s-chips{display:flex;gap:8px;overflow-x:auto;padding:6px 2px 8px;margin-top:8px;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
+.sc-s-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:9px 16px;min-height:44px;border-radius:999px;border:1.5px solid #ddd3c4;background:var(--white);color:var(--dark) !important;font-weight:700;font-size:15px;text-decoration:none;white-space:nowrap;}
+.sc-s-chip:hover{border-color:var(--rose-dark);background:var(--cream);}
+.sc-s-chip.active{background:var(--rose-dark);border-color:var(--rose-dark);color:#fff !important;}
+.sc-s-subchips{margin-top:0;}
+.sc-s-subchips .sc-s-chip{font-size:14px;padding:6px 14px;min-height:38px;font-weight:600;}
+.sc-s-more{margin-top:6px;border-top:1px solid #efe6db;padding-top:4px;}
+.sc-s-more summary{cursor:pointer;font-weight:700;color:var(--rose-dark);min-height:44px;display:flex;align-items:center;gap:6px;list-style:none;}
+.sc-s-more summary::-webkit-details-marker{display:none;}
+.sc-s-more summary::after{content:"▾";margin-inline-start:4px;}
+.sc-s-more[open] summary::after{content:"▴";}
+.sc-s-check{display:flex;align-items:center;gap:6px;font-weight:600;width:auto;white-space:nowrap;margin:0;min-height:40px;}
+.sc-s-check input{width:20px;height:20px;margin:0;flex:0 0 auto;}
+.sc-s-status{max-width:820px;margin:8px auto 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;}
+.sc-s-count{font-weight:800;margin-inline-end:4px;}
+.sc-s-tag{display:inline-flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;border-radius:999px;background:var(--white);border:1px solid #ddd3c4;font-weight:600;font-size:14px;}
+.sc-s-tag a{color:var(--dark) !important;text-decoration:none;font-weight:800;min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;}
+.sc-s-tag a:hover{background:var(--cream);}
+.sc-s-clear{font-weight:700;color:var(--rose-dark) !important;text-decoration:underline;padding:4px 6px;}
+.sc-s-empty{max-width:560px;margin:10px auto;text-align:center;}
+.sc-s-empty-title{font-size:20px;font-weight:800;margin:0 0 4px;}
+.sc-s-empty-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px;}
+@media (max-width:640px){.sc-s-main{flex-direction:column;}.sc-s-go{padding:14px;}.sc-s-box{padding:14px 14px;}.sc-s-near{flex:1 1 100%;}.sc-s-loc select{flex:1 1 100%;}}
+
 select, input[type=text], input[type=email], input[type=password], input[type=tel], textarea{
   padding:11px 14px;border:1px solid #ddd3c4;border-radius:8px;font-size:16px;background:var(--white);color:var(--dark);width:100%;font-family:inherit;font-weight:500;
 }
@@ -1974,7 +2013,7 @@ function scSetupFormAutosave() {
     'textarea, input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input:not([type])'
   );
   fields.forEach(function (field) {
-    if (field.hasAttribute("readonly") || (!field.name && !field.id)) return;
+    if (field.hasAttribute("readonly") || field.hasAttribute("data-no-draft") || (!field.name && !field.id)) return;
     var key = draftKey(field);
     if (!field.value) {
       var saved = localStorage.getItem(key);
