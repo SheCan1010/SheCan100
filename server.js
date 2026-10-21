@@ -3046,7 +3046,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   };
   const rawQ = (query.get("q") || "").trim();
   // כפתורי תחומים גדולים (בחירה = סינון מיידי, ומנקה את הטקסט החופשי) + תתי-תחומים של התחום הנבחר.
-  const catChipsHtml = `<a class="sc-s-chip ${category ? "" : "active"}" href="${esc(searchUrl({ category: null, subcategory: null, q: null }))}">✨ הכל</a>` + d.categories.map((c) => `<a class="sc-s-chip ${c.id === category ? "active" : ""}" href="${esc(searchUrl({ category: c.id, subcategory: null, q: null }))}"${c.id === category ? ' aria-current="true"' : ""}><span aria-hidden="true">${esc(categoryIcon(c.name))}</span>${esc(c.name)}</a>`).join("");
+  const catChipsHtml = d.categories.map((c) => `<a class="sc-s-chip ${c.id === category ? "active" : ""}" href="${esc(searchUrl({ category: c.id, subcategory: null, q: null }))}"${c.id === category ? ' aria-current="true"' : ""}><span aria-hidden="true">${esc(categoryIcon(c.name))}</span>${esc(c.name)}</a>`).join("");
   const subChipsHtml = category ? `<a class="sc-s-chip ${subcategory ? "" : "active"}" href="${esc(searchUrl({ subcategory: null, q: null }))}">כל ${esc(catName(d, category))}</a>` + subcategoriesOf(d, category).map((sc) => `<a class="sc-s-chip ${sc.id === subcategory ? "active" : ""}" href="${esc(searchUrl({ subcategory: sc.id, q: null }))}">${esc(sc.name)}</a>`).join("") : "";
   // "מה מוצג עכשיו": תגיות שאפשר להסיר באצבע + מספר תוצאות + ניקוי הכל.
   const activeTags = [];
@@ -3093,10 +3093,10 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
       <form class="search-box sc-s-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות" style="margin-right:auto;margin-left:auto;">
-        <label class="sc-s-label" for="scSearchQ">מה את מחפשת?</label>
         <div class="sc-s-main">
+          <label class="sc-s-label" for="scSearchQ">מה את מחפשת?</label>
           <div class="sc-s-inputwrap">
-            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="הקלידי את שם העסק או התחום, למשל: מאפרת, טיפול בילדים, עורכת וידאו..." oninput="scLiveFilter()" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
+            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="שם עסק או תחום, למשל: מאפרת" oninput="scLiveFilter()" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
             <div id="scSuggest" class="sc-s-suggest" role="listbox" hidden></div>
           </div>
         </div>
@@ -3136,7 +3136,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
         var input = document.getElementById("scSearchQ"), box = document.getElementById("scSuggest");
         if (!input || !box) return;
         var shown = [], active = -1;
-        var ICON = { c: "🏷️", s: "📂", b: "🏪" }, KIND = { c: "תחום", s: "תת-תחום", b: "עסק" }, ORDER = { c: 0, s: 1, b: 2 };
+        var ORDER = { c: 0, s: 1, b: 2 };
         function close() { box.hidden = true; box.textContent = ""; shown = []; active = -1; input.setAttribute("aria-expanded", "false"); }
         function go(i) { if (shown[i]) location.href = shown[i][2]; }
         function mark() { var o = box.children; for (var i = 0; i < o.length; i++) o[i].setAttribute("aria-selected", i === active ? "true" : "false"); }
@@ -3151,9 +3151,8 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
           shown.forEach(function (x, i) {
             var o = document.createElement("div");
             o.className = "sc-s-opt"; o.setAttribute("role", "option"); o.setAttribute("aria-selected", "false");
-            var t = document.createElement("span"); t.textContent = ICON[x[0]] + " " + x[1];
-            var k = document.createElement("small"); k.textContent = KIND[x[0]];
-            o.appendChild(t); o.appendChild(k);
+            var t = document.createElement("span"); t.textContent = x[1];
+            o.appendChild(t);
             o.addEventListener("mousedown", function (e) { e.preventDefault(); go(i); });
             box.appendChild(o);
           });
