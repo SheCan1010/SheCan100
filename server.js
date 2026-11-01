@@ -3418,12 +3418,17 @@ function profileHeroHtml(o) {
   ].filter(Boolean).join("");
   const waShort = waBtn ? waBtn.replace("שליחת הודעה בוואטסאפ", "וואטסאפ") : "";
   const stickyBtns = `${waShort || telBtn}${waShort ? telBtn : ""}${favBtn}`;
+  const coverSrc = o.coverUri ? imgSrc(o.coverUri) : null;
+  const coverHtml = coverSrc
+    ? `<div class="pf-cover pf-cover-img" style="background-image:url('${esc(coverSrc)}');" role="img" aria-label="${esc(o.name)}"></div>`
+    : `<div class="pf-cover pf-cover-plain" aria-hidden="true"></div>`;
   const logoSrc = o.logoUri ? imgSrc(o.logoUri) : null;
   const logoHtml = logoSrc
     ? `<div class="pf-logo-box sc-zoomable" data-src="${esc(logoSrc)}" onclick="scOpenLightbox(this.getAttribute('data-src'))" title="להגדלה"><img src="${esc(logoSrc)}" alt="${esc(o.name)}" /></div>`
     : `<div class="pf-logo-box pf-logo-initials">${initials(o.name)}</div>`;
   return `
   <div class="panel profile-detail pf-hero">
+    ${coverHtml}
     <div class="pf-top">
       ${logoHtml}
       <div class="pf-id">
@@ -3586,7 +3591,8 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   <div class="pf-wrap">
   ${profileHeroHtml({
     NF, favKeyStr: favKey(f.id, null), name: f.businessName || f.name,
-    logoUri: avatarUri(f, d),
+    logoUri: f.logoDataUri || d.settings.defaultBusinessLogoDataUri,
+    coverUri: mode.logosOnly() ? null : (f.photoDataUri || (!f.galleryRequiresApproval && f.galleryPhotos && f.galleryPhotos[0]) || null),
     categoryLabel: subcatNames(d, f.categoryId, f.subcategoryIds) || catName(d, f.categoryId),
     badgesHtml: heroBadges,
     ratingHtml: profileAvgRating !== null ? `<span class="pf-rating">${starRow(Math.round(profileAvgRating))}${profileRatingExtraHtml ? ` <b>${profileRatingExtraHtml}</b>` : ""}</span>` : "",
@@ -3744,6 +3750,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   ${profileHeroHtml({
     NF, favKeyStr: favKey(f.id, l.id), name: l.businessName,
     logoUri: l.logoDataUri || d.settings.defaultBusinessLogoDataUri,
+    coverUri: (NF || mode.logosOnly()) ? null : ((l.galleryPhotos && l.galleryPhotos[0]) || null),
     categoryLabel: subcatName(d, l.categoryId, l.subcategoryId) || catName(d, l.categoryId),
     badgesHtml: heroBadges,
     ratingHtml: listingAvgRating !== null ? `<span class="pf-rating">${starRow(Math.round(listingAvgRating))}${listingReviewCount > 5 ? ` <b>(${listingReviewCount})</b>` : ""}</span>` : "",

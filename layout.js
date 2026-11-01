@@ -1511,9 +1511,15 @@ form .field{margin-bottom:6px;}
 
 /* ===== כרטיסיית עצמאית ממוקדת (2026-11-01) ===== */
 .pf-wrap .profile-detail{max-width:720px;}
-.pf-hero{text-align:right;padding:22px 24px;}
-.pf-top{display:flex;gap:16px;align-items:center;}
-.pf-hero .pf-logo,.pf-top .profile-header-logo{width:96px;height:96px;border-radius:20px;flex-shrink:0;}
+.pf-hero{text-align:right;padding:0 24px 22px;}
+.pf-cover{height:170px;margin:0 -24px;border-radius:16px 16px 0 0;background-size:cover;background-position:center;background-color:#e9ddd0;}
+.pf-cover-plain{height:84px;background:linear-gradient(135deg,#e6d6c4,#f3e9dd 60%,#ead9c6);}
+.pf-top{display:flex;gap:16px;align-items:flex-start;}
+.pf-top .pf-id{padding-top:10px;}
+.pf-logo-box{position:relative;z-index:3;width:104px;height:78px;margin-top:-40px;background:#fff;border:3px solid #fff;border-radius:16px;display:flex;align-items:center;justify-content:center;padding:4px;overflow:hidden;flex-shrink:0;cursor:zoom-in;box-shadow:0 3px 12px rgba(80,60,40,.25);transform-origin:top right;transition:transform .28s ease,box-shadow .28s ease;}
+@media (hover:hover) and (min-width:721px){.pf-logo-box:hover{transform:scale(2.3);z-index:30;box-shadow:0 12px 34px rgba(80,60,40,.38);}}
+.pf-logo-box img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;}
+.pf-logo-initials{background:linear-gradient(135deg,var(--rose),var(--cream));color:var(--white);font-size:34px;font-weight:700;cursor:default;}
 .pf-id{min-width:0;flex:1;}
 .pf-name{margin:0;font-size:25px;line-height:1.25;color:#5c5d55;overflow-wrap:anywhere;}
 .pf-cat{margin-top:4px;font-size:14px;font-weight:700;color:var(--accent);}
@@ -1530,7 +1536,9 @@ form .field{margin-bottom:6px;}
 .pf-primary{background:var(--accent);border-color:var(--accent);color:#fff;flex:2 1 200px;}
 .pf-fav{flex:0 0 52px;font-size:20px;padding:10px 0;}
 .pf-deal{margin-top:14px;}
-.pf-deal .deal-box{display:block;max-width:100%;margin-top:0;background:#fff4e8;border:1.5px dashed #d9a98e;border-radius:12px;padding:12px 16px;font-size:15px;font-weight:700;text-align:right;}
+.pf-deal .deal-box{display:block;max-width:100%;margin-top:0;background:#fff4e8;border:1.5px dashed #d9a98e;border-radius:12px;padding:12px 16px;font-size:15px;font-weight:700;text-align:center;}
+.pf-deal .deal-box>div>span:last-child{flex:0 1 auto !important;text-align:center;}
+.pf-deal .deal-box .btn{display:inline-block;margin-inline:auto;}
 .pf-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
 .pf-link{border:1px solid #d9cfc3;background:#fff;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;color:var(--dark);}
 .pf-about h3,.pf-wrap .profile-detail>h3{margin:0 0 8px;font-size:18px;text-align:right;}
@@ -1542,7 +1550,10 @@ form .field{margin-bottom:6px;}
 .pf-sticky{display:none;}
 @media (max-width:720px){
   .pf-hero{padding:16px 14px;}
-  .pf-hero .pf-logo,.pf-top .profile-header-logo{width:68px;height:68px;border-radius:15px;}
+  .pf-hero{padding:0 14px 16px;}
+  .pf-cover{height:110px;margin:0 -14px;}
+  .pf-cover-plain{height:64px;}
+  .pf-logo-box{width:84px;height:64px;margin-top:-32px;border-radius:13px;padding:3px;}
   .pf-name{font-size:19px;}
   .pf-actions{display:none;}
   .pf-sticky{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:650;background:#fff;border-top:1px solid #e5ddd0;box-shadow:0 -3px 14px rgba(0,0,0,.12);padding:8px 10px calc(8px + env(safe-area-inset-bottom));gap:8px;}
