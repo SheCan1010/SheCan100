@@ -3387,6 +3387,51 @@ route("POST", "/search/ai", async (req, res, params, query, ctx) => {
 });
 
 // ----- Freelancer profile -----
+// ---- כרטיסיית עצמאית (2026-11-01): כותרת ממוקדת + כפתורי פעולה גדולים (וואטסאפ/חיוג/הודעה/מועדפות) + הטבה
+// מיד אחריהם, ובנייד פס פעולה קבוע בתחתית. משמש גם את הפרופיל הראשי וגם את התחום הנוסף. ----
+function profileHeroHtml(o) {
+  const NF = !!o.NF;
+  const phone = o.phone || "";
+  const digits = phone ? esc(waPhoneDigits(phone)) : "";
+  const waBtn = (o.hasWhatsapp && phone) ? `<a class="pf-btn pf-wa" href="https://wa.me/${digits}" target="_blank" rel="noopener">${whatsappIconSvg}<span>שליחת הודעה בוואטסאפ</span></a>` : "";
+  const telBtn = phone ? `<a class="pf-btn${waBtn ? "" : " pf-primary"}" href="tel:${esc(phone)}">📞 <span>${waBtn ? "חיוג" : `חיוג ${esc(phone)}`}</span></a>` : "";
+  const msgBtn = (!NF && o.hasEmail) ? `<a class="pf-btn" href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){setTimeout(function(){t.focus();},350);}">✉️ <span>הודעה</span></a>` : "";
+  const favBtn = NF ? "" : `<button type="button" class="pf-btn pf-fav" data-fav="${esc(o.favKeyStr)}" aria-pressed="false" aria-label="הוספה למועדפות" onclick="scCardFav(event,this)">🤍</button>`;
+  const links = [
+    o.portfolioUrl ? `<a class="pf-link" href="${esc(o.portfolioUrl)}" target="_blank" rel="noopener">🔗 תיק עבודות</a>` : "",
+    (!NF && o.igUrl) ? `<a class="pf-link" href="${esc(o.igUrl)}" target="_blank" rel="noopener">📸 @${esc(o.igHandle)}</a>` : "",
+  ].filter(Boolean).join("");
+  const stats = [
+    o.ratingHtml || "",
+    o.years ? `<span>🌱 ${esc(o.years)}</span>` : "",
+    o.locationText ? `<span>${o.locationIcon} ${esc(o.locationText)}</span>` : "",
+    o.viewsText ? `<span>👁️ ${esc(o.viewsText)}</span>` : "",
+  ].filter(Boolean).join("");
+  const waShort = waBtn ? waBtn.replace("שליחת הודעה בוואטסאפ", "וואטסאפ") : "";
+  const stickyBtns = `${waShort || telBtn}${waShort ? telBtn : ""}${favBtn}`;
+  return `
+  <div class="panel profile-detail pf-hero">
+    <div class="pf-top">
+      ${o.logoHtml}
+      <div class="pf-id">
+        <h1 class="pf-name">${esc(o.name)}</h1>
+        ${o.categoryLabel ? `<div class="pf-cat">${esc(o.categoryLabel)}</div>` : ""}
+        ${stats ? `<div class="pf-stats">${stats}</div>` : ""}
+      </div>
+    </div>
+    ${o.badgesHtml ? `<div class="pf-badges">${o.badgesHtml}</div>` : ""}
+    ${(waBtn || telBtn || msgBtn || favBtn) ? `<div class="pf-actions">${waBtn}${telBtn}${msgBtn}${favBtn}</div>` : ""}
+    ${o.dealHtml ? `<div class="pf-deal">${o.dealHtml}</div>` : ""}
+    ${links ? `<div class="pf-links">${links}</div>` : ""}
+  </div>
+  ${o.description ? `<div class="panel profile-detail pf-about">
+    <h3>על העסק</h3>
+    <p class="pf-desc${o.description.length > 230 ? " pf-clamp" : ""}" id="scPfDesc">${esc(o.description)}</p>
+    ${o.description.length > 230 ? `<button type="button" class="pf-more" onclick="var p=document.getElementById('scPfDesc');var c=p.classList.toggle('pf-clamp');this.textContent=c?'קראי עוד ▾':'הצגה מקוצרת ▴';">קראי עוד ▾</button>` : ""}
+  </div>` : ""}
+  ${stickyBtns ? `<div class="pf-sticky" role="group" aria-label="יצירת קשר">${stickyBtns}</div><style>@media(max-width:720px){#scBottomNav{display:none !important;}}</style>` : ""}`;
+}
+
 route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const d = db.load();
   const f = d.freelancers.find((x) => x.id === params.id);
@@ -3508,32 +3553,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
     (!NF && f.email) ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
     NF ? "" : instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
-  const body = `
-  ${breadcrumbHtml([
-    { label: catName(d, f.categoryId), href: `/search?category=${f.categoryId}` },
-    ...(f.subcategoryId ? [{ label: subcatName(d, f.categoryId, f.subcategoryId), href: `/search?category=${f.categoryId}&subcategory=${f.subcategoryId}` }] : []),
-    { label: f.businessName || f.name },
-  ])}
-  <div class="panel profile-detail profile-merged">
-    <div class="profile-header-row">
-      <div class="profile-header-namelogo">
-        ${zoomableImage(avatarUri(f, d), f.businessName || f.name, "profile-header-logo")}
-        <div class="profile-header-info">
-          <h1 class="profile-header-name">${esc(f.businessName || f.name)}</h1>
-          ${f.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(f.yearsInField))}</div>` : ""}
-          ${profileAvgRating !== null ? `<div class="profile-stars-row">${starRow(Math.round(profileAvgRating))}${profileRatingExtraHtml ? `<span class="profile-review-count-small">${profileRatingExtraHtml}</span>` : ""}</div>` : ""}
-          ${d.settings.showProfileViewCount ? `<div class="profile-header-location">👁️ ${f.viewCount || 0} צפיות בפרופיל</div>` : ""}
-          ${profileLocation ? `<div class="profile-header-location">${profileLocationIcon} ${esc(profileLocation)}</div>` : ""}
-        </div>
-      </div>
-      ${contactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${contactRows}</div>` : ""}
-    </div>
-
-    ${isCustomer ? `<form method="post" action="/freelancer/${f.id}/favorite" style="margin-top:10px;"><button class="btn btn-small favorite-btn ${isFav ? "btn" : "btn-outline"}" type="submit">${isFav ? "❤️ שמורה אצלך" : "❤️ הוספה למועדפות"}</button></form>` : ""}
-    ${heroBadges ? `<div style="margin-top:10px;">${heroBadges}</div>` : ""}
-    ${f.description ? `<p class="profile-header-desc">${esc(f.description)}</p>` : ""}
-
-    ${dealVisibleToCustomers(f) ? `
+  const dealBlockHtml = dealVisibleToCustomers(f) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(f.dealText || ""))}
       ${(f.dealCode && !NF) ? (
@@ -3543,13 +3563,32 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
           ? youCanGateBoxHtml(`scYouCanGate-${f.id}`, `/freelancer/${f.id}`, d)
           : `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this)">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(f.dealCode)}</div>`
       ) : ""}
-    </div>` : ""}
-  </div>
+    </div>` : "";
+  const body = `
+  ${breadcrumbHtml([
+    { label: catName(d, f.categoryId), href: `/search?category=${f.categoryId}` },
+    ...(f.subcategoryId ? [{ label: subcatName(d, f.categoryId, f.subcategoryId), href: `/search?category=${f.categoryId}&subcategory=${f.subcategoryId}` }] : []),
+    { label: f.businessName || f.name },
+  ])}
+  <div class="pf-wrap">
+  ${profileHeroHtml({
+    NF, favKeyStr: favKey(f.id, null), name: f.businessName || f.name,
+    logoHtml: zoomableImage(avatarUri(f, d), f.businessName || f.name, "profile-header-logo pf-logo"),
+    categoryLabel: subcatNames(d, f.categoryId, f.subcategoryIds) || catName(d, f.categoryId),
+    badgesHtml: heroBadges,
+    ratingHtml: profileAvgRating !== null ? `<span class="pf-rating">${starRow(Math.round(profileAvgRating))}${profileRatingExtraHtml ? ` <b>${profileRatingExtraHtml}</b>` : ""}</span>` : "",
+    years: f.yearsInField ? yearsInFieldShortLabel(f.yearsInField) : "",
+    locationText: profileLocation, locationIcon: profileLocationIcon,
+    viewsText: d.settings.showProfileViewCount ? `${f.viewCount || 0} צפיות` : "",
+    phone: f.phone, hasWhatsapp: f.hasWhatsapp, hasEmail: !!f.email,
+    portfolioUrl: f.portfolioUrl, igUrl: (instagramHandleAndUrl(f.instagram) || {}).url, igHandle: (instagramHandleAndUrl(f.instagram) || {}).handle,
+    dealHtml: dealBlockHtml, description: f.description || "",
+  })}
 
   ${(!mode.logosOnly() && !NF && f.galleryPhotos && f.galleryPhotos.length) ? (
     !f.galleryRequiresApproval || (customer && (f.galleryApprovedCustomerIds || []).includes(customer.id)) ? `
     <div class="panel profile-detail">
-      <h3 style="color:var(--gray);font-size:22px;text-align:center;">גאה להציג</h3>
+      <h3 style="color:var(--gray);font-size:20px;">עבודות</h3>
       <div class="gallery-scroll">
         ${f.galleryPhotos.map((src) => zoomableImage(src, "", "gallery-thumb", f.galleryPhotos)).join("")}
       </div>
@@ -3566,7 +3605,8 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   ) : ""}
 
   ${NF ? "" : `<div class="panel profile-detail" id="scReview">
-    <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
+    <h3>⭐ מה אומרות עליה</h3>
+    ${(profileAvgRating !== null && reviews.length) ? `<div class="pf-rev-summary"><span class="pf-rev-num">★ ${esc(formatRatingNumber(profileAvgRating))}</span><span>${reviews.length === 1 ? "ביקורת אחת" : `${reviews.length} ביקורות`}</span></div>` : ""}
     ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
     ${isCustomer ? reviewFormHtml(f.businessName || f.name, `/freelancer/${f.id}/review`, "", myExistingReview) : customerOnlyPrompt(ctx, loginUrl, "לכתוב המלצה")}
   </div>`}
@@ -3590,6 +3630,7 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
       ${otherApprovedListings.map((l) => additionalListingCard(f, l, d)).join("")}
     </div>
   </div>` : ""}
+  </div>
   `;
   // SEO לעמוד הפרופיל הציבורי (נוסף 2026-08-27, לפי בקשה מפורשת) - זה עמוד הכרטיסייה, הכי הרבה
   // תנועה מגוגל צפויה לנחות בדיוק כאן. כותרת/תיאור עשירים בתחום+עיר (לא רק שם עסק), ו-JSON-LD
@@ -3673,27 +3714,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
     (!NF && f.email) ? `<div class="profile-detail-row"><span class="profile-detail-icon">📧</span><a href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){t.focus();}">${esc(f.email)}</a></div>` : "",
     NF ? "" : instagramLinkHtml(f.instagram),
   ].filter(Boolean).join("");
-  const body = `
-  <p class="muted" style="text-align:center;">תחום נוסף של <a href="/freelancer/${f.id}" style="color:var(--rose-dark);font-weight:800;">${esc(f.businessName || f.name)}</a></p>
-  <div class="panel profile-detail profile-merged">
-    <div class="profile-header-row">
-      <div class="profile-header-namelogo">
-        ${zoomableImage(l.logoDataUri || d.settings.defaultBusinessLogoDataUri, l.businessName, "profile-header-logo")}
-        <div class="profile-header-info">
-          <h1 class="profile-header-name">${esc(l.businessName)}</h1>
-          ${l.yearsInField ? `<div class="profile-header-years">🌱 ${esc(yearsInFieldShortLabel(l.yearsInField))}</div>` : ""}
-          ${listingAvgRating !== null ? `<div class="profile-stars-row">${starRow(Math.round(listingAvgRating))}${listingReviewCount > 5 ? `<span class="profile-review-count-small">(${listingReviewCount})</span>` : ""}</div>` : ""}
-          ${listingLocation ? `<div class="profile-header-location">${listingLocationIcon} ${esc(listingLocation)}</div>` : ""}
-        </div>
-      </div>
-      ${listingContactRows ? `<div class="profile-header-divider"></div><div class="profile-contact-col">${listingContactRows}</div>` : ""}
-    </div>
-
-    ${isCustomer ? `<form method="post" action="/freelancer/${f.id}/favorite" style="margin-top:10px;"><input type="hidden" name="listingId" value="${esc(l.id)}" /><button class="btn btn-small favorite-btn ${isFav ? "btn" : "btn-outline"}" type="submit">${isFav ? "❤️ שמורה אצלך" : "❤️ הוספה למועדפות"}</button></form>` : ""}
-    ${heroBadges ? `<div style="margin-top:10px;">${heroBadges}</div>` : ""}
-    ${l.description ? `<p class="profile-header-desc">${esc(l.description)}</p>` : ""}
-
-    ${dealVisibleToCustomers(l) ? `
+  const dealBlockHtml = dealVisibleToCustomers(l) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(l.dealText || ""))}
       ${(l.dealCode && !NF) ? (
@@ -3703,19 +3724,35 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
           ? youCanGateBoxHtml(`scYouCanGate-${f.id}-${l.id}`, `/freelancer/${f.id}/listing/${l.id}`, d)
           : `<button type="button" class="btn btn-small" style="margin-top:8px;" onclick="scRevealCoupon('${f.id}', this, '${l.id}')">לצפייה בקוד קופון</button><div id="scCoupon-${f.id}-${l.id}" style="display:none;margin-top:6px;font-weight:800;">קוד: ${esc(l.dealCode)}</div>`
       ) : ""}
-    </div>` : ""}
-  </div>
+    </div>` : "";
+  const body = `
+  <p class="muted" style="text-align:center;">תחום נוסף של <a href="/freelancer/${f.id}" style="color:var(--rose-dark);font-weight:800;">${esc(f.businessName || f.name)}</a></p>
+  <div class="pf-wrap">
+  ${profileHeroHtml({
+    NF, favKeyStr: favKey(f.id, l.id), name: l.businessName,
+    logoHtml: zoomableImage(l.logoDataUri || d.settings.defaultBusinessLogoDataUri, l.businessName, "profile-header-logo pf-logo"),
+    categoryLabel: subcatName(d, l.categoryId, l.subcategoryId) || catName(d, l.categoryId),
+    badgesHtml: heroBadges,
+    ratingHtml: listingAvgRating !== null ? `<span class="pf-rating">${starRow(Math.round(listingAvgRating))}${listingReviewCount > 5 ? ` <b>(${listingReviewCount})</b>` : ""}</span>` : "",
+    years: l.yearsInField ? yearsInFieldShortLabel(l.yearsInField) : "",
+    locationText: listingLocation, locationIcon: listingLocationIcon,
+    viewsText: "",
+    phone: f.phone, hasWhatsapp: f.hasWhatsapp, hasEmail: !!f.email,
+    portfolioUrl: l.portfolioUrl, igUrl: (instagramHandleAndUrl(f.instagram) || {}).url, igHandle: (instagramHandleAndUrl(f.instagram) || {}).handle,
+    dealHtml: dealBlockHtml, description: l.description || "",
+  })}
 
   ${(!NF && l.galleryPhotos && l.galleryPhotos.length) ? `
   <div class="panel profile-detail">
-    <h3 style="color:var(--gray);font-size:22px;text-align:center;">גאה להציג</h3>
+    <h3 style="color:var(--gray);font-size:20px;">עבודות</h3>
     <div class="gallery-scroll">
       ${l.galleryPhotos.map((src) => zoomableImage(src, "", "gallery-thumb", l.galleryPhotos)).join("")}
     </div>
   </div>` : ""}
 
   ${NF ? "" : `<div class="panel profile-detail">
-    <h3 style="text-align:center;">⭐ מה אומרות עליה</h3>
+    <h3>⭐ מה אומרות עליה</h3>
+    ${(listingAvgRating !== null && reviews.length) ? `<div class="pf-rev-summary"><span class="pf-rev-num">★ ${esc(formatRatingNumber(listingAvgRating))}</span><span>${reviews.length === 1 ? "ביקורת אחת" : `${reviews.length} ביקורות`}</span></div>` : ""}
     ${reviews.length ? reviews.map(reviewCard).join("") : `<p class="muted">עוד אין ביקורות - היי הראשונה לספר איך היה.</p>`}
     ${isCustomer ? reviewFormHtml(l.businessName, `/freelancer/${f.id}/review`, l.id, myExistingReview) : customerOnlyPrompt(ctx, loginUrl, "לכתוב המלצה")}
   </div>`}
@@ -3731,6 +3768,7 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
       </form>
     ` : customerOnlyPrompt(ctx, loginUrlToMessage, "לשלוח הודעה ישירה לעצמאית")}
   </div>`}
+  </div>
   `;
   sendHtml(res, 200, page({ title: l.businessName, session: ctx.session, body, query }));
 });
