@@ -390,18 +390,18 @@ function nav(session, opts) {
         <button type="button" class="sc-burger" id="scBurger" aria-label="תפריט" aria-expanded="false" aria-controls="scMobileMenu" onclick="scToggleMobileMenu()">☰</button>
         <a href="/" class="brand sc-brand" aria-label="SheCan - דף הבית">${brandInner}<span class="sc-bsd">בס"ד</span></a>
         <nav class="main-nav sc-main-nav" aria-label="ניווט ראשי">
+          <a class="nav-link" href="/">דף הבית</a>
           <a class="nav-link" href="/search"><span>חיפוש</span><span aria-hidden="true" style="color:var(--rose-dark);">🔍</span></a>
           <a class="nav-link" href="/deals">הטבות</a>
           <a class="nav-link" href="/stories">Stories</a>
           <a class="nav-link nav-link-community" href="/community">קהילה${communityBadge}</a>
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${arenaBadge}</a>
-          <a class="nav-link" href="/patternmakers">✂️ מודליסטיות</a>
+          <a class="nav-link" href="/influencers">${pluralName}</a>
           <details class="sc-more">
             <summary class="nav-link">עוד ▾</summary>
             <div class="sc-more-menu">
-              <a href="/">דף הבית</a>
               <a href="/magazine">מגזין SheCan</a>
-              <a href="/influencers">${pluralName}</a>
+              <a href="/patternmakers">✂️ מודליסטיות</a>
               <a href="/about">מי אנחנו</a>
             </div>
           </details>
@@ -1434,7 +1434,9 @@ form .field{margin-bottom:6px;}
 .sc-more{position:relative;}
 .sc-more>summary{list-style:none;cursor:pointer;}
 .sc-more>summary::-webkit-details-marker{display:none;}
-.sc-more-menu{position:absolute;top:calc(100% + 6px);inset-inline-start:0;background:#fff;border:1px solid #e5ddd0;border-radius:12px;box-shadow:0 10px 26px rgba(0,0,0,.16);padding:6px;min-width:170px;z-index:30;display:flex;flex-direction:column;}
+.site-header-sticky .site-header{position:relative;z-index:5;}
+.deals-ticker-wrap{position:relative;z-index:1;}
+.sc-more-menu{position:absolute;top:calc(100% + 6px);inset-inline-start:0;background:#fff;opacity:1;border:1px solid #e5ddd0;border-radius:12px;box-shadow:0 10px 26px rgba(0,0,0,.16);padding:6px;min-width:170px;z-index:30;display:flex;flex-direction:column;}
 .sc-more-menu a{padding:8px 12px;border-radius:8px;font-weight:600;font-size:14px;white-space:nowrap;}
 .sc-more-menu a:hover{background:var(--cream);}
 @media (min-width:721px) and (max-width:1120px){
@@ -1499,6 +1501,13 @@ form .field{margin-bottom:6px;}
 .sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--dark);color:#fff;padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:700;z-index:900;box-shadow:0 6px 18px rgba(0,0,0,.25);max-width:90vw;text-align:center;}
 
 .sc-s-sort{font-family:inherit;font-size:13px;padding:4px 8px;border:1px solid #e1d6c9;border-radius:999px;background:var(--white);color:var(--dark);font-weight:700;max-width:160px;}
+
+/* ===== הרשמת עצמאית קלילה: טקסט שיווקי ופרטים נוספים מקופלים ===== */
+.sc-join-fold,.sc-join-more{margin-top:10px;text-align:right;}
+.sc-join-fold>summary,.sc-join-more>summary{cursor:pointer;list-style:none;font-weight:800;font-size:14.5px;color:var(--accent);padding:9px 14px;border:1px dashed #cdbfae;border-radius:12px;background:var(--white);text-align:center;}
+.sc-join-fold>summary::-webkit-details-marker,.sc-join-more>summary::-webkit-details-marker{display:none;}
+.sc-join-fold[open]>summary,.sc-join-more[open]>summary{margin-bottom:12px;}
+
 `;
 
 function subcatsJsMap() {

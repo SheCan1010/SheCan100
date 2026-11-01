@@ -6665,11 +6665,11 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
   </div>` : ""}
 
   <h1 class="section-title">🗺️ שמות אותך על המפה</h1>
-  <div class="panel" style="max-width:600px;margin:0 auto;text-align:center;">
-    <p style="font-size:19px;font-weight:800;margin:0 0 8px;">ב-SheCan זה פשוט:</p>
-    <p style="font-weight:400;font-size:15px;color:var(--gray);margin:0 0 4px;">פותחת כרטיס &gt; לקוחה פונה &gt; עסקה נסגרת.</p>
-    <p style="font-weight:400;font-size:15px;color:var(--gray);margin:0 0 4px;">זה מתחיל בלקוחה אחת, וממשיך לרצף של הזמנות.</p>
-    <p style="font-weight:400;font-size:15px;color:var(--gray);margin:0 0 16px;">מוכנה להקפיץ את העסק שלך לרמה הבאה? הצטרפי לנבחרת!</p>
+  <div class="panel" style="max-width:560px;margin:0 auto 14px;text-align:center;">
+    <p style="font-size:18px;font-weight:800;margin:0 0 4px;">פותחת כרטיס &gt; לקוחה פונה &gt; עסקה נסגרת.</p>
+    <p style="margin:0 0 8px;font-size:15px;font-weight:700;color:var(--ok);">${!charging ? "🎉 ההרשמה כרגע בחינם לחלוטין לכל המייסדות" : "ההרשמה לנבחרת המייסדות פתוחה"} - לוקח דקה אחת!</p>
+    <details class="sc-join-fold">
+      <summary>💡 מה תקבלי אצלנו? (לחצי לקריאה)</summary>
     <p style="text-align:center;font-size:23px;font-weight:800;color:var(--rose-dark);margin:20px 0 12px;">בואי נדבר תכלס -</p>
     <p style="text-align:center;">מה תקבלי אצלנו?</p>
     <ul class="bullet-list" style="margin:0;padding-inline-start:4px;line-height:1.9;list-style:none;text-align:right;">
@@ -6681,10 +6681,11 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <li><span class="bullet-icon">🌸</span><span><strong>השתתפות פעילה ב"זירה":</strong> תשובות לשאלות לקוחות ופרסום סקרים אישיים – הזדמנות מעולה לבלוט כמומחית, לקבל פידבקים חשובים ולמשוך אליך לקוחות חדשות.</span></li>
     </ul>
     <p class="muted" style="margin-top:14px;font-size:13.5px;">💡 טיפ: הכרטיסיות שיש להן הכי הרבה דירוגים וחוות דעת מוצגות ראשונות באתר - אז כדאי לעודד לקוחות מרוצות להשאיר לך חוות דעת.</p>
-  </div>
 
   <div class="flash flash-ok" style="max-width:680px;">${!charging ? "ההרשמה כרגע ב-0 ₪ - בחינם לחלוטין לכל המייסדות! לאחר תקופת ההשקה, ההצטרפות תהיה כרוכה בדמי מנוי חודשיים, אך אתן – המייסדות – תיהנו מהנחה קבועה ובלעדית לכל החיים." : "ההצטרפות כרוכה בדמי מנוי חודשיים."}</div>
   ${!charging ? founderPricingBlockHtml(d) : ""}
+    </details>
+  </div>
 
   <form class="panel" id="scJoinForm" method="post" action="/join" enctype="multipart/form-data" style="max-width:560px;margin:24px auto;">
     <!-- honeypot נגד בוטים (ר' ההערה המלאה ב-POST /join, אותו דפוס בדיוק כמו טופס "צרי קשר") -
@@ -6695,21 +6696,15 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label>🌸 שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
     <label>🌸 שם העסק<input type="text" name="businessName" id="joinBusinessName" value="${esc(p.businessName || "")}" required /></label>
     <label>🌸 מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
-    <p style="background:#fff4e8;border-radius:10px;padding:8px 12px;margin:-2px 0 10px;font-size:13.5px;line-height:1.55;">📬 <strong>שימי לב למיילים שאת מקבלת מהאתר</strong> - לפעמים אלה לקוחות שמתעניינות בשירות שלך. כדאי לבדוק את תיבת המייל באופן קבוע (וגם בספאם), כדי לא לפספס פנייה.</p>
+    <p class="muted" style="margin:-2px 0 10px;font-size:12.5px;line-height:1.5;">📬 כדאי לבדוק את תיבת המייל (וגם ספאם) - לפעמים לקוחות פונות דרכה.</p>
     <label>🌸 בחרי סיסמה<input type="password" name="password" required /></label>
     ${isRetry ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
     <label>🌸 מה התחום שלך?
     <select name="categoryId" id="joinCategorySelect" required onchange="scUpdateSubcatCheckboxes(this, 'scSubcatBox');scToggleOtherCategory(this, 'scOtherCategoryBox');"><option value="">בחרי תחום</option>${catOptions}<option value="__other__" ${p.categoryId === "__other__" ? "selected" : ""}>אחר - התחום שלי לא ברשימה</option></select></label>
-    <label>🌸 תת-תחום (לא חובה - אפשר לסמן כמה)</label>
-    <div id="scSubcatBox" style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;margin:-6px 0 6px;">${subcatCheckboxesForPrefill}</div>
-    <label>🌸 לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" value="${esc(p.subcategorySuggestion || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
-    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
     <div id="scOtherCategoryBox" style="display:${p.categoryId === "__other__" ? "block" : "none"};">
       <label>🌸 מה שם התחום שלך?<input type="text" name="customCategory" value="${esc(p.customCategory || "")}" placeholder="למשל: עיצוב אירועים" /></label>
       <label>🌸 תת-תחום (לא חובה)<input type="text" name="customSubcategory" value="${esc(p.customSubcategory || "")}" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
     </div>
-    <label>🌸 כמה שנים את בתחום?
-    <select name="yearsInField" required><option value="">בחרי</option>${yearsInFieldOptionsHtml(p.yearsInField || "")}</select></label>
     <label>🌸 מאיזו עיר?${cityAutocompleteHtml({ fieldName: "cityId", selectedId: p.cityId || "", selectedName: p.cityId ? cityName(d, p.cityId) : "", placeholder: "בחרי עיר" })}</label>
     <p class="muted" style="margin:-6px 0 6px;font-size:13px;">לא חובה לציין עיר, כל עוד מסומן למטה שאת נותנת שירות בדיגיטלית או מגיעה עד הלקוחה - אבל חובה לפחות אחד מהשלושה.</p>
     <label>🌸 טלפון<input type="tel" name="phone" value="${esc(p.phone || "")}" /></label>
@@ -6717,6 +6712,29 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     <label>🌸 איך את נותנת את השירות? (אפשר לסמן כמה)</label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:0;"><input type="checkbox" name="offersOnline" value="1" ${p.offersOnline ? "checked" : ""} style="width:auto;" /> 💻 נותנת שירות אונליין / דיגיטלית</label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="offersHomeVisit" value="1" ${p.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-weight:700;margin-top:14px;background:var(--cream);border-radius:8px;padding:10px 12px;">
+      <input type="checkbox" name="publicListingConsent" value="1" ${p.publicListingConsent ? "checked" : ""} required style="width:auto;margin-top:3px;" />
+      <span>אני מאשרת שהפרטים, התמונות והתיאור שאעלה יוצגו בכרטיסייה הפומבית שלי באתר SheCan, ושכל מי שנכנסת/נכנס לאתר - כולל גברים, ולא רק נשים - יכולה/יכול לצפות בהם.</span>
+    </label>
+
+    ${charging ? `
+    <label>🌸 איזו רמה מתאימה לך?
+    <select name="tier"><option value="basic" ${p.tier !== "premium" ? "selected" : ""}>בסיסית</option><option value="premium" ${p.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
+
+    ` : ""}
+    ${charging ? `
+    <label>יש לך קוד VIP? הזיני כאן ופטרי את עצמך מהתשלום (אופציונלי)
+    <input type="text" name="vipCode" value="${esc(p.vipCode || "")}" placeholder="לדוגמה: VIP1234" /></label>` : ""}
+
+
+    <details class="sc-join-more" ${isRetry ? "open" : ""}>
+      <summary>✨ להוסיף עוד פרטים עכשיו? (לא חובה - מגדיל את הסיכוי שיפנו אלייך)</summary>
+    <label>🌸 תת-תחום (לא חובה - אפשר לסמן כמה)</label>
+    <div id="scSubcatBox" style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;margin:-6px 0 6px;">${subcatCheckboxesForPrefill}</div>
+    <label>🌸 לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" value="${esc(p.subcategorySuggestion || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
+    <label>🌸 כמה שנים את בתחום?
+    <select name="yearsInField"><option value="">בחרי</option>${yearsInFieldOptionsHtml(p.yearsInField || "")}</select></label>
     ${mode.isNetfree() ? "" : `<label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>`}
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" id="joinLogoInput" accept="image/*" data-sc-crop="1" /></label>
@@ -6732,19 +6750,12 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       עצמאית שנותנת הטבה ללקוחות (אחרי שאישרנו אותה) <strong>מופיעה למעלה בבאנר ההטבות</strong> בכל עמוד באתר - וזו חשיפה מטורפת ללקוחות שמחפשות הטבות! בנוסף היא מופיעה כשלקוחה מסמנת בחיפוש <strong>"🎁 עם הטבה"</strong>. ההטבה לא חובה והפרופיל שלך יאושר גם בלעדיה, אבל בלי הטבה העסק לא יופיע בבאנר ובסינון הזה.
     </div>
     <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן.">${esc(p.dealText || "")}</textarea>
+${!charging ? `
     <label>🌸 איזו רמה מתאימה לך?
     <select name="tier"><option value="basic" ${p.tier !== "premium" ? "selected" : ""}>בסיסית</option><option value="premium" ${p.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
-    ${charging ? `
-    <label>יש לך קוד VIP? הזיני כאן ופטרי את עצמך מהתשלום (אופציונלי)
-    <input type="text" name="vipCode" value="${esc(p.vipCode || "")}" placeholder="לדוגמה: VIP1234" /></label>` : ""}
 
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
+    ` : ""}    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
     <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לך (בזירה או במסר), כשלקוחה מתעניינת פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בזירה בתחום שלך.</p>
-
-    <label style="display:flex;align-items:flex-start;gap:8px;font-weight:700;margin-top:14px;background:var(--cream);border-radius:8px;padding:10px 12px;">
-      <input type="checkbox" name="publicListingConsent" value="1" ${p.publicListingConsent ? "checked" : ""} required style="width:auto;margin-top:3px;" />
-      <span>אני מאשרת שהפרטים, התמונות והתיאור שאעלה יוצגו בכרטיסייה הפומבית שלי באתר SheCan, ושכל מי שנכנסת/נכנס לאתר - כולל גברים, ולא רק נשים - יכולה/יכול לצפות בהם.</span>
-    </label>
 
     <div class="muted" style="margin-top:16px;background:var(--cream);border-radius:8px;padding:12px 14px;font-size:14px;">
       ברגע שתסיימי להירשם, המערכת שלנו תייצר עבורך באופן אוטומטי קוד קופון אישי וייחודי (בסגנון SheCan1234), שתוכלי להעביר ללקוחות שלך. הקוד הזה יהיה הכרטיס המזהה שלך בקהילה.
@@ -6776,6 +6787,10 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <div class="muted" data-sc-story-count-note style="font-size:12.5px;margin-top:4px;"></div>
     </div>
 
+    </details>
+
+    <details class="sc-join-more" ${(isRetry || referrerFreelancer || influencerCodePrefill) ? "open" : ""}>
+      <summary>🎟️ הגעת דרך חברה או משפיענית? (לא חובה)</summary>
     <input type="hidden" name="ref" value="${esc(refId)}" />
     <div class="referral-source-choice">
       <label style="font-weight:800;font-size:13.5px;">איך שמעת על SheCan?</label>
@@ -6797,9 +6812,15 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <p class="muted" style="font-size:13.5px;margin:6px 0 0;"><strong>חשוב לנו מאוד:</strong> אם הגעת אלינו דרך משפיענית (סטטוס, אינסטגרם או קבוצת צ'אט) - נא לכתוב את קוד הקופון האישי שלה, כדי שההפניה תירשם על שמה. אם לא הגעת דרך אף אחת - אפשר להשאיר ריק.</p>
     </div>
 
-    <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap;">
-      <button class="btn btn-outline" style="flex:1;min-width:180px;" type="button" onclick="scShowJoinPreview()">תצוגה מוקדמת 👀</button>
-      <button class="btn" style="flex:1;min-width:180px;" type="submit">${charging ? "המשך לתשלום" : "הרשמה"}</button>
+    </details>
+
+    <div style="margin-top:16px;">
+      <button class="btn" style="width:100%;" type="submit">${charging ? "המשך לתשלום" : "הרשמה ✨"}</button>
+    </div>
+    <p class="muted" style="text-align:center;margin:8px 0 0;font-size:12.5px;">את שאר הפרטים (לוגו, תמונות, תיאור והטבה) אפשר להוסיף עכשיו למטה, או בכל זמן מהאזור האישי.</p>
+
+    <div style="margin-top:14px;text-align:center;">
+      <button class="btn btn-outline btn-small" type="button" onclick="scShowJoinPreview()">תצוגה מוקדמת של הכרטיסייה 👀</button>
     </div>
   </form>
 
