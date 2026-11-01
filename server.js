@@ -3406,21 +3406,26 @@ function profileHeroHtml(o) {
   const msgBtn = (!NF && o.hasEmail) ? `<a class="pf-btn" href="#scMessageBox" onclick="var t=document.querySelector('#scMessageBox textarea');if(t){setTimeout(function(){t.focus();},350);}">✉️ <span>הודעה</span></a>` : "";
   const favBtn = NF ? "" : `<button type="button" class="pf-btn pf-fav" data-fav="${esc(o.favKeyStr)}" aria-pressed="false" aria-label="הוספה למועדפות" onclick="scCardFav(event,this)">🤍</button>`;
   const links = [
+    (!NF && o.email) ? `<a class="pf-link" href="mailto:${esc(o.email)}" dir="ltr">✉️ ${esc(o.email)}</a>` : "",
     o.portfolioUrl ? `<a class="pf-link" href="${esc(o.portfolioUrl)}" target="_blank" rel="noopener">🔗 תיק עבודות</a>` : "",
     (!NF && o.igUrl) ? `<a class="pf-link" href="${esc(o.igUrl)}" target="_blank" rel="noopener">📸 @${esc(o.igHandle)}</a>` : "",
   ].filter(Boolean).join("");
   const stats = [
     o.ratingHtml || "",
     o.years ? `<span>🌱 ${esc(o.years)}</span>` : "",
-    o.locationText ? `<span>${o.locationIcon} ${esc(o.locationText)}</span>` : "",
+    (o.locationText && o.locationText !== "שירות אונליין" && o.locationText !== "מגיעה אלייך") ? `<span>${o.locationIcon} ${esc(o.locationText)}</span>` : "",
     o.viewsText ? `<span>👁️ ${esc(o.viewsText)}</span>` : "",
   ].filter(Boolean).join("");
   const waShort = waBtn ? waBtn.replace("שליחת הודעה בוואטסאפ", "וואטסאפ") : "";
   const stickyBtns = `${waShort || telBtn}${waShort ? telBtn : ""}${favBtn}`;
+  const logoSrc = o.logoUri ? imgSrc(o.logoUri) : null;
+  const logoHtml = logoSrc
+    ? `<div class="pf-logo-box sc-zoomable" data-src="${esc(logoSrc)}" onclick="scOpenLightbox(this.getAttribute('data-src'))" title="להגדלה"><img src="${esc(logoSrc)}" alt="${esc(o.name)}" /></div>`
+    : `<div class="pf-logo-box pf-logo-initials">${initials(o.name)}</div>`;
   return `
   <div class="panel profile-detail pf-hero">
     <div class="pf-top">
-      ${o.logoHtml}
+      ${logoHtml}
       <div class="pf-id">
         <h1 class="pf-name">${esc(o.name)}</h1>
         ${o.categoryLabel ? `<div class="pf-cat">${esc(o.categoryLabel)}</div>` : ""}
@@ -3581,14 +3586,14 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   <div class="pf-wrap">
   ${profileHeroHtml({
     NF, favKeyStr: favKey(f.id, null), name: f.businessName || f.name,
-    logoHtml: zoomableImage(avatarUri(f, d), f.businessName || f.name, "profile-header-logo pf-logo"),
+    logoUri: avatarUri(f, d),
     categoryLabel: subcatNames(d, f.categoryId, f.subcategoryIds) || catName(d, f.categoryId),
     badgesHtml: heroBadges,
     ratingHtml: profileAvgRating !== null ? `<span class="pf-rating">${starRow(Math.round(profileAvgRating))}${profileRatingExtraHtml ? ` <b>${profileRatingExtraHtml}</b>` : ""}</span>` : "",
     years: f.yearsInField ? yearsInFieldShortLabel(f.yearsInField) : "",
     locationText: profileLocation, locationIcon: profileLocationIcon,
     viewsText: d.settings.showProfileViewCount ? `${f.viewCount || 0} צפיות` : "",
-    phone: f.phone, hasWhatsapp: f.hasWhatsapp, hasEmail: !!f.email,
+    phone: f.phone, hasWhatsapp: f.hasWhatsapp, hasEmail: !!f.email, email: f.email,
     portfolioUrl: f.portfolioUrl, igUrl: (instagramHandleAndUrl(f.instagram) || {}).url, igHandle: (instagramHandleAndUrl(f.instagram) || {}).handle,
     dealHtml: dealBlockHtml, description: f.description || "",
   })}
@@ -3738,14 +3743,14 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   <div class="pf-wrap">
   ${profileHeroHtml({
     NF, favKeyStr: favKey(f.id, l.id), name: l.businessName,
-    logoHtml: zoomableImage(l.logoDataUri || d.settings.defaultBusinessLogoDataUri, l.businessName, "profile-header-logo pf-logo"),
+    logoUri: l.logoDataUri || d.settings.defaultBusinessLogoDataUri,
     categoryLabel: subcatName(d, l.categoryId, l.subcategoryId) || catName(d, l.categoryId),
     badgesHtml: heroBadges,
     ratingHtml: listingAvgRating !== null ? `<span class="pf-rating">${starRow(Math.round(listingAvgRating))}${listingReviewCount > 5 ? ` <b>(${listingReviewCount})</b>` : ""}</span>` : "",
     years: l.yearsInField ? yearsInFieldShortLabel(l.yearsInField) : "",
     locationText: listingLocation, locationIcon: listingLocationIcon,
     viewsText: "",
-    phone: f.phone, hasWhatsapp: f.hasWhatsapp, hasEmail: !!f.email,
+    phone: f.phone, hasWhatsapp: f.hasWhatsapp, hasEmail: !!f.email, email: f.email,
     portfolioUrl: l.portfolioUrl, igUrl: (instagramHandleAndUrl(f.instagram) || {}).url, igHandle: (instagramHandleAndUrl(f.instagram) || {}).handle,
     dealHtml: dealBlockHtml, description: l.description || "",
   })}
