@@ -2763,15 +2763,21 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   const endedPrizes = customerRacePrizes(d);
   const endedPrizeIcons = ["🥇", "🥈", "🥉", "🎁"];
   const homeRaceEndedHtml = `
-      <div style="margin-top:16px;max-width:420px;margin-inline:auto;">
-        <section class="panel race-panel" id="scCustomerRaceSection" style="text-align:center;padding:12px 16px;border:2px solid #A6265B;background:linear-gradient(180deg,#fff8fb,#fbeef3);box-shadow:0 3px 14px rgba(166,38,91,.14);">
-          <p style="font-weight:900;font-size:18px;color:#7C1743;margin:0 0 2px;">🏁 מירוץ הלקוחות - מירוץ מס' ${esc(String(endedRaceNumber))} הסתיים! 🎉</p>
-          <p style="margin:0 0 6px;font-weight:700;font-size:14px;">יש לנו זוכות ב:</p>
-          <div style="display:flex;flex-direction:column;gap:3px;align-items:center;">
-            ${endedPrizes.map((pz, i) => `<div style="font-size:14px;line-height:1.5;">${endedPrizeIcons[i] || "🎁"} <strong>${esc(pz)}</strong>${customerRacePrizeSponsorHtml(d, i)}</div>`).join("")}
+      <section class="race-ended" id="scCustomerRaceSection" aria-label="מירוץ הלקוחות">
+        <div class="race-ended-head">
+          <span class="race-ended-flag" aria-hidden="true">🏁</span>
+          <div>
+            <div class="race-ended-title">מירוץ הלקוחות מס' ${esc(String(endedRaceNumber))} הסתיים!</div>
+            <div class="race-ended-sub">יש לנו זוכות 🎉 הנה הפרסים שחיכו להן:</div>
           </div>
-        </section>
-      </div>`;
+        </div>
+        <ul class="race-ended-list">
+          ${endedPrizes.map((pz, i) => {
+            const sp = customerRacePrizeSponsor(d, i);
+            return `<li class="race-ended-item"><span class="race-ended-medal">${endedPrizeIcons[i] || "🎁"}</span><span class="race-ended-prize"><strong>${esc(pz)}</strong>${sp ? `<span class="race-ended-sponsor">בחסות <a href="/freelancer/${esc(sp.id)}">${esc(sp.businessName || sp.name)}</a></span>` : ""}</span></li>`;
+          }).join("")}
+        </ul>
+      </section>`;
 
   const viewRowHtmlHome = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button></div>`;
   const body = `
@@ -2842,9 +2848,11 @@ route("GET", "/", async (req, res, params, query, ctx) => {
       ` : ""}
       ${(homeRaceEnded || d.settings.customerReferralContestActive) ? `</details>` : ""}
 
+      <div class="home-cats">
       <h2 class="section-title">מה למצוא לך היום?</h2>
       <div class="cat-grid">
         ${d.categories.slice(0, 12).map((c) => `<a class="cat-card" href="/search?category=${c.id}"><span class="cat-icon">${categoryIcon(c.name)}</span>${esc(c.name)}</a>`).join("")}
+      </div>
       </div>
 
       ${shown.length ? `<h2 class="section-title">קצת מהעצמאיות שלנו</h2>${viewRowHtmlHome}<div class="grid" id="scCardsGrid" data-view="medium">${shown.map((f) => freelancerCard(f, d)).join("")}</div>` : ""}

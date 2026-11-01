@@ -1550,6 +1550,31 @@ form .field{margin-bottom:6px;}
   .pf-sticky .pf-wa{flex:2 1 120px;}
 }
 
+
+/* ===== מירוץ הלקוחות (הסתיים) בעיצוב תואם לאתר + רשת התחומים בדף הבית ===== */
+.race-ended{max-width:680px;margin:12px auto;background:linear-gradient(180deg,#fffaf3,#f8efe4);border:1px solid #e6d3bd;border-radius:18px;padding:18px 20px;box-shadow:0 6px 20px rgba(154,142,129,.2);position:relative;overflow:hidden;}
+.race-ended::before{content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:5px;background:linear-gradient(180deg,#d9a441,#b9854a);}
+.race-ended-head{display:flex;align-items:center;gap:14px;margin-bottom:12px;}
+.race-ended-flag{width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #e6d3bd;display:flex;align-items:center;justify-content:center;font-size:26px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.08);}
+.race-ended-title{font-size:20px;font-weight:800;color:#6b4b36;line-height:1.3;}
+.race-ended-sub{font-size:14px;font-weight:600;color:var(--gray);margin-top:2px;}
+.race-ended-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.race-ended-item{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #efe3d3;border-radius:12px;padding:9px 12px;}
+.race-ended-medal{font-size:24px;width:34px;text-align:center;flex-shrink:0;}
+.race-ended-prize{display:flex;flex-direction:column;min-width:0;}
+.race-ended-prize strong{font-size:15px;color:var(--dark);line-height:1.35;}
+.race-ended-sponsor{font-size:12.5px;font-weight:600;color:var(--gray);margin-top:1px;}
+.race-ended-sponsor a{color:var(--accent);font-weight:800;text-decoration:underline;text-underline-offset:2px;}
+@media (min-width:721px){.home-cats{display:none;}}
+@media (max-width:720px){
+  .home-cats .section-title{font-size:20px;margin:22px 0 10px;}
+  .home-cats .cat-grid{grid-template-columns:repeat(3,1fr);gap:8px;}
+  .home-cats .cat-card{padding:10px 4px;font-size:12px;line-height:1.3;border-radius:12px;}
+  .home-cats .cat-icon{display:block;font-size:22px;margin-bottom:2px;}
+  .race-ended{padding:14px 14px;}
+  .race-ended-title{font-size:17px;}
+}
+
 `;
 
 function subcatsJsMap() {
