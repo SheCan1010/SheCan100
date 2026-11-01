@@ -63,7 +63,7 @@ try {
 
 const auth = require("./auth");
 const webpush = require("./webpush");
-const { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml } = require("./layout");
+const { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml } = require("./layout");
 const { buildJoinStoryImageBuffer } = require("./joinStory");
 const { buildReviewStoryImageBuffer } = require("./reviewStory");
 
@@ -2648,6 +2648,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </section>
       </div>`;
 
+  const viewRowHtmlHome = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button></div>`;
   const body = `
       ${currentStoryFreelancer ? `
       <a href="/stories/${currentStory.id}" class="story-of-week-banner">📖 השבוע מככבת בסיפור <strong>${esc(storyOwnerLabel(currentStoryFreelancer))}</strong> - בואי לצפות בסיפור שלה</a>
@@ -2688,30 +2689,8 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         ` : `<a class="weekly-tip-btn" href="/arena">מעבר לזירה</a>`}
       </div>` : ""}
 
-      <form class="search-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות">
-        <div class="search-row">
-          <input type="text" name="q" placeholder="חפשי לפי שם עסק, עצמאית או תחום" autocomplete="off" />
-        </div>
-        <div class="search-row" style="margin-top:10px;">
-          <select name="category"><option value="">איזה תחום מעניין אותך?</option>${catOptions}</select>
-          ${cityAutocompleteHtml({ fieldName: "city", placeholder: "מאיזו עיר?" })}
-          <button class="btn" type="submit">חפשי</button>
-        </div>
-        <div class="search-row" style="margin-top:10px;justify-content:space-between;align-items:center;">
-          <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0;">
-            <input type="checkbox" name="homeVisit" value="1" style="width:auto;margin:0;" /><span>🚗 מגיעה עד הבית</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:4px;font-weight:600;width:auto;white-space:nowrap;margin:0;">
-            <input type="checkbox" name="withDeal" value="1" style="width:auto;margin:0;" /><span>🎁 עם הטבה</span>
-          </label>
-          <div class="view-toggle" role="group" aria-label="בחירת תצוגה">
-            <span class="view-toggle-label">תצוגה</span>
-            <button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')" title="תצוגה מורחבת" aria-label="תצוגה מורחבת"><span class="view-icon view-icon-expanded"><i></i><i></i><i></i><i></i></span></button>
-            <button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')" title="תצוגה בינונית" aria-label="תצוגה בינונית"><span class="view-icon view-icon-medium"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></button>
-            <button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')" title="תצוגה קומפקטית" aria-label="תצוגה קומפקטית"><span class="view-icon view-icon-compact"><i></i><i></i><i></i><i></i></span></button>
-          </div>
-        </div>
-      </form>
+      ${searchBarHtml(d, {})}
+      ${featuredStripHtml(d, {})}
 
       ${homeRaceEnded ? homeRaceEndedHtml : d.settings.customerReferralContestActive ? `
       <div style="margin-top:24px;max-width:560px;margin-inline:auto;">
@@ -2740,7 +2719,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         ${d.categories.slice(0, 12).map((c) => `<a class="cat-card" href="/search?category=${c.id}"><span class="cat-icon">${categoryIcon(c.name)}</span>${esc(c.name)}</a>`).join("")}
       </div>
 
-      ${shown.length ? `<h2 class="section-title">קצת מהעצמאיות שלנו</h2><div class="grid" id="scCardsGrid" data-view="medium">${shown.map((f) => freelancerCard(f, d)).join("")}</div>` : ""}
+      ${shown.length ? `<h2 class="section-title">קצת מהעצמאיות שלנו</h2>${viewRowHtmlHome}<div class="grid" id="scCardsGrid" data-view="medium">${shown.map((f) => freelancerCard(f, d)).join("")}</div>` : ""}
 
       ${siteReviews.length ? `<h2 class="section-title">מה אומרות עלינו</h2>${siteReviews.map(reviewCard).join("")}` : ""}
 
@@ -2779,10 +2758,11 @@ route("GET", "/", async (req, res, params, query, ctx) => {
           ${d.settings.contactEmail ? `<a class="btn btn-outline" href="mailto:${esc(d.settings.contactEmail)}">כתבי לנו מייל</a>` : ""}
         </div>
       </section>` : ""}
+      ${searchBarScriptsHtml(d)}
   `;
   sendHtml(res, 200, page({
     title: "קהילת העצמאיות בישראל - מצאי בעלת עסק לפי תחום ועיר",
-    session: ctx.session, body, query,
+    session: ctx.session, body, query, wide: true,
     description: "SheCan - כל העסקים, כל התחומים, במקום אחד. מצאי בעלת עסק עצמאית לפי תחום ועיר, קבלי הטבה בלעדית וסגרי איתה עסקה ישירות באתר.",
     canonicalUrl: `${getOrigin(req)}/`,
     ogImage: `${getOrigin(req)}/icons/icon-512.png`,
@@ -2903,6 +2883,129 @@ function smartSearchHeuristic(freeText, d) {
 }
 
 // ----- Search / results -----
+// ---- שורת חיפוש חדשה (2026-11-01): "מה את מחפשת?" + "איפה?" + "חפשי" בשורה אחת, מתחתיה סינון מהיר וחיפושים נפוצים.
+// משמשת גם בעמוד הבית וגם ב-/search; רק ב-/search יש סינון חי ושליחה אוטומטית של המתגים.
+const SEARCH_RADIUS_CHOICES = [5, 10, 25, 50, 100, 0];
+function popularSearchChipsHtml(d, NF) {
+  const counts = new Map();
+  d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (!NF || mode.freelancerVisible(f))).forEach((f) => {
+    (f.subcategoryIds || []).forEach((sid) => { const k = `${f.categoryId}|${sid}`; counts.set(k, (counts.get(k) || 0) + 1); });
+  });
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k]) => k.split("|"));
+  let chips = top.map(([cid, sid]) => ({ name: subcatName(d, cid, sid), href: `/search?category=${encodeURIComponent(cid)}&subcategory=${encodeURIComponent(sid)}` })).filter((c) => c.name);
+  return chips.map((c) => `<a class="sc-s-pop" href="${esc(c.href)}">${esc(c.name)}</a>`).join("");
+}
+function searchBarHtml(d, o) {
+  const NF = mode.isNetfree();
+  const auto = o.autoSubmit ? ' onchange="this.form.submit()"' : "";
+  const radiusSel = o.radius === undefined ? 25 : o.radius;
+  return `<form class="search-box sc-s-bar" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות">
+    <div class="sc-s-pill">
+      <div class="sc-s-seg sc-s-seg-q">
+        <label for="scSearchQ">🔍 מה את מחפשת?</label>
+        <input type="text" id="scSearchQ" name="q" value="${esc(o.rawQ || "")}" placeholder="למשל: מאפרת, עורכת וידאו"${o.live ? ' oninput="scLiveFilter()"' : ""} autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
+        <div id="scSuggest" class="sc-s-suggest" role="listbox" hidden></div>
+      </div>
+      ${NF ? "" : `<div class="sc-s-seg sc-s-seg-loc">
+        <label>📍 איפה?</label>
+        ${cityAutocompleteHtml({ fieldName: "from", selectedId: o.fromId, selectedName: o.fromId ? cityName(d, o.fromId) : "", placeholder: "עיר, למשל: רמת גן", ariaLabel: "איפה" })}
+      </div>`}
+      <button class="sc-s-gobtn" type="submit">חפשי</button>
+    </div>
+    ${NF ? "" : `<p id="scNearNote" class="muted sc-s-note" aria-live="polite"></p>`}
+    <div class="sc-s-pills" role="group" aria-label="סינון מהיר">
+      <label class="sc-s-toggle"><input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${o.withDeal ? "checked" : ""}${auto} /><span>🎁 עם הטבה</span></label>
+      <label class="sc-s-toggle"><input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${o.homeVisit ? "checked" : ""}${auto} /><span>🚗 מגיעה עד הבית</span></label>
+      ${NF ? "" : `<button type="button" class="sc-s-pillbtn" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
+      <select class="sc-s-radius" name="radius" id="scRadius" aria-label="עד כמה רחוק">${SEARCH_RADIUS_CHOICES.map((r) => `<option value="${r}" ${r === radiusSel ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>`}
+    </div>
+    <div class="sc-s-popular" aria-label="חיפושים נפוצים">${popularSearchChipsHtml(d, NF)}</div>
+    ${o.extraInner || ""}
+  </form>`;
+}
+function searchBarScriptsHtml(d) {
+  const NF = mode.isNetfree();
+  const suggestData = [];
+  d.categories.forEach((c) => {
+    suggestData.push(["c", c.name, `/search?category=${encodeURIComponent(c.id)}`]);
+    subcategoriesOf(d, c.id).forEach((sc) => suggestData.push(["s", `${sc.name} (${c.name})`, `/search?category=${encodeURIComponent(c.id)}&subcategory=${encodeURIComponent(sc.id)}`]));
+  });
+  const suggestJson = JSON.stringify(suggestData).replace(/</g, "\\u003c");
+  const nearCitiesJson = NF ? "{}" : JSON.stringify(Object.fromEntries(d.cities.filter((c) => CITY_COORDS[c.name]).map((c) => [c.id, [...CITY_COORDS[c.name], c.name]]))).replace(/</g, "\\u003c");
+  return `
+      <script>
+      (function () {
+        var DATA = ${suggestJson};
+        var input = document.getElementById("scSearchQ"), box = document.getElementById("scSuggest");
+        if (!input || !box) return;
+        var shown = [], active = -1;
+        var ORDER = { c: 0, s: 1, b: 2 };
+        function close() { box.hidden = true; box.textContent = ""; shown = []; active = -1; input.setAttribute("aria-expanded", "false"); }
+        function go(i) { if (shown[i]) location.href = shown[i][2]; }
+        function mark() { var o = box.children; for (var i = 0; i < o.length; i++) o[i].setAttribute("aria-selected", i === active ? "true" : "false"); }
+        function render() {
+          var v = input.value.trim().toLowerCase();
+          if (!v) { close(); return; }
+          shown = DATA.filter(function (x) { return x[1].toLowerCase().indexOf(v) !== -1; })
+            .sort(function (a, b) { var as = a[1].toLowerCase().indexOf(v) === 0 ? 0 : 1, bs = b[1].toLowerCase().indexOf(v) === 0 ? 0 : 1; return (ORDER[a[0]] - ORDER[b[0]]) || (as - bs); })
+            .slice(0, 8);
+          box.textContent = ""; active = -1;
+          if (!shown.length) { close(); return; }
+          shown.forEach(function (x, i) {
+            var o = document.createElement("div");
+            o.className = "sc-s-opt"; o.setAttribute("role", "option"); o.setAttribute("aria-selected", "false");
+            var t = document.createElement("span"); t.textContent = x[1];
+            o.appendChild(t);
+            o.addEventListener("mousedown", function (e) { e.preventDefault(); go(i); });
+            box.appendChild(o);
+          });
+          box.hidden = false; input.setAttribute("aria-expanded", "true");
+        }
+        input.addEventListener("input", render);
+        input.addEventListener("focus", render);
+        input.addEventListener("keydown", function (e) {
+          if (box.hidden) return;
+          if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % shown.length; mark(); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + shown.length) % shown.length; mark(); }
+          else if (e.key === "Enter" && active >= 0) { e.preventDefault(); go(active); }
+          else if (e.key === "Escape") { close(); }
+        });
+        document.addEventListener("click", function (e) { if (!box.contains(e.target) && e.target !== input) close(); });
+      })();
+      </script>
+      ${NF ? "" : `<script>
+      var SC_NEAR_CITIES = ${nearCitiesJson};
+      function scNearMe() {
+        var note = document.getElementById("scNearNote");
+        var btn = document.getElementById("scNearBtn");
+        function say(t) { if (note) note.textContent = t; }
+        if (!navigator.geolocation) { say("הדפדפן לא תומך בזיהוי מיקום - אפשר לבחור עיר ידנית בשדה \\u201Cאיפה את?\\u201D."); return; }
+        say("מאתרת את המיקום שלך..."); if (btn) btn.disabled = true;
+        navigator.geolocation.getCurrentPosition(function (pos) {
+          if (btn) btn.disabled = false;
+          var la = pos.coords.latitude, lo = pos.coords.longitude, best = null, bestD = 1e9;
+          Object.keys(SC_NEAR_CITIES).forEach(function (id) {
+            var c = SC_NEAR_CITIES[id], r = Math.PI / 180;
+            var h = Math.pow(Math.sin((c[0] - la) * r / 2), 2) + Math.cos(la * r) * Math.cos(c[0] * r) * Math.pow(Math.sin((c[1] - lo) * r / 2), 2);
+            var km = 12742 * Math.asin(Math.sqrt(h));
+            if (km < bestD) { bestD = km; best = id; }
+          });
+          if (!best || bestD > 60) { say("לא הצלחנו לקשר את המיקום שלך לעיר ברשימה - אפשר לבחור עיר ידנית בשדה \\u201Cאיפה את?\\u201D."); return; }
+          var form = document.querySelector("form.search-box");
+          var wrap = form.querySelector('input[name="from"]').closest(".city-autocomplete");
+          wrap.querySelector(".city-autocomplete-hidden").value = best;
+          wrap.querySelector(".city-autocomplete-input").value = SC_NEAR_CITIES[best][2];
+          say("זוהה: " + SC_NEAR_CITIES[best][2] + " (המיקום המדויק שלך לא נשמר ולא נשלח לאתר)");
+          form.submit();
+        }, function () {
+          if (btn) btn.disabled = false;
+          say("לא קיבלנו אישור למיקום - אפשר לבחור עיר ידנית בשדה \\u201Cאיפה את?\\u201D.");
+        }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 });
+      }
+      </script>`}
+  `;
+}
+
 route("GET", "/search", async (req, res, params, query, ctx) => {
   const d = db.load();
   const category = query.get("category") || "";
@@ -3089,118 +3192,28 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   const suggestJson = JSON.stringify(suggestData).replace(/</g, "\\u003c");
   const viewRowHtml = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button></div>`;
   const advOpen = !!city;
-  const body = `
-  ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
-  <h1 class="section-title">מי מחכה לך היום?</h1>
-      <form class="search-box sc-s-box" action="/search" method="get" role="search" aria-label="חיפוש עצמאיות" style="margin-right:auto;margin-left:auto;">
-        <div class="sc-s-main">
-          <label class="sc-s-label" for="scSearchQ">מה את מחפשת?</label>
-          <div class="sc-s-inputwrap">
-            <input type="text" id="scSearchQ" name="q" value="${esc(rawQ)}" placeholder="למשל: מאפרת, עורכת וידאו" oninput="scLiveFilter()" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
-            <div id="scSuggest" class="sc-s-suggest" role="listbox" hidden></div>
-          </div>
-        </div>
-        ${NF ? "" : `<div class="sc-s-loc">
-          <span class="sc-s-label sc-s-label-sm" aria-hidden="true">עיר</span>
-          ${cityAutocompleteHtml({ fieldName: "from", selectedId: fromId, selectedName: fromId ? cityName(d, fromId) : "", placeholder: "רמת גן", ariaLabel: "עיר" })}
-          <button type="button" class="btn sc-s-near" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
-          <select name="radius" id="scRadius" aria-label="עד כמה רחוק">${RADIUS_OPTIONS.map((r) => `<option value="${r}" ${r === radius ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>
-        </div>
-        <p id="scNearNote" class="muted" style="text-align:center;margin:6px 0 0;font-size:.85rem;" aria-live="polite"></p>`}
-        <div class="sc-s-actions">
-          <div class="sc-s-toggles" role="group" aria-label="סינון מהיר">
-          <label class="sc-s-toggle"><input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${withDeal ? "checked" : ""} onchange="this.form.submit()" /><span>🎁 עם הטבה</span></label>
-          <label class="sc-s-toggle"><input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${homeVisit ? "checked" : ""} onchange="this.form.submit()" /><span>🚗 מגיעה עד הבית</span></label>
-        </div>
-          <button class="btn sc-s-go" type="submit">🔍 חפשי</button>
-        </div>
-        <div class="sc-s-chips" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
-        ${subChipsHtml ? `<div class="sc-s-chips sc-s-subchips" role="group" aria-label="בחירת תת-תחום">${subChipsHtml}</div>` : ""}
-        <details class="sc-s-more" ${advOpen ? "open" : ""}>
+  const detailsHtml = `<details class="sc-s-more" ${advOpen ? "open" : ""}>
           <summary>⚙️ עוד סינונים ותצוגה</summary>
           <div class="search-row" style="margin-top:6px;">
             <select name="category" aria-label="תחום" onchange="scUpdateSubcats(this, document.getElementById('scSearchSubcat'), '', 'כל תת-התחומים');"><option value="">כל התחומים</option>${catOptions}</select>
             <select name="subcategory" id="scSearchSubcat" aria-label="תת-תחום"><option value="">${category ? "כל תת-התחומים" : "בחרי קודם תחום"}</option>${subcatOptions}</select>
             ${cityAutocompleteHtml({ fieldName: "city", selectedId: city, selectedName: city ? cityName(d, city) : "", placeholder: "רק בעיר מסוימת" })}
           </div>
-        </details>
-      </form>
+        </details>`;
+  const body = `
+  ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
+  <h1 class="section-title">מי מחכה לך היום?</h1>
+      ${searchBarHtml(d, { rawQ, fromId, radius, withDeal, homeVisit, autoSubmit: true, live: true, extraInner: `${detailsHtml}` })}
+      <div class="sc-s-chips${NF ? "" : " sc-s-chips-cats"}" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
+      ${subChipsHtml ? `<div class="sc-s-chips sc-s-subchips" role="group" aria-label="בחירת תת-תחום">${subChipsHtml}</div>` : ""}
+      ${featuredStripHtml(d, { categoryId: category })}
       ${statusBarHtml}
       ${combinedCards.length ? viewRowHtml : ""}
       <div id="scResultsGrid">
       ${combinedCards.length ? `<div class="grid" id="scCardsGrid" data-view="medium">${resultsGridHtml}</div>${infStrips ? infStrips.footerHtml : ""}` : emptyStateHtml}
       </div>
       <p id="scNoLiveMatch" class="muted" style="text-align:center;display:none;">אין כרגע עצמאית שמתאימה לזה... נסי לשנות קצת את החיפוש.</p>
-      <script>
-      (function () {
-        var DATA = ${suggestJson};
-        var input = document.getElementById("scSearchQ"), box = document.getElementById("scSuggest");
-        if (!input || !box) return;
-        var shown = [], active = -1;
-        var ORDER = { c: 0, s: 1, b: 2 };
-        function close() { box.hidden = true; box.textContent = ""; shown = []; active = -1; input.setAttribute("aria-expanded", "false"); }
-        function go(i) { if (shown[i]) location.href = shown[i][2]; }
-        function mark() { var o = box.children; for (var i = 0; i < o.length; i++) o[i].setAttribute("aria-selected", i === active ? "true" : "false"); }
-        function render() {
-          var v = input.value.trim().toLowerCase();
-          if (!v) { close(); return; }
-          shown = DATA.filter(function (x) { return x[1].toLowerCase().indexOf(v) !== -1; })
-            .sort(function (a, b) { var as = a[1].toLowerCase().indexOf(v) === 0 ? 0 : 1, bs = b[1].toLowerCase().indexOf(v) === 0 ? 0 : 1; return (ORDER[a[0]] - ORDER[b[0]]) || (as - bs); })
-            .slice(0, 8);
-          box.textContent = ""; active = -1;
-          if (!shown.length) { close(); return; }
-          shown.forEach(function (x, i) {
-            var o = document.createElement("div");
-            o.className = "sc-s-opt"; o.setAttribute("role", "option"); o.setAttribute("aria-selected", "false");
-            var t = document.createElement("span"); t.textContent = x[1];
-            o.appendChild(t);
-            o.addEventListener("mousedown", function (e) { e.preventDefault(); go(i); });
-            box.appendChild(o);
-          });
-          box.hidden = false; input.setAttribute("aria-expanded", "true");
-        }
-        input.addEventListener("input", render);
-        input.addEventListener("focus", render);
-        input.addEventListener("keydown", function (e) {
-          if (box.hidden) return;
-          if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % shown.length; mark(); }
-          else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + shown.length) % shown.length; mark(); }
-          else if (e.key === "Enter" && active >= 0) { e.preventDefault(); go(active); }
-          else if (e.key === "Escape") { close(); }
-        });
-        document.addEventListener("click", function (e) { if (!box.contains(e.target) && e.target !== input) close(); });
-      })();
-      </script>
-      ${NF ? "" : `<script>
-      var SC_NEAR_CITIES = ${nearCitiesJson};
-      function scNearMe() {
-        var note = document.getElementById("scNearNote");
-        var btn = document.getElementById("scNearBtn");
-        function say(t) { if (note) note.textContent = t; }
-        if (!navigator.geolocation) { say("הדפדפן לא תומך בזיהוי מיקום - אפשר לבחור עיר ידנית בשדה \u201Cאיפה את?\u201D."); return; }
-        say("מאתרת את המיקום שלך..."); if (btn) btn.disabled = true;
-        navigator.geolocation.getCurrentPosition(function (pos) {
-          if (btn) btn.disabled = false;
-          var la = pos.coords.latitude, lo = pos.coords.longitude, best = null, bestD = 1e9;
-          Object.keys(SC_NEAR_CITIES).forEach(function (id) {
-            var c = SC_NEAR_CITIES[id], r = Math.PI / 180;
-            var h = Math.pow(Math.sin((c[0] - la) * r / 2), 2) + Math.cos(la * r) * Math.cos(c[0] * r) * Math.pow(Math.sin((c[1] - lo) * r / 2), 2);
-            var km = 12742 * Math.asin(Math.sqrt(h));
-            if (km < bestD) { bestD = km; best = id; }
-          });
-          if (!best || bestD > 60) { say("לא הצלחנו לקשר את המיקום שלך לעיר ברשימה - אפשר לבחור עיר ידנית בשדה \u201Cאיפה את?\u201D."); return; }
-          var form = document.querySelector("form.search-box");
-          var wrap = form.querySelector('input[name="from"]').closest(".city-autocomplete");
-          wrap.querySelector(".city-autocomplete-hidden").value = best;
-          wrap.querySelector(".city-autocomplete-input").value = SC_NEAR_CITIES[best][2];
-          say("זוהה: " + SC_NEAR_CITIES[best][2] + " (המיקום המדויק שלך לא נשמר ולא נשלח לאתר)");
-          form.submit();
-        }, function () {
-          if (btn) btn.disabled = false;
-          say("לא קיבלנו אישור למיקום - אפשר לבחור עיר ידנית בשדה \u201Cאיפה את?\u201D.");
-        }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 });
-      }
-      </script>`}
+      ${searchBarScriptsHtml(d)}
       ${(category && !NF) ? `<p class="muted" style="text-align:center;margin-top:18px;">לא מצאת בדיוק את מי שאת מחפשת? <a href="/service-requests?category=${category}" style="color:var(--rose-dark);font-weight:700;">פרסמי בקשה</a> ועצמאיות בתחום הזה יוכלו לפנות אלייך.</p>` : ""}
   `;
   // כותרת/תיאור/canonical דינמיים לפי הסינון (נוסף 2026-08-27, לפי בקשה מפורשת לשיפור הדירוג
@@ -3227,7 +3240,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   if (city) canonicalParams.set("city", city);
   const searchCanonical = `${getOrigin(req)}/search${canonicalParams.toString() ? `?${canonicalParams.toString()}` : ""}`;
   sendHtml(res, 200, page({
-    title: searchTitle, session: ctx.session, body, query,
+    title: searchTitle, session: ctx.session, body, query, wide: true,
     description: searchDescription, canonicalUrl: searchCanonical,
   }));
 });

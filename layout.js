@@ -366,7 +366,8 @@ function nav(session) {
       </div>
     </header>
     ${dealsTickerHtml()}
-  </div>`;
+  </div>
+  ${catBarHtml(d)}`;
 }
 
 function footer() {
@@ -383,7 +384,7 @@ function footer() {
 const CSS = `
 :root{
   color-scheme: light;
-  --cream:#F3EDE8; --rose:#c1b2a1; --rose-dark:#9a8e81;
+  --cream:#F3EDE8; --rose:#c1b2a1; --rose-dark:#9a8e81; --accent:#8a6d5a;
   --dark:#5D5E56; --gray:#5D5E56; --white:#FBF8F4; --danger:#B5453B; --ok:#5C7A5A;
   --brand-font:"Heebo","Egul","Rubik","Assistant","Futura","Century Gothic","Poppins",sans-serif;
   /* "הזירה" - עמוד קהילתי מודגש בכוונה, בצבע שונה ובולט מהפלטה הרכה של שאר האתר. */
@@ -1245,6 +1246,74 @@ form .field{margin-bottom:6px;}
   .side-ad-photo,.side-ad-photo-initial{width:28px;height:28px;}
   .page-with-sidebars{gap:4px;}
 }
+/* ===== עיצוב חדש (2026-11-01): שורת חיפוש אחת, סרגל תחומים, עסקים מומלצים אופקי ===== */
+.page-main{max-width:900px;margin:0 auto;}
+.page-main.page-wide{max-width:none;}
+.search-box.sc-s-bar{background:transparent;box-shadow:none;border:0;padding:0;max-width:900px;margin:0 auto;text-align:center;}
+.sc-s-pill{display:flex;align-items:stretch;background:#fff;border:1px solid #d9cfc3;border-radius:46px;box-shadow:0 6px 22px rgba(120,100,80,.15);max-width:820px;margin:0 auto;position:relative;}
+.sc-s-seg{position:relative;flex:1 1 0;min-width:0;text-align:right;padding:9px 24px;display:flex;flex-direction:column;justify-content:center;border-radius:40px;}
+.sc-s-seg-q{border-left:1px solid #e6ddd2;border-radius:0 40px 40px 0;}
+.sc-s-seg-loc{border-radius:0;}
+.sc-s-seg:focus-within{background:var(--white);}
+.sc-s-seg label{display:block;font-weight:800;font-size:14px;margin:0 0 1px;line-height:1.3;color:var(--dark);width:auto;}
+.sc-s-seg input[type=text]{border:0;background:transparent;padding:0;height:24px;font-size:14.5px;border-radius:0;box-shadow:none;width:100%;outline:none;}
+.sc-s-seg .city-autocomplete-list{min-width:230px;text-align:right;right:-16px;left:auto;top:calc(100% + 12px);}
+.sc-s-seg-q .sc-s-suggest{top:calc(100% + 12px);right:-8px;left:-8px;text-align:right;}
+.sc-s-gobtn{margin:6px;border:0;background:var(--accent);color:#fff;font-family:inherit;font-weight:800;font-size:16px;padding:0 36px;border-radius:40px;cursor:pointer;white-space:nowrap;}
+.sc-s-gobtn:hover{background:#74594a;}
+.sc-s-note{margin:6px 0 0;font-size:.85rem;text-align:center;}
+.sc-s-note:empty{display:none;}
+.sc-s-pills{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:8px;margin-top:14px;}
+.sc-s-pills .sc-s-toggle span{height:36px;border-radius:999px;padding:0 14px;}
+.sc-s-pillbtn{height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--rose-dark);background:var(--white);color:var(--rose-dark);font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;}
+.sc-s-pillbtn:hover{background:var(--cream);}
+.sc-s-radius{height:36px;width:auto;padding:0 10px;border-radius:999px;font-size:13px;border:1px solid var(--rose-dark);color:var(--rose-dark);background:var(--white);font-weight:700;}
+.sc-s-popular{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:10px;}
+.sc-s-popular:empty{display:none;}
+.sc-s-pop{border:1px solid #d9cfc3;border-radius:999px;padding:4px 14px;font-size:13px;font-weight:600;color:var(--dark) !important;background:var(--white);text-decoration:none;}
+.sc-s-pop:hover{background:var(--cream);}
+.sc-s-bar .sc-s-more{max-width:820px;margin:10px auto 0;text-align:right;}
+.sc-s-bar .sc-s-more summary{justify-content:center;min-height:36px;font-size:13.5px;}
+.sc-s-feat-spacer{height:4px;}
+.sc-feat{margin:22px 0 8px;}
+.sc-feat-title{font-size:17px;margin:0 0 10px;text-align:right;}
+.sc-feat-row{display:flex;gap:14px;overflow-x:auto;scroll-snap-type:x proximity;padding:2px 2px 8px;scrollbar-width:thin;}
+.sc-feat-card{position:relative;flex:0 0 calc((100% - 42px) / 4);min-width:190px;background:#fff;border-radius:14px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);border:1px solid #eee5db;text-align:right;color:inherit;text-decoration:none;scroll-snap-align:start;display:block;}
+.sc-feat-card:hover{box-shadow:0 6px 16px rgba(0,0,0,.12);}
+.sc-feat-img{height:84px;border-radius:10px;background-color:#e9dfd3;background-position:center;background-repeat:no-repeat;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:800;color:var(--rose-dark);}
+.sc-feat-card b{display:block;font-size:14.5px;line-height:1.4;}
+.sc-feat-card small{color:#8c857b;font-size:12.5px;line-height:1.4;display:block;}
+.sc-feat-tag{position:absolute;top:19px;right:19px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;border-radius:20px;padding:1px 9px;z-index:1;line-height:1.6;}
+.sc-feat-deal{right:auto;left:19px;background:#fff;color:var(--accent);border:1px solid var(--accent);}
+.cat-bar{position:relative;background:var(--white);border-bottom:1px solid #e5ddd0;z-index:9;}
+.cat-bar-inner{display:flex;flex-wrap:wrap;justify-content:center;gap:0 2px;}
+.cat-btn{background:none;border:0;border-bottom:3px solid transparent;padding:8px 10px;font-family:inherit;font-weight:700;font-size:13.5px;line-height:1.5;color:var(--dark);cursor:pointer;max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;}
+.cat-btn:hover,.cat-btn.on{color:var(--accent);border-bottom-color:var(--accent);}
+.cat-caret{font-size:10px;opacity:.7;}
+.cat-mega{position:absolute;top:100%;right:0;left:0;background:#fff;box-shadow:0 14px 34px rgba(0,0,0,.18);border-top:1px solid #eee;}
+.cat-mega-inner{display:flex;gap:30px;padding-top:18px;padding-bottom:20px;align-items:flex-start;}
+.cat-col{flex:1;display:flex;flex-direction:column;text-align:right;min-width:0;}
+.cat-col a{padding:5px 0;font-size:14px;color:#55564e;text-decoration:none;}
+.cat-col a:hover{color:var(--accent);text-decoration:underline;}
+.cat-col h4{margin:0 0 6px;font-size:14px;color:var(--accent);}
+.cat-col .cat-all{font-weight:800;color:var(--accent);margin-top:4px;}
+.cat-feat{flex:0 0 220px;}
+.cat-feat .sc-feat-card{min-width:0;box-shadow:none;}
+@media (min-width:721px){.sc-s-chips-cats{display:none;}}
+@media (max-width:720px){
+  .cat-bar{display:none;}
+  .sc-feat-card{flex-basis:150px;min-width:150px;padding:9px;}
+  .sc-feat-img{height:64px;}
+  .sc-feat-tag{top:15px;right:15px;font-size:10px;}
+  .sc-feat-deal{left:15px;right:auto;}
+}
+@media (max-width:640px){
+  .sc-s-pill{flex-direction:column;border-radius:18px;}
+  .sc-s-seg,.sc-s-seg-q,.sc-s-seg-loc{border-radius:0;border-left:0;padding:10px 16px;}
+  .sc-s-seg-q{border-bottom:1px solid #eee;border-radius:18px 18px 0 0;}
+  .sc-s-gobtn{margin:10px;padding:12px;font-size:16px;}
+  .sc-s-seg .city-autocomplete-list{right:-8px;min-width:200px;}
+}
 .tabs{display:flex;gap:10px;margin-bottom:18px;}
 .tab{padding:8px 18px;border-radius:20px;background:var(--white);font-size:14px;}
 .tab.active{background:var(--rose);color:var(--white);}
@@ -1387,6 +1456,104 @@ function isCurrentlyAdvertisedForSidebar(f) {
   if (!f.isAdvertisedUntil) return true;
   return new Date().toISOString().slice(0, 10) <= f.isAdvertisedUntil;
 }
+// ---- עסקים מומלצים (2026-11-01): במקום העמודות בצדדים - שורה אופקית מעל התוצאות (בית + חיפוש) ----
+function featuredItems(d) {
+  const NF = mode.isNetfree();
+  const items = [];
+  if (NF) {
+    const ok = (f) => mode.freelancerVisible(f);
+    d.freelancers.filter((f) => ok(f) && f.netfreeSponsor).forEach((f) => items.push({ f, listing: null, kind: "sponsor" }));
+    d.freelancers.filter((f) => ok(f) && f.netfreeAd && !f.netfreeSponsor).forEach((f) => items.push({ f, listing: null, kind: "ad" }));
+    return items;
+  }
+  const eligible = (f) => f.status === "approved" && f.active !== false;
+  d.freelancers.filter((f) => eligible(f) && f.isLeadingBusiness).forEach((f) => items.push({ f, listing: null, kind: "sponsor" }));
+  d.freelancers.filter((f) => eligible(f) && isCurrentlyAdvertisedForSidebar(f) && !f.isLeadingBusiness).forEach((f) => items.push({ f, listing: null, kind: "ad" }));
+  d.freelancers.forEach((f) => {
+    if (!eligible(f)) return;
+    (f.additionalListings || []).forEach((l) => { if (l.status === "approved" && l.isAdvertised) items.push({ f, listing: l, kind: "ad" }); });
+  });
+  return items;
+}
+function shuffleCopy(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+function featuredCardHtml(it, d) {
+  const f = it.f, l = it.listing, target = l || f;
+  const href = l ? `/freelancer/${f.id}/listing/${l.id}` : `/freelancer/${f.id}`;
+  const name = target.businessName || target.name || "";
+  const cat = d.categories.find((c) => c.id === (l ? l.categoryId : f.categoryId));
+  const city = d.cities.find((c) => c.id === (l ? l.cityId : f.cityId));
+  let photo = mode.logosOnly() ? null : (l ? null : f.photoDataUri);
+  const logo = target.logoDataUri || (d.settings && d.settings.defaultBusinessLogoDataUri) || null;
+  const uri = photo || logo;
+  const imgStyle = uri ? `background-image:url('${esc(uri)}');background-size:${photo ? "cover" : "contain"};` : "";
+  const hasDeal = !!((target.dealText || "").trim() && !target.bannerHidden);
+  return `<a class="sc-feat-card" href="${href}">
+      <span class="sc-feat-tag">${it.kind === "sponsor" ? "👑 נותנת חסות" : "מומלץ"}</span>
+      ${hasDeal ? `<span class="sc-feat-tag sc-feat-deal">🎁 הטבה</span>` : ""}
+      <div class="sc-feat-img" style="${imgStyle}">${uri ? "" : esc(String(name).trim().charAt(0))}</div>
+      <b>${esc(name)}</b>
+      <small>${esc([cat ? cat.name : "", city ? city.name : ""].filter(Boolean).join(" · "))}</small>
+    </a>`;
+}
+function featuredStripHtml(d, opts) {
+  opts = opts || {};
+  let items = featuredItems(d);
+  if (opts.categoryId) items = items.filter((it) => (it.listing ? it.listing.categoryId : it.f.categoryId) === opts.categoryId);
+  if (!items.length) return "";
+  const sponsors = shuffleCopy(items.filter((it) => it.kind === "sponsor"));
+  const ads = shuffleCopy(items.filter((it) => it.kind !== "sponsor"));
+  const shown = [...sponsors, ...ads].slice(0, 12);
+  return `<section class="sc-feat" aria-label="עסקים מומלצים">
+    <h2 class="sc-feat-title">⭐ עסקים מומלצים</h2>
+    <div class="sc-feat-row">${shown.map((it) => featuredCardHtml(it, d)).join("")}</div>
+  </section>`;
+}
+
+// ---- סרגל תחומים עם תפריט תתי-תחומים (2026-11-01). בדסקטופ בלבד (במובייל יש כפתורי תחומים בחיפוש) ----
+function catBarHtml(d) {
+  if (mode.isNetfree() || !d.categories.length) return "";
+  const feat = featuredItems(d);
+  const VISIBLE = 5;
+  const visibleCats = d.categories.slice(0, VISIBLE), moreCats = d.categories.slice(VISIBLE);
+  const btn = (c) => `<button type="button" class="cat-btn" data-cat="${esc(c.id)}" aria-expanded="false" aria-controls="catMega-${esc(c.id)}" title="${esc(c.name)}">${esc(c.name)}<span class="cat-caret" aria-hidden="true">▾</span></button>`;
+  const buttons = visibleCats.map(btn).join("") + (moreCats.length ? `<button type="button" class="cat-btn" data-cat="more" aria-expanded="false" aria-controls="catMega-more">עוד תחומים<span class="cat-caret" aria-hidden="true">▾</span></button>` : "");
+  const morePanel = moreCats.length ? `<div class="cat-mega" id="catMega-more" role="region" aria-label="עוד תחומים" hidden><div class="container cat-mega-inner">${[0, 1, 2].map((i) => { const per = Math.ceil(moreCats.length / 3); const part = moreCats.slice(i * per, (i + 1) * per); return part.length ? `<div class="cat-col">${part.map((c) => `<a href="/search?category=${encodeURIComponent(c.id)}">${esc(c.name)}</a>`).join("")}</div>` : ""; }).join("")}</div></div>` : "";
+  const panels = visibleCats.map((c) => {
+    const subs = c.subcategories || [];
+    const per = Math.max(1, Math.ceil(subs.length / 3));
+    const cols = [0, 1, 2].map((i) => subs.slice(i * per, (i + 1) * per)).filter((a) => a.length);
+    const colHtml = cols.map((a) => `<div class="cat-col">${a.map((s) => `<a href="/search?category=${encodeURIComponent(c.id)}&amp;subcategory=${encodeURIComponent(s.id)}">${esc(s.name)}</a>`).join("")}</div>`).join("");
+    const quick = `<div class="cat-col cat-col-quick"><h4>בכל התחום</h4>
+        <a href="/search?category=${encodeURIComponent(c.id)}&amp;withDeal=1">🎁 עסקים עם הטבה</a>
+        <a href="/search?category=${encodeURIComponent(c.id)}&amp;homeVisit=1">🚗 מגיעות עד הבית</a>
+        <a class="cat-all" href="/search?category=${encodeURIComponent(c.id)}">לכל העסקים בתחום ›</a></div>`;
+    const it = shuffleCopy(feat.filter((x) => (x.listing ? x.listing.categoryId : x.f.categoryId) === c.id))[0];
+    const featHtml = it ? `<div class="cat-feat">${featuredCardHtml(it, d)}</div>` : "";
+    return `<div class="cat-mega" id="catMega-${esc(c.id)}" role="region" aria-label="${esc(c.name)}" hidden><div class="container cat-mega-inner">${colHtml}${quick}${featHtml}</div></div>`;
+  }).join("");
+  return `<nav class="cat-bar" aria-label="תחומים"><div class="container cat-bar-inner">${buttons}</div>${panels}${morePanel}</nav>
+  <script>
+  (function(){
+    var bar=document.querySelector(".cat-bar"); if(!bar) return;
+    var btns=[].slice.call(bar.querySelectorAll(".cat-btn")), open=null, timer=null;
+    function closeAll(){ btns.forEach(function(b){b.setAttribute("aria-expanded","false");b.classList.remove("on");}); [].forEach.call(bar.querySelectorAll(".cat-mega"),function(m){m.hidden=true;}); open=null; }
+    function show(b){ closeAll(); var m=document.getElementById("catMega-"+b.getAttribute("data-cat")); if(!m) return; m.hidden=false; b.setAttribute("aria-expanded","true"); b.classList.add("on"); open=b; }
+    btns.forEach(function(b){
+      b.addEventListener("click",function(){ if(open===b) closeAll(); else show(b); });
+      b.addEventListener("mouseenter",function(){ if(window.matchMedia("(hover:hover)").matches){ clearTimeout(timer); timer=setTimeout(function(){show(b);},120); } });
+    });
+    bar.addEventListener("mouseleave",function(){ clearTimeout(timer); if(window.matchMedia("(hover:hover)").matches) timer=setTimeout(closeAll,250); });
+    bar.addEventListener("mouseenter",function(){ clearTimeout(timer); });
+    document.addEventListener("click",function(e){ if(!bar.contains(e.target)) closeAll(); });
+    document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeAll(); });
+  })();
+  </script>`;
+}
+
 function sidebarColumnsHtml(d) {
   if (mode.isNetfree()) {
     // מודעות/נותנות חסות של נטפרי נפרדות לגמרי מהאתר הראשי - דגלים משלהן (netfreeSponsor / netfreeAd).
@@ -1470,7 +1637,7 @@ function jsonLdScriptHtml(data) {
 // שהיא תפתח אותו למנועי חיפוש): description/canonicalUrl/ogImage/jsonLd הם כולם אופציונליים,
 // עם ברירת מחדל סבירה כשלא מועברים - כך שאף קריאה קיימת ל-page() באתר (יש עשרות) לא נשברת,
 // ורק העמודים החשובים ביותר לדירוג (בית, חיפוש, פרופיל עצמאית) מעבירים גרסה מותאמת.
-function page({ title, session, body, query, noSidebars, description, canonicalUrl, ogImage, jsonLd }) {
+function page({ title, session, body, query, noSidebars, wide, description, canonicalUrl, ogImage, jsonLd }) {
   const d = db.load();
   const searchEngineVisible = d.settings.searchEngineVisible;
   const metaDescription = mode.isNetfree()
@@ -1491,7 +1658,7 @@ function page({ title, session, body, query, noSidebars, description, canonicalU
   const siteName = NF ? mode.brandName() : "SheCan";
   const mainHtmlRaw = noSidebars
     ? `${flashHtml(query)}${body}`
-    : `<div class="page-with-sidebars"><div class="main-col">${flashHtml(query)}${body}</div>${sidebarColumnsHtml(d)}</div>`;
+    : `<div class="page-main${wide ? " page-wide" : ""}">${flashHtml(query)}${body}</div>`;
   const mainHtml = NF ? mode.sanitizeHtml(mainHtmlRaw) : mainHtmlRaw;
   return `<!doctype html>
 <html lang="he" dir="rtl">
@@ -3168,4 +3335,4 @@ ${NF ? "" : `<div class="sc-support-widget">
 </html>`;
 }
 
-module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml };
+module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml };
