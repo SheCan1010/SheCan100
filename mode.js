@@ -47,6 +47,7 @@ const ALLOWED_GET = [
   /^\/accessibility$/,
   /^\/uploads\/[a-zA-Z0-9._-]+$/,
   /^\/icons\/[^/]+$/,
+  /^\/img\/[a-f0-9]{40}\.[a-z]+$/,
   /^\/signature\.svg$/,
   /^\/robots\.txt$/,
   /^\/sitemap\.xml$/,

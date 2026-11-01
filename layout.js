@@ -2,6 +2,36 @@ const { patternDataUri } = require("./pattern");
 const db = require("./db");
 const mode = require("./mode");
 const PATTERN = patternDataUri();
+const crypto = require("crypto");
+// ---- תמונות כקבצים (2026-11-01): כל תמונה מוגשת פעם אחת מ-/img/<hash>.<סיומת> עם מטמון דפדפן קבוע (ר' route ב-server.js)
+// במקום להיות מוטמעת כ-base64 בתוך ה-HTML. ה-hash הוא של התוכן, ולכן החלפת תמונה = כתובת חדשה. ----
+const IMG_CACHE = new Map(); // hash -> { type, buf }
+const IMG_URI_META = new Map(); // dataUri -> { h, ext }
+const IMG_EXT = { "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg" };
+function imgSrc(uri) {
+  if (typeof uri !== "string" || !uri) return null;
+  if (!uri.startsWith("data:image/")) return uri; // כבר כתובת רגילה (למשל /uploads/..)
+  let meta = IMG_URI_META.get(uri);
+  if (!meta) {
+    const m = uri.match(/^data:(image\/[a-z0-9.+-]+);base64,/i);
+    if (!m) return null;
+    const type = m[1].toLowerCase();
+    const ext = IMG_EXT[type];
+    if (!ext) return null;
+    const buf = Buffer.from(uri.slice(m[0].length), "base64");
+    const h = crypto.createHash("sha1").update(buf).digest("hex");
+    if (IMG_URI_META.size > 4000) { IMG_URI_META.clear(); IMG_CACHE.clear(); }
+    meta = { h, ext };
+    IMG_URI_META.set(uri, meta);
+    IMG_CACHE.set(h, { type, buf });
+  }
+  if (!IMG_CACHE.has(meta.h)) { // אחרי ניקוי חלקי - טוענים מחדש
+    const m = uri.match(/^data:(image\/[a-z0-9.+-]+);base64,/i);
+    IMG_CACHE.set(meta.h, { type: m[1].toLowerCase(), buf: Buffer.from(uri.slice(m[0].length), "base64") });
+  }
+  return `/img/${meta.h}.${meta.ext}`;
+}
+
 // Public VAPID key for Web Push subscription (safe to expose client-side - it's the PUBLIC
 // half of the keypair). Set VAPID_PUBLIC_KEY in Render alongside VAPID_PRIVATE_KEY (server.js);
 // until both are set, push notifications quietly stay disabled and the app falls back to email.
@@ -256,7 +286,8 @@ function dealsTickerHtml() {
   </div>`;
 }
 
-function netfreeNav(session) {
+function netfreeNav(session, opts) {
+  opts = opts || {};
   const d = db.load();
   const settings = d.settings;
   const brand = mode.brandName();
@@ -275,7 +306,7 @@ function netfreeNav(session) {
     ? `<img src="${esc(settings.netfreeLogoDataUri)}" alt="${esc(brand)}" class="brand-logo" />`
     : `<span style="font-weight:800;font-size:22px;color:var(--dark);">${esc(brand)}</span>`;
   return `
-  ${settings.netfreeTopBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${esc(settings.netfreeTopBannerDataUri)}" alt="${esc(brand)}" class="top-banner" /></a></div>` : ""}
+  ${opts.home && settings.netfreeTopBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${esc(settings.netfreeTopBannerDataUri)}" alt="${esc(brand)}" class="top-banner" /></a></div>` : ""}
   <div class="site-header-sticky">
     <header class="site-header" role="banner">
       <div class="container header-inner nf-header">
@@ -285,7 +316,7 @@ function netfreeNav(session) {
           <a class="nav-link" href="/search"><span>חיפוש</span><span aria-hidden="true" style="color:var(--rose-dark);">🔍</span></a>
           <a class="nav-link" href="/deals">הטבות</a>
           <a class="nav-link" href="/about">אודות</a>
-          ${accountsOn ? `<a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>` : ""}
+          ${accountsOn ? `<a class="nav-link nav-link-cta" href="/join">📣 פרסמי את העסק שלך</a>` : ""}
         </nav>
         ${accountsOn ? `<nav class="nav-side" dir="rtl" aria-label="חשבון">${accountLinks}</nav>` : ""}
       </div>
@@ -306,8 +337,9 @@ function netfreeFooter() {
   </footer>`;
 }
 
-function nav(session) {
-  if (mode.isNetfree()) return netfreeNav(session);
+function nav(session, opts) {
+  opts = opts || {};
+  if (mode.isNetfree()) return netfreeNav(session, opts);
   const d = db.load();
   const settings = d.settings;
   // החשבון מחולק לשניים: rightFirst (אזור אישי / שם הלקוחה) יושב בראש עמודת החשבון בצד שמאל של הסרגל, ו-right
@@ -337,37 +369,72 @@ function nav(session) {
     rightFirst = `<a class="nav-link" href="/admin" title="ניהול">ניהול${pendingBadge(pendingAdminCount())}</a>`;
     right = `<a class="nav-link" href="/logout">יציאה</a>`;
   }
-  // Per explicit request, the top nav no longer shows the "SheCan" wordmark or heart as a
-  // text fallback - only a custom uploaded logo image is shown there; without one, the brand
-  // slot stays empty (the site name still appears in the page <title> and footer).
+  // לוגו קטן בסרגל + "בס"ד" קטן לידו (במקום פס נפרד); אם אין לוגו מועלה - רק "בס"ד".
   const brandInner = settings.siteLogoDataUri
     ? `<img src="${settings.siteLogoDataUri}" alt="SheCan" class="brand-logo" />`
     : ``;
+  const isHome = !!opts.home;
+  const pluralName = esc((settings.influencersPageName || "").trim() || "SheCan Muses");
+  const communityBadge = badge(communityUnseenCount(session));
+  const arenaBadge = badge(arenaUnseenPollCount(session));
+  // אזור אישי בתפריט התחתון/נייד: לפי סוג המשתמשת
+  let myHref = "/login", myLabel = "כניסה";
+  if (session && session.role === "customer") { myHref = "/account"; myLabel = "האזור שלי"; }
+  else if (session && (session.role === "freelancer" || session.role === "influencer")) { myHref = "/freelancer-dashboard"; myLabel = "האזור שלי"; }
+  else if (session && session.role === "admin") { myHref = "/admin"; myLabel = "ניהול"; }
   return `
-  <div class="bsd-strip">בס"ד</div>
-  ${settings.topBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${settings.topBannerDataUri}" alt="SheCan" class="top-banner" /></a></div>` : ""}
-  <div class="site-header-sticky">
-    <header class="site-header" role="banner">
-      <div class="container header-inner">
-        ${brandInner ? `<a href="/" class="brand">${brandInner}</a>` : ""}
-        <nav class="main-nav" aria-label="ניווט ראשי">
-          <a class="nav-link" href="/">דף הבית</a>
+  ${isHome && settings.topBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${settings.topBannerDataUri}" alt="SheCan" class="top-banner" /></a></div>` : ""}
+  <div class="site-header-sticky" id="scStickyHeader">
+    <header class="site-header" role="banner" id="scSiteHeader">
+      <div class="container header-inner sc-hdr">
+        <button type="button" class="sc-burger" id="scBurger" aria-label="תפריט" aria-expanded="false" aria-controls="scMobileMenu" onclick="scToggleMobileMenu()">☰</button>
+        <a href="/" class="brand sc-brand" aria-label="SheCan - דף הבית">${brandInner}<span class="sc-bsd">בס"ד</span></a>
+        <nav class="main-nav sc-main-nav" aria-label="ניווט ראשי">
           <a class="nav-link" href="/search"><span>חיפוש</span><span aria-hidden="true" style="color:var(--rose-dark);">🔍</span></a>
-          <a class="nav-link" href="/deals">הטבות SheCan</a>
-          <a class="nav-link" href="/stories">SheCan Stories</a>
-          <a class="nav-link" href="/magazine">מגזין SheCan</a>
-          <a class="nav-link" href="/influencers">${esc((settings.influencersPageName || "").trim() || "SheCan Muses")}</a>
-          <a class="nav-link nav-link-community" href="/community">קהילת SheCan${badge(communityUnseenCount(session))}</a>
-          <a class="nav-link nav-link-cta" href="/join">יש לי עסק</a>
-          <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${badge(arenaUnseenPollCount(session))}</a>
+          <a class="nav-link" href="/deals">הטבות</a>
+          <a class="nav-link" href="/stories">Stories</a>
+          <a class="nav-link nav-link-community" href="/community">קהילה${communityBadge}</a>
+          <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${arenaBadge}</a>
           <a class="nav-link" href="/patternmakers">✂️ מודליסטיות</a>
+          <details class="sc-more">
+            <summary class="nav-link">עוד ▾</summary>
+            <div class="sc-more-menu">
+              <a href="/">דף הבית</a>
+              <a href="/magazine">מגזין SheCan</a>
+              <a href="/influencers">${pluralName}</a>
+              <a href="/about">מי אנחנו</a>
+            </div>
+          </details>
         </nav>
-        <nav class="nav-side" aria-label="חשבון">${rightFirst}${right}</nav>
+        <nav class="nav-side sc-nav-side" aria-label="חשבון">
+          <a class="nav-link nav-link-cta sc-cta" href="/join"><span class="sc-cta-full">📣 פרסמי את העסק שלך</span><span class="sc-cta-short">📣 פרסמי עסק</span></a>
+          <span class="sc-account-links">${rightFirst}${right}</span>
+        </nav>
+      </div>
+      <div class="sc-mobile-menu" id="scMobileMenu" hidden>
+        <a href="/">🏠 דף הבית</a>
+        <a href="/search">🔍 חיפוש</a>
+        <a href="/deals">🎁 הטבות SheCan</a>
+        <a href="/stories">SheCan Stories</a>
+        <a href="/magazine">מגזין SheCan</a>
+        <a href="/influencers">${pluralName}</a>
+        <a href="/community">👥 קהילת SheCan${communityBadge}</a>
+        <a href="/arena">🥊 הזירה${arenaBadge}</a>
+        <a href="/patternmakers">✂️ מודליסטיות</a>
+        <a href="/join">📣 פרסמי את העסק שלך</a>
+        <div class="sc-mobile-menu-account">${rightFirst}${right}</div>
+        <button type="button" class="sc-mobile-menu-a11y" onclick="scToggleMobileMenu(false);scA11yTogglePanel();">♿ נגישות</button>
       </div>
     </header>
     ${dealsTickerHtml()}
   </div>
-  ${catBarHtml(d)}`;
+  ${opts.catBar ? catBarHtml(d) : ""}
+  <nav class="sc-bottom-nav" id="scBottomNav" aria-label="ניווט תחתון">
+    <a href="/search" data-bn="/search"><span aria-hidden="true">🔍</span>חיפוש</a>
+    <a href="/deals" data-bn="/deals"><span aria-hidden="true">🎁</span>הטבות</a>
+    <a href="/community" data-bn="/community"><span aria-hidden="true">👥</span>קהילה</a>
+    <a href="${myHref}" data-bn="${myHref}"><span aria-hidden="true">👤</span>${myLabel}</a>
+  </nav>`;
 }
 
 function footer() {
@@ -405,10 +472,9 @@ a{color:inherit;text-decoration:none;}
    לפנות עוד מקום למסך. הגלילה למעלה מחזירה אותו "לאט לאט" (טרנזישן 0.5s). ר' scSetupHeaderHide
    בסקריפט הגלובלי למטה - הוא זה שמוסיף/מוריד את sc-header-hidden בהתאם לכיוון הגלילה. בדסקטופ
    (מעל 720px) הכותרת נשארת sticky כרגיל בלי שום הסתרה, בדיוק כמו היום. */
-@media (max-width:720px){
-  .site-header-sticky{transition:transform .5s ease;}
-  .site-header-sticky.sc-header-hidden{transform:translateY(-100%);}
-}
+/* הסרגל מתקפל בגלילה למטה (בכל הגדלים); הבאנר הרץ של ההטבות נשאר תמיד על המסך. --sc-hdr-h נקבע ב-JS. */
+.site-header-sticky{transition:transform .4s ease;}
+.site-header-sticky.sc-header-hidden{transform:translateY(calc(-1 * var(--sc-hdr-h, 0px)));}
 /* Persistent "בס"ד" strip: always shown at the very top of the page, above the (sticky) header
    row, in its own thin bar rather than merged into the nav row. */
 .bsd-strip{text-align:right;font-size:13px;font-weight:700;color:var(--gray);background:var(--cream);padding:4px 24px;border-bottom:1px solid #e5ddd0;}
@@ -1314,6 +1380,12 @@ form .field{margin-bottom:6px;}
   .sc-s-gobtn{margin:10px;padding:12px;font-size:16px;}
   .sc-s-seg .city-autocomplete-list{right:-8px;min-width:200px;}
 }
+.sc-fold{max-width:680px;margin:10px auto;}
+.sc-fold>summary{cursor:pointer;list-style:none;text-align:center;font-weight:800;font-size:14.5px;color:var(--rose-dark);padding:8px 14px;border:1px solid #e1d6c9;border-radius:999px;background:var(--white);}
+.sc-fold>summary::-webkit-details-marker{display:none;}
+.sc-fold>summary::after{content:" ▾";}
+.sc-fold[open]>summary::after{content:" ▴";}
+.sc-fold[open]>summary{margin-bottom:10px;}
 .tabs{display:flex;gap:10px;margin-bottom:18px;}
 .tab{padding:8px 18px;border-radius:20px;background:var(--white);font-size:14px;}
 .tab.active{background:var(--rose);color:var(--white);}
@@ -1348,6 +1420,85 @@ form .field{margin-bottom:6px;}
   .weekly-tip-like{min-height:34px;padding:8px 12px;}
   .sc-pw-toggle{padding:9px;left:-3px;}
 }
+
+/* ===== סרגל עליון חדש (2026-11-01): שורה אחת, לוגו קטן + בס"ד, "עוד", תפריט תחתון בנייד ===== */
+.sc-hdr{flex-wrap:nowrap !important;gap:0 8px !important;padding:6px 16px !important;align-items:center;}
+.sc-brand{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.sc-brand .brand-logo{height:30px;}
+.sc-bsd{font-size:11px;font-weight:700;color:#9b948b;letter-spacing:0;}
+.sc-main-nav{flex:1 1 auto !important;flex-wrap:nowrap !important;gap:2px !important;justify-content:center !important;}
+.sc-hdr .nav-link{font-size:13.5px;padding:6px 9px;}
+.sc-nav-side{flex-direction:row !important;gap:6px !important;margin-inline-start:0 !important;padding-inline-start:0 !important;align-items:center;}
+.sc-account-links{display:inline-flex;align-items:center;gap:4px;}
+.sc-cta-short,.sc-burger,.sc-mobile-menu,.sc-bottom-nav{display:none;}
+.sc-more{position:relative;}
+.sc-more>summary{list-style:none;cursor:pointer;}
+.sc-more>summary::-webkit-details-marker{display:none;}
+.sc-more-menu{position:absolute;top:calc(100% + 6px);inset-inline-start:0;background:#fff;border:1px solid #e5ddd0;border-radius:12px;box-shadow:0 10px 26px rgba(0,0,0,.16);padding:6px;min-width:170px;z-index:30;display:flex;flex-direction:column;}
+.sc-more-menu a{padding:8px 12px;border-radius:8px;font-weight:600;font-size:14px;white-space:nowrap;}
+.sc-more-menu a:hover{background:var(--cream);}
+@media (min-width:721px) and (max-width:1120px){
+  .sc-hdr{flex-wrap:wrap !important;}
+  .sc-main-nav{order:3;flex:1 1 100% !important;}
+  .sc-nav-side{margin-inline-start:auto !important;}
+}
+@media (min-width:721px){.sc-fold>summary{display:none;}}
+@media (max-width:720px){
+  .sc-hdr{padding:5px 10px !important;gap:0 8px !important;}
+  .sc-burger{display:inline-flex;align-items:center;justify-content:center;width:40px;height:36px;font-size:21px;line-height:1;background:var(--white);border:1px solid #e1d6c9;border-radius:9px;color:var(--dark);cursor:pointer;flex-shrink:0;}
+  .sc-main-nav,.sc-account-links{display:none !important;}
+  .sc-brand{margin-inline:auto;}
+  .sc-brand .brand-logo{height:26px;}
+  .sc-nav-side{width:auto !important;flex:0 0 auto;}
+  .sc-cta-full{display:none;}
+  .sc-cta-short{display:inline;}
+  .sc-hdr .sc-cta{font-size:12.5px !important;padding:5px 9px !important;}
+  .sc-mobile-menu:not([hidden]){display:flex;flex-direction:column;background:var(--white);border-top:1px solid #e5ddd0;padding:6px 14px 12px;max-height:calc(100vh - 150px);overflow:auto;}
+  .sc-mobile-menu a,.sc-mobile-menu button{display:block;padding:8px 6px;font-size:14.5px;font-weight:700;color:var(--dark);border:0;border-bottom:1px solid #f0e8de;background:none;text-align:right;font-family:inherit;cursor:pointer;width:100%;}
+  .sc-mobile-menu-account{display:flex;flex-wrap:wrap;gap:8px;padding:10px 0 4px;}
+  .sc-mobile-menu-account a{width:auto;border:1px solid #e1d6c9;border-radius:9px;padding:7px 12px;font-size:14px;}
+  .sc-bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:650;background:var(--white);border-top:1px solid #e5ddd0;box-shadow:0 -3px 14px rgba(0,0,0,.1);padding:4px 4px calc(5px + env(safe-area-inset-bottom));justify-content:space-around;}
+  .sc-bottom-nav a{flex:1;display:flex;flex-direction:column;align-items:center;font-size:11px;font-weight:800;color:var(--gray);line-height:1.25;padding:2px 0;}
+  .sc-bottom-nav a span{font-size:19px;line-height:1.15;}
+  .sc-bottom-nav a.active{color:var(--accent);}
+  body{padding-bottom:60px;}
+  .sc-a11y-toggle{display:none;}
+  .sc-a11y-widget{bottom:72px;left:10px;}
+  .sc-a11y-panel{bottom:0;}
+  .sc-support-widget{bottom:72px;right:10px;}
+  .sc-signature{display:none;}
+  #scCookieBanner{padding:7px 10px;gap:8px;flex-wrap:nowrap;font-size:12px;text-align:right;}
+  #scCookieBanner .sc-ck-long{display:none;}
+  #scCookieBanner button{padding:5px 11px !important;font-size:12.5px;white-space:nowrap;}
+  #scInstallBanner{padding:8px 12px;font-size:14px;gap:8px;border-top-width:3px;}
+  #scInstallBanner .sc-install-emoji{font-size:20px;}
+  #scInstallBanner button[data-sc-install]{font-size:14px;padding:6px 14px;}
+}
+@media (min-width:721px){#scCookieBanner .sc-ck-short{display:none;}}
+.sc-support-widget .sc-support-widget-btn{padding:0;gap:0;width:46px;height:46px;justify-content:center;}
+.sc-support-widget .sc-support-label{max-width:0;opacity:0;}
+.sc-support-widget:hover .sc-support-widget-btn,.sc-support-widget:focus-within .sc-support-widget-btn{padding:10px 16px;gap:6px;width:auto;height:auto;}
+.sc-support-widget:hover .sc-support-label,.sc-support-widget:focus-within .sc-support-label{max-width:200px;opacity:1;}
+
+
+/* ===== כרטיסים: תמונה כקובץ, לב מועדפות, פעולות מהירות ===== */
+.card{position:relative;}
+.card-photo-img{overflow:hidden;padding:0;}
+.card-photo-img img{width:100%;height:100%;object-fit:cover;display:block;}
+.card-photo-logo.card-photo-img img{object-fit:contain;}
+.card-fav{position:absolute;top:8px;right:8px;z-index:3;width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;font-size:17px;line-height:1;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);user-select:none;}
+.card-fav:hover{background:#fff;transform:scale(1.08);}
+.card-quick{display:flex;gap:6px;justify-content:center;margin:6px 0 2px;}
+.cq-btn{display:inline-flex;align-items:center;gap:4px;padding:4px 11px;border-radius:999px;font-size:12.5px;font-weight:800;cursor:pointer;border:1px solid #e1d6c9;background:#fff;color:var(--dark);}
+.cq-btn svg{width:15px;height:15px;}
+.cq-wa{border-color:#bfe8cf;background:#f1fbf5;color:#1c7a47;}
+.cq-btn:hover{filter:brightness(.96);}
+#scCardsGrid[data-view="compact"] .cq-btn span:last-child{display:none;}
+#scCardsGrid[data-view="compact"] .cq-btn{padding:4px 9px;}
+#scCardsGrid[data-view="compact"] .card-fav{width:26px;height:26px;font-size:14px;top:5px;right:5px;}
+.sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--dark);color:#fff;padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:700;z-index:900;box-shadow:0 6px 18px rgba(0,0,0,.25);max-width:90vw;text-align:center;}
+
+.sc-s-sort{font-family:inherit;font-size:13px;padding:4px 8px;border:1px solid #e1d6c9;border-radius:999px;background:var(--white);color:var(--dark);font-weight:700;max-width:160px;}
 `;
 
 function subcatsJsMap() {
@@ -1398,7 +1549,7 @@ function sidebarCatName(d, id) {
 function sideAdPhotoHtml(photoUri, logoUri, d, name) {
   if (mode.logosOnly()) photoUri = null;
   const uri = photoUri || logoUri || (d.settings && d.settings.defaultBusinessLogoDataUri) || null;
-  if (uri) return `<div class="side-ad-photo" style="background-image:url('${esc(uri)}');"></div>`;
+  if (uri) return `<div class="side-ad-photo" style="background-image:url('${esc(imgSrc(uri) || uri)}');"></div>`;
   const initial = String(name || "").trim().charAt(0);
   return initial ? `<div class="side-ad-photo-initial">${esc(initial)}</div>` : "";
 }
@@ -1489,7 +1640,7 @@ function featuredCardHtml(it, d) {
   let photo = mode.logosOnly() ? null : (l ? null : f.photoDataUri);
   const logo = target.logoDataUri || (d.settings && d.settings.defaultBusinessLogoDataUri) || null;
   const uri = photo || logo;
-  const imgStyle = uri ? `background-image:url('${esc(uri)}');background-size:${photo ? "cover" : "contain"};` : "";
+  const imgStyle = uri ? `background-image:url('${esc(imgSrc(uri) || uri)}');background-size:${photo ? "cover" : "contain"};` : "";
   const hasDeal = !!((target.dealText || "").trim() && !target.bannerHidden);
   return `<a class="sc-feat-card" href="${href}">
       <span class="sc-feat-tag">${it.kind === "sponsor" ? "👑 נותנת חסות" : "מומלץ"}</span>
@@ -1637,7 +1788,7 @@ function jsonLdScriptHtml(data) {
 // שהיא תפתח אותו למנועי חיפוש): description/canonicalUrl/ogImage/jsonLd הם כולם אופציונליים,
 // עם ברירת מחדל סבירה כשלא מועברים - כך שאף קריאה קיימת ל-page() באתר (יש עשרות) לא נשברת,
 // ורק העמודים החשובים ביותר לדירוג (בית, חיפוש, פרופיל עצמאית) מעבירים גרסה מותאמת.
-function page({ title, session, body, query, noSidebars, wide, description, canonicalUrl, ogImage, jsonLd }) {
+function page({ title, session, body, query, noSidebars, wide, description, canonicalUrl, ogImage, jsonLd, home, catBar }) {
   const d = db.load();
   const searchEngineVisible = d.settings.searchEngineVisible;
   const metaDescription = mode.isNetfree()
@@ -1655,10 +1806,15 @@ function page({ title, session, body, query, noSidebars, wide, description, cano
     wantsPush = !!(f && f.wantsPushNotifications);
   }
   const NF = mode.isNetfree();
+  let favScriptHtml = "";
+  if (!NF && session && session.role === "customer") {
+    const favCustomer = d.customers.find((x) => x.id === session.id);
+    favScriptHtml = `<script>window.SC_FAV_KEYS=${JSON.stringify((favCustomer && favCustomer.favorites) || []).replace(/</g, "\\u003c")};</script>`;
+  }
   const siteName = NF ? mode.brandName() : "SheCan";
   const mainHtmlRaw = noSidebars
     ? `${flashHtml(query)}${body}`
-    : `<div class="page-main${wide ? " page-wide" : ""}">${flashHtml(query)}${body}</div>`;
+    : `<div class="page-with-sidebars"><div class="main-col">${flashHtml(query)}${body}</div>${sidebarColumnsHtml(d)}</div>`;
   const mainHtml = NF ? mode.sanitizeHtml(mainHtmlRaw) : mainHtmlRaw;
   return `<!doctype html>
 <html lang="he" dir="rtl">
@@ -1704,7 +1860,8 @@ ${d.settings.siteBackgroundImageDataUri ? `<style>body{background-image:url('${d
 </head>
 <body>
 <a href="#main-content" class="skip-link">דלגי לתוכן הראשי</a>
-${nav(session)}
+${nav(session, { home: !!home, catBar: !!catBar })}
+${favScriptHtml}
 <main id="main-content" tabindex="-1">
 <div class="container">
 ${mainHtml}
@@ -2419,6 +2576,8 @@ if (SC_LOGGED_IN && SC_WANTS_PUSH && "serviceWorker" in navigator && "PushManage
 function scRestackBottomBanners(){
   var banners = Array.prototype.slice.call(document.querySelectorAll(".sc-bottom-banner"));
   var offset = 0;
+  var bn = document.getElementById("scBottomNav");
+  if (bn && bn.offsetHeight && getComputedStyle(bn).display !== "none") offset = bn.offsetHeight;
   banners.forEach(function(el){
     el.style.bottom = offset + "px";
     offset += el.offsetHeight;
@@ -2505,7 +2664,8 @@ function scRestackBottomBanners(){
   el.setAttribute("role", "region");
   el.setAttribute("aria-label", "הודעת עוגיות");
   el.innerHTML =
-    '<span>🍪 אנחנו משתמשים בעוגיות חיוניות בלבד (כמו שמירת ההתחברות שלך) - אין אצלנו עוגיות מעקב או פרסום. אפשר לקרוא עוד ב<a href="/privacy">מדיניות הפרטיות</a>.</span>' +
+    '<span class="sc-ck-long">🍪 אנחנו משתמשים בעוגיות חיוניות בלבד (כמו שמירת ההתחברות שלך) - אין אצלנו עוגיות מעקב או פרסום. אפשר לקרוא עוד ב<a href="/privacy">מדיניות הפרטיות</a>.</span>' +
+    '<span class="sc-ck-short">🍪 עוגיות חיוניות בלבד · <a href="/privacy">פרטים</a></span>' +
     '<button type="button" data-sc-cookie-choice="accepted" class="btn-arena" style="padding:6px 16px;">מאשרת</button>' +
     '<button type="button" data-sc-cookie-choice="declined" style="background:none;border:1.5px solid #fff;color:#fff;border-radius:20px;padding:5px 14px;">רק החיוני</button>';
   document.body.appendChild(el);
@@ -2928,6 +3088,7 @@ function scInitResultsView(){
   if (!grid) return;
   var saved = null;
   try { saved = localStorage.getItem(SC_RESULTS_VIEW_KEY); } catch (e) {}
+  if (!saved && window.innerWidth <= 720 && document.querySelector('.view-btn[data-view-mode="compact"]')) saved = "compact"; // בנייד: תצוגה מצומצמת כברירת מחדל
   if (saved) scSetResultsView(saved);
 }
 function scCloseModal(){
@@ -3284,18 +3445,26 @@ function scArenaCopyLink(id, btn){
 (function(){
   var header = document.querySelector(".site-header-sticky");
   if (!header) return;
+  var inner = document.getElementById("scSiteHeader");
+  function setH(){ if (inner) header.style.setProperty("--sc-hdr-h", inner.offsetHeight + "px"); }
+  setH();
+  window.addEventListener("resize", setH);
+  window.addEventListener("load", setH);
   var lastY = window.scrollY || window.pageYOffset || 0;
   var ticking = false;
   var THRESHOLD = 6;
   var TOP_ZONE = 80;
   function onScroll(){
     ticking = false;
-    if (window.innerWidth > 720) { header.classList.remove("sc-header-hidden"); lastY = window.scrollY; return; }
     var y = window.scrollY || window.pageYOffset || 0;
     var diff = y - lastY;
-    if (y <= TOP_ZONE) {
+    var menu = document.getElementById("scMobileMenu");
+    var menuOpen = menu && !menu.hidden;
+    var more = document.querySelector(".sc-more[open]");
+    if (y <= TOP_ZONE || menuOpen || more) {
       header.classList.remove("sc-header-hidden");
     } else if (diff > THRESHOLD) {
+      setH();
       header.classList.add("sc-header-hidden");
     } else if (diff < -THRESHOLD) {
       header.classList.remove("sc-header-hidden");
@@ -3305,6 +3474,89 @@ function scArenaCopyLink(id, btn){
   window.addEventListener("scroll", function(){
     if (!ticking) { ticking = true; window.requestAnimationFrame(onScroll); }
   }, { passive: true });
+})();
+
+// ---- כרטיסים: פעולות מהירות + מועדפות ----
+function scCardGo(e, el){
+  e.preventDefault(); e.stopPropagation();
+  var h = el.getAttribute("data-href");
+  if (!h) return;
+  if (el.getAttribute("data-blank")) window.open(h, "_blank", "noopener"); else window.location.href = h;
+}
+function scToast(msg){
+  var t = document.createElement("div");
+  t.className = "sc-toast"; t.setAttribute("role", "status"); t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.remove(); }, 2800);
+}
+function scFavLocalGet(){ try { return JSON.parse(localStorage.getItem("scFavs") || "[]"); } catch (e) { return []; } }
+function scFavLocalSet(a){ try { localStorage.setItem("scFavs", JSON.stringify(a)); } catch (e) {} }
+function scFavPaint(){
+  var keys = window.SC_FAV_KEYS || scFavLocalGet();
+  var set = {};
+  keys.forEach(function(k){ set[k] = 1; });
+  document.querySelectorAll("[data-fav]").forEach(function(el){
+    var on = !!set[el.getAttribute("data-fav")];
+    el.textContent = on ? "❤️" : "🤍";
+    el.setAttribute("aria-pressed", on ? "true" : "false");
+    el.setAttribute("aria-label", on ? "הסרה מהמועדפות" : "הוספה למועדפות");
+  });
+}
+function scCardFav(e, el){
+  e.preventDefault(); e.stopPropagation();
+  var key = el.getAttribute("data-fav");
+  if (!key) return;
+  if (window.SC_FAV_KEYS) {
+    fetch("/favorite/toggle", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "key=" + encodeURIComponent(key) })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if (j && j.ok) { window.SC_FAV_KEYS = j.favorites; scFavPaint(); scToast(j.fav ? "נוסף למועדפות ❤️" : "הוסר מהמועדפות"); } })
+      .catch(function(){});
+  } else {
+    var arr = scFavLocalGet();
+    var i = arr.indexOf(key);
+    if (i === -1) arr.push(key); else arr.splice(i, 1);
+    scFavLocalSet(arr);
+    scFavPaint();
+    scToast(i === -1 ? "נשמר במכשיר הזה ❤️ (הרשמי כלקוחה כדי לשמור בחשבון)" : "הוסר מהמועדפות");
+  }
+}
+scFavPaint();
+
+// ---- תפריט נייד (☰), תפריט "עוד" בדסקטופ, והדגשת הפריט הפעיל בתפריט התחתון ----
+function scToggleMobileMenu(force){
+  var menu = document.getElementById("scMobileMenu");
+  var btn = document.getElementById("scBurger");
+  if (!menu) return;
+  var open = typeof force === "boolean" ? force : menu.hidden;
+  menu.hidden = !open;
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+(function(){
+  document.addEventListener("click", function(e){
+    var more = document.querySelector(".sc-more[open]");
+    if (more && !more.contains(e.target)) more.removeAttribute("open");
+    var menu = document.getElementById("scMobileMenu");
+    if (menu && !menu.hidden && !menu.contains(e.target) && !(e.target.closest && e.target.closest("#scBurger"))) scToggleMobileMenu(false);
+  });
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape") {
+      var more = document.querySelector(".sc-more[open]");
+      if (more) more.removeAttribute("open");
+      scToggleMobileMenu(false);
+    }
+  });
+  var path = window.location.pathname.replace(/\\/+$/, "") || "/";
+  var items = document.querySelectorAll("#scBottomNav a[data-bn]");
+  var bestEl = null, bestLen = 0;
+  for (var i = 0; i < items.length; i++) {
+    var hp = items[i].getAttribute("data-bn");
+    var hit = path === hp || path.indexOf(hp + "/") === 0;
+    if (!hit && hp !== "/login" && hp !== "/account" && hp !== "/admin" && hp !== "/freelancer-dashboard") continue;
+    if (!hit && (path === "/login" || path.indexOf("/account") === 0 || path.indexOf("/freelancer-dashboard") === 0 || path.indexOf("/admin") === 0)) hit = true;
+    if (hit && hp.length > bestLen) { bestEl = items[i]; bestLen = hp.length; }
+  }
+  if (bestEl) bestEl.classList.add("active");
+  if (typeof scRestackBottomBanners === "function") scRestackBottomBanners();
 })();
 </script>
 <div class="sc-a11y-widget">
@@ -3325,7 +3577,7 @@ function scArenaCopyLink(id, btn){
   </div>
 </div>
 <div class="sc-signature" aria-hidden="true"><img src="/signature.svg?v=2" alt="" width="66" height="19" /></div>
-${NF ? "" : `<div class="sc-support-widget">
+${NF ? "" : `<div class="sc-support-widget sc-support-collapsed">
   <a href="/support" class="sc-support-widget-btn" aria-label="לתמיכה לחצי כאן"><span class="sc-support-icon" aria-hidden="true">🎧</span><span class="sc-support-label">לתמיכה לחצי כאן</span></a>
 </div>
 <script>
@@ -3335,4 +3587,4 @@ ${NF ? "" : `<div class="sc-support-widget">
 </html>`;
 }
 
-module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml };
+module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE };

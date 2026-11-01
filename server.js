@@ -63,7 +63,7 @@ try {
 
 const auth = require("./auth");
 const webpush = require("./webpush");
-const { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml } = require("./layout");
+const { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE } = require("./layout");
 const { buildJoinStoryImageBuffer } = require("./joinStory");
 const { buildReviewStoryImageBuffer } = require("./reviewStory");
 
@@ -858,8 +858,18 @@ function yearsInFieldShortLabel(value) {
 // uploaded its own photo OR logo yet. She can always replace this default via the admin panel,
 // and any business that HAS uploaded its own photo/logo keeps showing that as usual - this is
 // only the fallback for the ones that never uploaded anything at all.
+// ---- תמונות כרטיסים כקבצים (2026-11-01): במקום להטמיע base64 של כל תמונה בתוך ה-HTML (מה שהכביד
+// מאוד על דפי חיפוש/בית), כל תמונה מוגשת פעם אחת מ-/img/<hash>.<סיומת> עם מטמון דפדפן קבוע, והכרטיס
+// טוען אותה עצלות (loading="lazy"). ה-hash הוא של תוכן התמונה, ולכן החלפת תמונה = כתובת חדשה. ----
 function cardPhotoHtml(photoUri, logoUri, name, cssClass, defaultLogoUri) {
   if (mode.logosOnly()) photoUri = null; // אתר נטפרי: רק לוגואים, בלי תמונות אישיות
+  if (cssClass === "card-photo") {
+    const photoSrc = photoUri ? imgSrc(photoUri) : null;
+    if (photoSrc) return `<div class="card-photo card-photo-img"><img src="${esc(photoSrc)}" alt="" loading="lazy" decoding="async" /></div>`;
+    const logoSrc = (logoUri && imgSrc(logoUri)) || (defaultLogoUri && imgSrc(defaultLogoUri)) || null;
+    if (logoSrc) return `<div class="card-photo card-photo-logo card-photo-img"><img src="${esc(logoSrc)}" alt="" loading="lazy" decoding="async" /></div>`;
+    return `<div class="card-photo">${initials(name)}</div>`;
+  }
   if (photoUri) return `<div class="${cssClass}" style="background-image:url('${esc(photoUri)}');background-size:cover;background-position:center;"></div>`;
   if (logoUri) return `<div class="${cssClass} ${cssClass}-logo" style="background-image:url('${esc(logoUri)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
   if (defaultLogoUri) return `<div class="${cssClass} ${cssClass}-logo" style="background-image:url('${esc(defaultLogoUri)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
@@ -1779,6 +1789,117 @@ function distanceLabelHtml(dist, online) {
   return `<div class="card-meta-row sc-dist">📍 כ-${Math.round(dist)} ק״מ ממך</div>`;
 }
 
+// ---- חיפוש סלחני (2026-11-01): מילים נרדפות + טעויות כתיב קלות. "מאפרת" מוצאת גם "איפור", וגם "מאפרט". ----
+const SEARCH_SYNONYM_GROUPS = [
+  ["איפור", "מאפרת", "מאפרות", "מייקאפ", "מייק אפ", "איפור כלות", "איפור ערב"],
+  ["ציפורניים", "מניקור", "פדיקור", "לק ג'ל", "לק", "מניקוריסטית", "בניית ציפורניים", "ג'ל"],
+  ["שיער", "ספרית", "ספרית שיער", "תספורת", "צבע לשיער", "עיצוב שיער", "מעצבת שיער", "החלקה", "תסרוקת", "תסרוקות"],
+  ["גבות", "עיצוב גבות", "הרמת גבות", "מיקרובליידינג", "קעקוע גבות", "קעקוע קבוע"],
+  ["קוסמטיקה", "קוסמטיקאית", "טיפולי פנים", "טיפוח פנים", "פנים", "עור"],
+  ["עיסוי", "מסאז'", "מסאז", "מסג'", "ספא", "עיסוי רפואי", "מעסה", "מעסות"],
+  ["ילדים", "טיפול בילדים", "שמרטפית", "בייביסיטר", "בייביסיטרית", "מטפלת", "גנונת", "משפחתון"],
+  ["צילום", "צלמת", "צילומים", "צילום אירועים", "צילום מוצרים", "צילום פורטרט", "סטילס"],
+  ["וידאו", "עריכת וידאו", "עורכת וידאו", "סרטונים", "ריל", "רילס", "קליפים", "סרטון"],
+  ["עיצוב גרפי", "מעצבת גרפית", "גרפיקה", "גרפיקאית", "לוגו", "מיתוג", "ברנדינג"],
+  ["שיווק", "פרסום", "סושיאל", "רשתות חברתיות", "מנהלת סושיאל", "קמפיינים", "ניהול עמודים", "אינסטגרם"],
+  ["בניית אתרים", "אתרים", "אתר", "מפתחת", "פיתוח אתרים", "ווב", "וורדפרס"],
+  ["הנהלת חשבונות", "הנהח", "רואת חשבון", "חשבת", "מיסים", "דוחות", "יועצת מס"],
+  ["תרגום", "מתרגמת", "תרגומים"],
+  ["עריכה לשונית", "עורכת לשון", "הגהה", "הגהת טקסט", "כתיבה", "כותבת", "קופירייטינג", "תוכן"],
+  ["מורה פרטית", "שיעורים פרטיים", "הוראה", "מורה", "הוראה מתקנת", "תגבור"],
+  ["כושר", "אימון אישי", "מאמנת כושר", "מאמנת", "פילאטיס", "יוגה", "אימון", "ספורט"],
+  ["קואוצינג", "אימון אישי ועסקי", "ליווי", "ייעוץ", "יועצת", "מנטורינג", "מנטורית"],
+  ["תזונה", "תזונאית", "דיאטנית", "דיאטה", "ירידה במשקל"],
+  ["פסיכולוגיה", "פסיכולוגית", "טיפול רגשי", "מטפלת רגשית", "טיפול זוגי", "ייעוץ זוגי", "עובדת סוציאלית", "קלינאית תקשורת"],
+  ["קייטרינג", "בישול", "שפית", "אוכל", "אפייה", "אופה", "עוגות", "קונדיטורית", "מאפים", "קינוחים", "קייטרינג ביתי"],
+  ["הפקת אירועים", "מפיקת אירועים", "אירועים", "הפקה", "חתונות", "בר מצווה", "בת מצווה", "דיג'יי", "די ג'י"],
+  ["תכשיטים", "תכשיטנית", "צורפת", "צורפות", "תכשיט"],
+  ["ניקיון", "מנקה", "משק בית", "עזרה בבית", "ניקיון בית", "עוזרת בית"],
+  ["תפירה", "תופרת", "מעצבת אופנה", "אופנה", "שמלות", "תיקונים", "תיקוני בגדים"],
+  ["נדל\"ן", "נדלן", "מתווכת", "תיווך", "דירות"],
+  ["עריכת דין", "עורכת דין", "משפט", "משפטי", "עו\"ד", "עוד"],
+  ["רפלקסולוגיה", "דיקור", "דיקור סיני", "רפואה משלימה", "רפואה סינית", "הומאופתיה", "נטורופתיה", "נטורופתית"],
+  ["פרחים", "פרחנית", "זרים", "סידורי פרחים", "עיצוב פרחוני"],
+  ["בלונים", "עיצוב בלונים", "קישוטים", "עיצוב אירועים", "קישוט"],
+];
+function normHe(s) {
+  return String(s || "").toLowerCase()
+    .replace(/[֑-ׇ]/g, "")
+    .replace(/["'`´’״׳\-_.,:;!?()\/\\]/g, " ")
+    .replace(/ך/g, "כ").replace(/ם/g, "מ").replace(/ן/g, "נ").replace(/ף/g, "פ").replace(/ץ/g, "צ")
+    .replace(/\s+/g, " ").trim();
+}
+const SEARCH_SYN_NORM = SEARCH_SYNONYM_GROUPS.map((g) => g.map(normHe));
+function synonymsFor(qn) {
+  const out = new Set();
+  if (!qn || qn.length < 3) return out;
+  SEARCH_SYN_NORM.forEach((g) => {
+    if (g.some((m) => m.length >= 3 && (m.includes(qn) || qn.includes(m)))) g.forEach((m) => out.add(m));
+  });
+  out.delete(qn);
+  return out;
+}
+// "מילים קרובות" שמוסיפים לכרטיס (data-category) כדי שגם הסינון החי בדפדפן יתחשב במילים נרדפות.
+function synonymWordsForText(text) {
+  const t = normHe(text);
+  const out = new Set();
+  SEARCH_SYN_NORM.forEach((g) => { if (g.some((m) => m.length >= 3 && t.includes(m))) g.forEach((m) => out.add(m)); });
+  return Array.from(out).join(" ");
+}
+function editDistance(a, b, max) { // Damerau-OSA עם יציאה מוקדמת
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  const m = a.length, n = b.length;
+  let prev2 = null, prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    prev2 = prev; prev = cur;
+  }
+  return prev[n];
+}
+function fuzzyWordHit(tok, words) {
+  if (tok.length < 4) return false;
+  const max = tok.length >= 7 ? 2 : 1;
+  return words.some((w) => w.length >= 3 && editDistance(tok, w, max) <= max);
+}
+// parts: { name, cat, subcat, desc } - טקסט גולמי. מחזיר true אם החיפוש "מתאים" (כולל נרדפות וטעויות קלות).
+function searchTextMatches(qRaw, parts) {
+  const q = normHe(qRaw);
+  if (!q) return true;
+  const strong = normHe(`${parts.name || ""} ${parts.cat || ""} ${parts.subcat || ""}`);
+  const all = `${strong} ${normHe(parts.desc || "")}`;
+  if (all.includes(q)) return true;
+  for (const t of synonymsFor(q)) if (all.includes(t)) return true;
+  const words = strong.split(" ").filter(Boolean);
+  const tokens = q.split(" ").filter(Boolean);
+  return tokens.every((tok) => {
+    if (all.includes(tok)) return true;
+    for (const t of synonymsFor(tok)) if (all.includes(t)) return true;
+    return fuzzyWordHit(tok, words);
+  });
+}
+
+// כפתורי פעולה מהירה על כרטיס (וואטסאפ / חיוג) + לב מועדפות. הכרטיס כולו הוא <a>, ולכן אלה <span>
+// עם data-href שנפתחים ב-scCardGo (layout.js) בלי לנווט לפרופיל. לא בנטפרי (אין שם מועדפות/קישורים חיצוניים).
+function cardQuickHtml(f, title) {
+  if (mode.isNetfree() || !f.phone) return "";
+  const parts = [];
+  if (f.hasWhatsapp) parts.push(`<span class="cq-btn cq-wa" role="link" tabindex="0" data-href="https://wa.me/${esc(waPhoneDigits(f.phone))}" data-blank="1" onclick="scCardGo(event,this)" aria-label="וואטסאפ ל${esc(title)}">${whatsappIconSvg}<span>וואטסאפ</span></span>`);
+  parts.push(`<span class="cq-btn cq-tel" role="link" tabindex="0" data-href="tel:${esc(f.phone)}" onclick="scCardGo(event,this)" aria-label="חיוג ל${esc(title)}">📞<span>חיוג</span></span>`);
+  return `<div class="card-quick">${parts.join("")}</div>`;
+}
+function cardFavHtml(key) {
+  if (mode.isNetfree()) return "";
+  return `<span class="card-fav" role="button" tabindex="0" data-fav="${esc(key)}" aria-pressed="false" aria-label="הוספה למועדפות" onclick="scCardFav(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')scCardFav(event,this)">🤍</span>`;
+}
 function freelancerCard(f, d, opts = {}) {
   // Only badges that still make sense on the compact grid card - the delivery-method and
   // whatsapp badges moved to live below the contact details on the full profile page
@@ -1799,7 +1920,7 @@ function freelancerCard(f, d, opts = {}) {
   // the exact same things as a full /search submit - per explicit request, after "שיער" found
   // nothing even though hair-focused freelancers were on the site under a category name that
   // doesn't contain that word.
-  const categoryForSearch = esc(`${catName(d, f.categoryId)} ${subcatNames(d, f.categoryId, f.subcategoryIds)} ${f.description || ""}`.toLowerCase());
+  const categoryForSearch = esc(`${catName(d, f.categoryId)} ${subcatNames(d, f.categoryId, f.subcategoryIds)} ${f.description || ""} ${synonymWordsForText(`${catName(d, f.categoryId)} ${subcatNames(d, f.categoryId, f.subcategoryIds)}`)}`.toLowerCase());
   const extraCats = additionalCategoryNames(d, f);
   // If her inspiration story happens to be this week's featured story on SheCan Stories, she
   // gets a small badge overlaid on her card, linking to it. This used to be rendered as a
@@ -1830,6 +1951,7 @@ function freelancerCard(f, d, opts = {}) {
   const cardHtml = `
   <a class="${cardClass}" href="/freelancer/${f.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${f.offersHomeVisit ? "1" : "0"}" data-has-deal="${dealVisibleToCustomers(f) ? "1" : "0"}" style="${featuredStoryBadge ? "position:relative;" : ""}">
     ${featuredStoryBadge}
+    ${cardFavHtml(favKey(f.id, null))}
     ${cardPhotoHtml(f.photoDataUri, f.logoDataUri, f.businessName || f.name, "card-photo", d.settings.defaultBusinessLogoDataUri)}
     <div class="card-body">
       <div class="card-top">
@@ -1843,6 +1965,7 @@ function freelancerCard(f, d, opts = {}) {
         ${opts.distanceHtml || ""}
       </div>
       ${badges.length ? `<div class="card-badges">${badges.join(" ")}</div>` : ""}
+      ${cardQuickHtml(f, f.businessName || f.name)}
       <div class="card-info">
         ${d.settings.showProfileViewCount ? `<p class="card-reviewcount">👁️ ${f.viewCount || 0} צפיות</p>` : ""}
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
@@ -1866,7 +1989,7 @@ function additionalListingCard(f, listing, d, opts = {}) {
   if (listing.tier === "premium") badges.push(`<span class="badge">מומלצת</span>`);
   const nameForSearch = esc((listing.businessName || "").trim().toLowerCase());
   // Same subcategory + bio-text widening as the main freelancer card above, for this listing.
-  const categoryForSearch = esc(`${catNameStr} ${subcatName(d, listing.categoryId, listing.subcategoryId)} ${listing.description || ""}`.toLowerCase());
+  const categoryForSearch = esc(`${catNameStr} ${subcatName(d, listing.categoryId, listing.subcategoryId)} ${listing.description || ""} ${synonymWordsForText(`${catNameStr} ${subcatName(d, listing.categoryId, listing.subcategoryId)}`)}`.toLowerCase());
   const cardClass = "card" + (listing.isAdvertised ? " card-ad" : "");
   const reviewCount = reviewCountFor(d, f.id, listing.id);
   const listingFieldLabel = subcatName(d, listing.categoryId, listing.subcategoryId) || catNameStr;
@@ -1874,6 +1997,7 @@ function additionalListingCard(f, listing, d, opts = {}) {
   const listingLocationIcon = locationIcon(d, f.cityId, listing.offersOnline, listing.offersHomeVisit);
   return `
   <a class="${cardClass}" href="/freelancer/${f.id}/listing/${listing.id}" data-name="${nameForSearch}" data-category="${categoryForSearch}" data-home-visit="${listing.offersHomeVisit ? "1" : "0"}" data-has-deal="${dealVisibleToCustomers(listing) ? "1" : "0"}">
+    ${cardFavHtml(favKey(f.id, listing.id))}
     ${cardPhotoHtml(null, listing.logoDataUri, listing.businessName, "card-photo", d.settings.defaultBusinessLogoDataUri)}
     <div class="card-body">
       <div class="card-top">
@@ -1887,6 +2011,7 @@ function additionalListingCard(f, listing, d, opts = {}) {
         ${opts.distanceHtml || ""}
       </div>
       ${badges.length ? `<div class="card-badges">${badges.join(" ")}</div>` : ""}
+      ${cardQuickHtml(f, listing.businessName)}
       <div class="card-info">
         ${reviewCount > 5 ? `<p class="card-reviewcount">⭐ ${reviewCount} דירוגים</p>` : ""}
         ${listing.description ? `<div class="card-desc">${detailLine("📝", esc(listing.description), "justify-content:center;")}</div>` : ""}
@@ -2680,18 +2805,20 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         <p class="hero-sub2">כל העסקים. כל התחומים. מקום אחד. SheCan</p>
       </section>
 
+      ${searchBarHtml(d, {})}
       ${weekly.text ? `
+      <details class="sc-fold" data-fold><summary>💡 הטיפ השבועי מהמומחית</summary>
       <div class="weekly-tip">
         <span class="weekly-tip-kicker">From the Pros | טיפ שבועי מהמומחית</span>
         <p class="weekly-tip-quote">${esc(weekly.text)}</p>
         ${weekly.freelancer ? `
         <a class="weekly-tip-attr" href="/freelancer/${weekly.freelancer.id}">${esc(weekly.freelancer.businessName || weekly.freelancer.name)} | ${esc(subcatName(d, weekly.freelancer.categoryId, weekly.freelancer.subcategoryId) || catName(d, weekly.freelancer.categoryId))}</a>
         ` : `<a class="weekly-tip-btn" href="/arena">מעבר לזירה</a>`}
-      </div>` : ""}
+      <button type="button" class="weekly-tip-like" id="scWeeklyLike" data-like-key="${esc(weeklyLikeKey)}" onclick="scLikeWeeklyQuote(this)" aria-label="אהבתי את המשפט"><span class="weekly-tip-like-icon">🤍</span><span class="weekly-tip-like-count">${weeklyLikeCount}</span></button>
+      </div></details>` : ""}
 
-      ${searchBarHtml(d, {})}
-      ${featuredStripHtml(d, {})}
 
+      ${(homeRaceEnded || d.settings.customerReferralContestActive) ? `<details class="sc-fold" data-fold><summary>🏁 מירוץ הלקוחות והפרסים</summary>` : ""}
       ${homeRaceEnded ? homeRaceEndedHtml : d.settings.customerReferralContestActive ? `
       <div style="margin-top:24px;max-width:560px;margin-inline:auto;">
 
@@ -2713,6 +2840,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
       </div>
 
       ` : ""}
+      ${(homeRaceEnded || d.settings.customerReferralContestActive) ? `</details>` : ""}
 
       <h2 class="section-title">מה למצוא לך היום?</h2>
       <div class="cat-grid">
@@ -2759,10 +2887,11 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         </div>
       </section>` : ""}
       ${searchBarScriptsHtml(d)}
+      <script>(function(){ if (window.innerWidth > 720) [].forEach.call(document.querySelectorAll('details[data-fold]'), function(x){ x.open = true; }); })();</script>
   `;
   sendHtml(res, 200, page({
     title: "קהילת העצמאיות בישראל - מצאי בעלת עסק לפי תחום ועיר",
-    session: ctx.session, body, query, wide: true,
+    session: ctx.session, body, query, wide: true, home: true, catBar: true,
     description: "SheCan - כל העסקים, כל התחומים, במקום אחד. מצאי בעלת עסק עצמאית לפי תחום ועיר, קבלי הטבה בלעדית וסגרי איתה עסקה ישירות באתר.",
     canonicalUrl: `${getOrigin(req)}/`,
     ogImage: `${getOrigin(req)}/icons/icon-512.png`,
@@ -3051,11 +3180,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       // entirely since only the category name was checked) and her own free-text "about the
       // business" bio - per explicit request, since customers often search by a word she
       // actually wrote rather than the exact category/subcategory label.
-      const nameMatch = `${f.businessName || ""} ${f.name || ""}`.toLowerCase().includes(q);
-      const categoryMatch = catName(d, f.categoryId).toLowerCase().includes(q);
-      const subcatMatch = subcatNames(d, f.categoryId, f.subcategoryIds).toLowerCase().includes(q);
-      const descMatch = (f.description || "").toLowerCase().includes(q);
-      if (!nameMatch && !categoryMatch && !subcatMatch && !descMatch) return false;
+      if (!searchTextMatches(q, { name: `${f.businessName || ""} ${f.name || ""}`, cat: catName(d, f.categoryId), subcat: subcatNames(d, f.categoryId, f.subcategoryIds), desc: f.description })) return false;
     }
     return true;
   });
@@ -3076,11 +3201,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       if (homeVisit && !l.offersHomeVisit) return;
       if (withDeal && !dealVisibleToCustomers(l)) return;
       if (q) {
-        const nameMatch = (l.businessName || "").toLowerCase().includes(q);
-        const categoryMatch = catName(d, l.categoryId).toLowerCase().includes(q);
-        const subcatMatch = subcatName(d, l.categoryId, l.subcategoryId).toLowerCase().includes(q);
-        const descMatch = (l.description || "").toLowerCase().includes(q);
-        if (!nameMatch && !categoryMatch && !subcatMatch && !descMatch) return;
+        if (!searchTextMatches(q, { name: l.businessName, cat: catName(d, l.categoryId), subcat: subcatName(d, l.categoryId, l.subcategoryId), desc: l.description })) return;
       }
       listingMatches.push({ f: lf, l });
     });
@@ -3104,16 +3225,21 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     const ni = nearInfo(f.cityId, f.offersOnline);
     if (!ni.keep) return;
     const distanceHtml = fromId ? distanceLabelHtml(ni.far ? null : ni.dist, ni.far && f.offersOnline) : "";
-    cardEntries.push({ tier: f.tier, reviewCount: reviewCountFor(d, f.id), avgRating: avgRatingFor(d, f.id), dist: ni.dist, far: ni.far, html: freelancerCard(f, d, { distanceHtml }) });
+    cardEntries.push({ tier: f.tier, reviewCount: reviewCountFor(d, f.id), avgRating: avgRatingFor(d, f.id), views: f.viewCount || 0, hasDeal: dealVisibleToCustomers(f) ? 1 : 0, dist: ni.dist, far: ni.far, html: freelancerCard(f, d, { distanceHtml }) });
   });
   listingMatches.forEach(({ f, l }) => {
     const ni = nearInfo(f.cityId, l.offersOnline);
     if (!ni.keep) return;
     const distanceHtml = fromId ? distanceLabelHtml(ni.far ? null : ni.dist, ni.far && l.offersOnline) : "";
-    cardEntries.push({ tier: l.tier, reviewCount: reviewCountFor(d, f.id, l.id), avgRating: avgRatingFor(d, f.id, l.id), dist: ni.dist, far: ni.far, html: additionalListingCard(f, l, d, { distanceHtml }) });
+    cardEntries.push({ tier: l.tier, reviewCount: reviewCountFor(d, f.id, l.id), avgRating: avgRatingFor(d, f.id, l.id), views: 0, hasDeal: dealVisibleToCustomers(l) ? 1 : 0, dist: ni.dist, far: ni.far, html: additionalListingCard(f, l, d, { distanceHtml }) });
   });
+  const sortMode = ["popular", "deals", "rating", "near"].includes(query.get("sort")) ? query.get("sort") : "";
+  const popularity = (e) => e.reviewCount * 10 + e.views;
   const combinedCards = cardEntries
     .sort((a, b) => ((b.tier === "premium") - (a.tier === "premium"))
+      || (sortMode === "popular" ? (popularity(b) - popularity(a)) : 0)
+      || (sortMode === "deals" ? (b.hasDeal - a.hasDeal) : 0)
+      || (sortMode === "rating" ? ((b.avgRating - a.avgRating) || (b.reviewCount - a.reviewCount)) : 0)
       || (fromId ? ((a.far ? 1 : 0) - (b.far ? 1 : 0)) || ((a.dist == null ? 1e9 : a.dist) - (b.dist == null ? 1e9 : b.dist)) : 0)
       || (sortQuality ? (b.avgRating - a.avgRating) || (b.reviewCount - a.reviewCount) : (b.reviewCount - a.reviewCount)));
 
@@ -3190,7 +3316,9 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   });
   // הצעות בהקלדה: רק תחומים ותתי-תחומים כלליים (בלי שמות עצמאיות/עסקים) - לפי בקשה מפורשת.
   const suggestJson = JSON.stringify(suggestData).replace(/</g, "\\u003c");
-  const viewRowHtml = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button></div>`;
+  const sortOptions = [["", fromId ? "הכי קרובות אליי" : "ברירת מחדל"], ["popular", "הכי פופולריות"], ["deals", "עם הטבה קודם"], ["rating", "דירוג גבוה"]];
+  const sortSelectHtml = combinedCards.length > 1 ? `<span class="sc-s-view-label" style="margin-inline-start:10px;">מיון:</span><select class="sc-s-sort" aria-label="מיון התוצאות" onchange="location.href=this.value">${sortOptions.map(([v, label]) => `<option value="${esc(searchUrl({ sort: v || null }))}"${sortMode === v ? " selected" : ""}>${label}</option>`).join("")}</select>` : "";
+  const viewRowHtml = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button>${sortSelectHtml}</div>`;
   const advOpen = !!city;
   const detailsHtml = `<details class="sc-s-more" ${advOpen ? "open" : ""}>
           <summary>⚙️ עוד סינונים ותצוגה</summary>
@@ -3206,7 +3334,6 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
       ${searchBarHtml(d, { rawQ, fromId, radius, withDeal, homeVisit, autoSubmit: true, live: true, extraInner: `${detailsHtml}` })}
       <div class="sc-s-chips${NF ? "" : " sc-s-chips-cats"}" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
       ${subChipsHtml ? `<div class="sc-s-chips sc-s-subchips" role="group" aria-label="בחירת תת-תחום">${subChipsHtml}</div>` : ""}
-      ${featuredStripHtml(d, { categoryId: category })}
       ${statusBarHtml}
       ${combinedCards.length ? viewRowHtml : ""}
       <div id="scResultsGrid">
@@ -3240,7 +3367,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   if (city) canonicalParams.set("city", city);
   const searchCanonical = `${getOrigin(req)}/search${canonicalParams.toString() ? `?${canonicalParams.toString()}` : ""}`;
   sendHtml(res, 200, page({
-    title: searchTitle, session: ctx.session, body, query, wide: true,
+    title: searchTitle, session: ctx.session, body, query, wide: true, catBar: true,
     description: searchDescription, canonicalUrl: searchCanonical,
   }));
 });
@@ -14154,6 +14281,45 @@ route("POST", "/push/unsubscribe", async (req, res, params, query, ctx) => {
 // חתימת "ספיר בריל." בכתב יד מרושל (SVG וקטורי, נוצר מגופן עברי בכתב יד בהטיות קלות לכל אות) - מוצגת
 // בצד שמאל של כל הדפים (ר' .sc-signature ב-layout.js). מוגש כקובץ אחד עם cache ארוך.
 const SC_SIGNATURE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-3676 -838 3832 1085" fill="#9a8e81" stroke="#9a8e81" stroke-width="22" stroke-linejoin="round"><path d="M-271 37Q-308 31 -349 14Q-390 -3 -422 -36Q-455 -68 -471 -121Q-488 -174 -479 -249Q-470 -327 -440 -376Q-411 -425 -375 -451Q-338 -478 -307 -489Q-314 -497 -316 -508Q-322 -538 -309 -556Q-296 -574 -269 -587Q-230 -605 -175 -611Q-120 -616 -77 -610Q-32 -604 11 -577Q54 -549 78 -498Q103 -447 93 -370Q80 -267 42 -188Q3 -110 -50 -57Q-103 -5 -161 19Q-219 43 -271 37ZM-272 -84Q-225 -78 -188 -98Q-151 -119 -122 -156Q-94 -193 -74 -236Q-54 -279 -42 -320Q-31 -361 -28 -387Q-23 -422 -33 -447Q-44 -472 -62 -485Q-80 -499 -98 -500Q-119 -503 -153 -494Q-187 -485 -217 -477Q-216 -468 -217 -456Q-218 -441 -238 -426Q-258 -410 -282 -389Q-307 -368 -328 -340Q-349 -312 -353 -272Q-362 -194 -339 -142Q-315 -91 -272 -84Z M-879 74Q-932 73 -979 54Q-1026 35 -1055 -10Q-1084 -55 -1083 -132Q-1083 -182 -1062 -226Q-1042 -271 -1010 -307Q-978 -343 -941 -366Q-903 -389 -867 -395Q-818 -403 -776 -385Q-734 -367 -711 -330Q-688 -293 -700 -240Q-705 -222 -724 -196Q-744 -170 -772 -148Q-800 -127 -828 -119Q-856 -112 -877 -129Q-887 -137 -882 -152Q-876 -168 -864 -186Q-852 -205 -840 -224Q-827 -242 -821 -258Q-816 -273 -824 -282Q-833 -292 -857 -284Q-880 -277 -906 -255Q-932 -233 -951 -199Q-970 -165 -970 -120Q-971 -87 -947 -66Q-923 -46 -878 -45Q-848 -45 -806 -59Q-764 -72 -720 -100Q-675 -128 -636 -171Q-597 -213 -573 -270Q-548 -327 -548 -398Q-547 -475 -578 -514Q-610 -553 -656 -562Q-710 -574 -774 -556Q-838 -538 -891 -504Q-919 -485 -945 -482Q-971 -479 -987 -496Q-1005 -515 -992 -547Q-979 -580 -933 -612Q-882 -648 -816 -664Q-750 -679 -673 -680Q-606 -680 -558 -652Q-509 -624 -479 -577Q-448 -530 -435 -474Q-422 -417 -428 -358Q-436 -269 -479 -190Q-522 -111 -586 -51Q-651 8 -727 41Q-803 75 -879 74Z M-1165 -233Q-1190 -245 -1187 -274Q-1184 -303 -1166 -343Q-1149 -382 -1126 -424Q-1103 -466 -1088 -504Q-1072 -542 -1046 -559Q-1020 -576 -994 -564Q-959 -547 -959 -515Q-959 -483 -979 -445Q-987 -429 -1001 -399Q-1015 -369 -1033 -336Q-1051 -303 -1073 -275Q-1094 -247 -1118 -234Q-1141 -221 -1165 -233Z M-1502 -35Q-1523 -48 -1521 -74Q-1519 -100 -1492 -125Q-1466 -147 -1446 -184Q-1426 -221 -1413 -265Q-1399 -309 -1393 -354Q-1387 -399 -1391 -437Q-1396 -485 -1417 -511Q-1438 -537 -1468 -545Q-1498 -553 -1531 -547Q-1565 -541 -1594 -525Q-1643 -498 -1675 -502Q-1707 -506 -1718 -532Q-1728 -557 -1711 -581Q-1695 -605 -1661 -625Q-1626 -645 -1583 -657Q-1539 -669 -1496 -668Q-1418 -665 -1370 -632Q-1321 -599 -1298 -547Q-1274 -495 -1270 -433Q-1266 -371 -1279 -310Q-1292 -249 -1317 -198Q-1353 -125 -1392 -87Q-1431 -50 -1461 -40Q-1491 -29 -1502 -35Z M-2514 135Q-2529 127 -2532 98Q-2534 70 -2504 34Q-2491 20 -2471 -5Q-2452 -30 -2427 -58Q-2402 -87 -2376 -112Q-2350 -136 -2326 -152Q-2302 -167 -2283 -167Q-2260 -166 -2246 -151Q-2232 -136 -2220 -115Q-2208 -94 -2191 -77Q-2174 -60 -2145 -55Q-2119 -50 -2082 -59Q-2046 -68 -2011 -86Q-1976 -104 -1951 -129Q-1927 -155 -1926 -184Q-1925 -216 -1943 -241Q-1961 -267 -1991 -283Q-2020 -299 -2052 -303Q-2099 -310 -2143 -305Q-2188 -300 -2228 -294Q-2268 -288 -2305 -289Q-2336 -290 -2360 -295Q-2385 -300 -2397 -323Q-2410 -350 -2395 -370Q-2380 -390 -2348 -402Q-2332 -410 -2296 -417Q-2261 -423 -2214 -427Q-2168 -432 -2116 -431Q-2065 -430 -2018 -420Q-1975 -411 -1932 -387Q-1890 -363 -1856 -328Q-1823 -293 -1807 -250Q-1791 -206 -1800 -157Q-1808 -118 -1836 -84Q-1864 -49 -1904 -21Q-1945 7 -1993 25Q-2040 43 -2087 50Q-2134 56 -2173 48Q-2218 38 -2248 16Q-2279 -7 -2295 -29Q-2314 -9 -2340 20Q-2367 49 -2391 76Q-2414 103 -2424 118Q-2445 147 -2471 146Q-2496 145 -2514 135Z M-2724 127Q-2743 107 -2734 80Q-2724 54 -2687 35Q-2654 19 -2622 -15Q-2590 -49 -2563 -92Q-2536 -135 -2516 -182Q-2497 -228 -2490 -270Q-2482 -323 -2497 -356Q-2512 -390 -2542 -407Q-2572 -424 -2609 -427Q-2646 -430 -2683 -422Q-2742 -408 -2775 -421Q-2808 -434 -2812 -465Q-2815 -494 -2791 -515Q-2767 -536 -2724 -548Q-2682 -559 -2632 -560Q-2582 -560 -2536 -546Q-2454 -521 -2412 -472Q-2370 -423 -2359 -361Q-2349 -298 -2363 -231Q-2377 -164 -2408 -102Q-2439 -40 -2480 6Q-2539 74 -2592 103Q-2644 132 -2679 134Q-2714 137 -2724 127Z M-3133 -217Q-3157 -225 -3159 -252Q-3161 -279 -3151 -317Q-3140 -356 -3126 -398Q-3111 -440 -3103 -477Q-3095 -514 -3073 -533Q-3051 -553 -3026 -546Q-2991 -536 -2987 -507Q-2982 -478 -2994 -440Q-2999 -424 -3007 -394Q-3015 -364 -3027 -331Q-3039 -298 -3054 -269Q-3070 -240 -3089 -225Q-3109 -209 -3133 -217Z M-3397 20Q-3434 9 -3446 -23Q-3458 -55 -3445 -98Q-3432 -144 -3405 -167Q-3378 -190 -3348 -198Q-3318 -206 -3293 -206Q-3269 -273 -3232 -354Q-3195 -435 -3142 -535Q-3068 -677 -2976 -733Q-2885 -789 -2786 -776Q-2750 -772 -2711 -752Q-2672 -732 -2648 -704Q-2620 -672 -2619 -645Q-2618 -618 -2631 -610Q-2650 -598 -2668 -606Q-2685 -613 -2704 -629Q-2722 -645 -2743 -660Q-2763 -676 -2786 -681Q-2836 -691 -2882 -667Q-2928 -643 -2969 -596Q-3010 -549 -3045 -489Q-3081 -430 -3109 -368Q-3138 -306 -3160 -252Q-3181 -198 -3195 -163Q-3223 -90 -3252 -50Q-3280 -11 -3307 5Q-3334 22 -3357 23Q-3379 24 -3397 20Z M-3569 -18Q-3601 -21 -3610 -43Q-3619 -65 -3616 -94Q-3612 -123 -3590 -142Q-3567 -160 -3537 -157Q-3500 -153 -3486 -130Q-3471 -108 -3475 -79Q-3477 -60 -3492 -45Q-3507 -30 -3528 -23Q-3549 -15 -3569 -18Z"/><path d="M-3556 217 C-2716 137 -1760 267 -204 177 S46 207 76 157" fill="none" stroke-width="60" stroke-linecap="round"/></svg>`;
+route("GET", "/img/:file", async (req, res, params) => {
+  const m = String(params.file || "").match(/^([a-f0-9]{40})\.([a-z]+)$/);
+  if (!m) { res.writeHead(404); return res.end(); }
+  let hit = IMG_CACHE.get(m[1]);
+  if (!hit) { // אחרי הפעלה מחדש של השרת: בונים מחדש את המטמון מהנתונים
+    const d = db.load();
+    const walk = (v, depth) => {
+      if (depth > 6 || v == null) return;
+      if (typeof v === "string") { if (v.startsWith("data:image/")) imgSrc(v); return; }
+      if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+      if (typeof v === "object") Object.keys(v).forEach((k) => walk(v[k], depth + 1));
+    };
+    walk(d.freelancers, 0); walk(d.settings, 0); walk(d.influencers, 0); walk(d.stories, 0);
+    hit = IMG_CACHE.get(m[1]);
+  }
+  if (!hit) { res.writeHead(404); return res.end(); }
+  res.writeHead(200, { "Content-Type": hit.type, "Cache-Control": "public, max-age=31536000, immutable", "Content-Length": hit.buf.length, "X-Content-Type-Options": "nosniff" });
+  res.end(hit.buf);
+});
+
+// לב מועדפות מכרטיס (AJAX) - לקוחה מחוברת בלבד; מחזיר את רשימת המועדפות המעודכנת.
+route("POST", "/favorite/toggle", async (req, res, params, query, ctx) => {
+  const sendJson = (status, obj) => { res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" }); res.end(JSON.stringify(obj)); };
+  if (!requireRole(ctx.session, "customer")) return sendJson(401, { ok: false });
+  const body = await readBody(req);
+  const key = String(body.get("key") || "");
+  const [fid, lid] = key.split(":");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === fid);
+  if (!f || (lid && !(f.additionalListings || []).some((l) => l.id === lid))) return sendJson(400, { ok: false });
+  const customer = d.customers.find((c) => c.id === ctx.session.id);
+  if (!customer) return sendJson(401, { ok: false });
+  customer.favorites = customer.favorites || [];
+  const idx = customer.favorites.indexOf(key);
+  if (idx === -1) customer.favorites.push(key); else customer.favorites.splice(idx, 1);
+  db.save();
+  sendJson(200, { ok: true, fav: idx === -1, favorites: customer.favorites });
+});
+
 route("GET", "/signature.svg", async (req, res) => {
   res.writeHead(200, { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=604800" });
   res.end(SC_SIGNATURE_SVG);
