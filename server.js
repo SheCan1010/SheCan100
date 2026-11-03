@@ -63,7 +63,7 @@ try {
 
 const auth = require("./auth");
 const webpush = require("./webpush");
-const { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE } = require("./layout");
+const { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE, statusCirclesList } = require("./layout");
 const { buildJoinStoryImageBuffer } = require("./joinStory");
 const { buildReviewStoryImageBuffer } = require("./reviewStory");
 
@@ -2812,6 +2812,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
       </section>
 
       ${searchBarHtml(d, {})}
+      ${homeStatusesHtml(d, ctx)}
       ${weekly.text ? `
       <details class="sc-fold" data-fold><summary>💡 הטיפ השבועי מהמומחית</summary>
       <div class="weekly-tip">
@@ -2905,12 +2906,24 @@ route("GET", "/", async (req, res, params, query, ctx) => {
     ogImage: `${getOrigin(req)}/icons/icon-512.png`,
     jsonLd: {
       "@context": "https://schema.org",
-      "@type": "WebSite",
-      name: "SheCan",
-      alternateName: "SheCan - קהילת העצמאיות",
-      url: `${getOrigin(req)}/`,
-      description: "כל העסקים, כל התחומים, במקום אחד - קהילת העצמאיות של ישראל.",
-      inLanguage: "he",
+      "@graph": [
+        {
+          "@type": "Organization", "@id": `${getOrigin(req)}/#org`,
+          name: "SheCan", alternateName: ["שיקן", "SheCan - קהילת העצמאיות"],
+          url: `${getOrigin(req)}/`, logo: `${getOrigin(req)}/icons/icon-512.png`,
+          description: "קהילה ומדריך עסקים בעברית של עצמאיות בישראל - חיפוש לפי תחום ועיר, ביקורות והטבות בלעדיות.",
+          areaServed: { "@type": "Country", name: "ישראל" }, knowsLanguage: "he",
+          ...(d.settings.contactEmail ? { contactPoint: { "@type": "ContactPoint", contactType: "customer support", email: d.settings.contactEmail, availableLanguage: "Hebrew" } } : {}),
+        },
+        {
+          "@type": "WebSite", "@id": `${getOrigin(req)}/#website`,
+          name: "SheCan", alternateName: "SheCan - קהילת העצמאיות",
+          url: `${getOrigin(req)}/`,
+          description: "כל העסקים, כל התחומים, במקום אחד - קהילת העצמאיות של ישראל.",
+          inLanguage: "he", publisher: { "@id": `${getOrigin(req)}/#org` },
+          potentialAction: { "@type": "SearchAction", target: { "@type": "EntryPoint", urlTemplate: `${getOrigin(req)}/search?q={search_term_string}` }, "query-input": "required name=search_term_string" },
+        },
+      ],
     },
   }));
 });
@@ -3366,7 +3379,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     searchTitle = `עצמאיות ב${searchCityName} - חיפוש`;
   }
   let searchDescription = (searchCatName || searchCityName)
-    ? `מחפשת ${searchSubName || searchCatName || "עצמאית"}${searchCityName ? ` ב${searchCityName}` : ""}? מצאי אותה ב${NF ? mode.brandName() : "SheCan"} - כרטיסיות עסק, ביקורות אמיתיות והטבה בלעדית לכל עצמאית.`
+    ? `מחפשת ${searchSubName || searchCatName || "עצמאית"}${searchCityName ? ` ב${searchCityName}` : ""}? מצאי אותה ב${NF ? mode.brandName() : "-SheCan"} - כרטיסיות עסק, ביקורות אמיתיות והטבה בלעדית לכל עצמאית.`
     : "חפשי עצמאיות לפי תחום ועיר, קבלי הטבה בלעדית וסגרי עסקה ישירות - הכל במקום אחד ב-SheCan.";
   if (NF) searchDescription = `חפשי עסקים של עצמאיות לפי תחום ועיר ב${mode.brandName()}.`;
   const canonicalParams = new URLSearchParams();
@@ -3374,9 +3387,46 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   if (category && subcategory) canonicalParams.set("subcategory", subcategory);
   if (city) canonicalParams.set("city", city);
   const searchCanonical = `${getOrigin(req)}/search${canonicalParams.toString() ? `?${canonicalParams.toString()}` : ""}`;
+  // מידע מובנה + פסקת סיכום וקישורים פנימיים (2026-11, הכנה לחיפוש AI): רק לעמודי תחום/עיר ולא בנטפרי.
+  let searchLd = null, searchSeoHtml = "";
+  if (!NF && (category || city || subcategory)) {
+    const origin = getOrigin(req);
+    const crumbs = [{ name: "דף הבית", url: `${origin}/` }, { name: "חיפוש עצמאיות", url: `${origin}/search` }];
+    if (searchCatName) crumbs.push({ name: searchCatName, url: `${origin}/search?category=${encodeURIComponent(category)}` });
+    if (searchSubName) crumbs.push({ name: searchSubName, url: `${origin}/search?category=${encodeURIComponent(category)}&subcategory=${encodeURIComponent(subcategory)}` });
+    if (searchCityName) crumbs.push({ name: searchCityName, url: searchCanonical });
+    searchLd = {
+      "@context": "https://schema.org",
+      "@graph": [
+        { "@type": "BreadcrumbList", itemListElement: crumbs.map((c, i) => ({ "@type": "ListItem", position: i + 1, name: c.name, item: c.url })) },
+        {
+          "@type": "CollectionPage", name: searchTitle, description: searchDescription, url: searchCanonical, inLanguage: "he",
+          mainEntity: {
+            "@type": "ItemList", numberOfItems: results.length,
+            itemListElement: results.slice(0, 20).map((f, i) => ({ "@type": "ListItem", position: i + 1, url: `${origin}/freelancer/${encodeURIComponent(f.id)}`, name: f.businessName || f.name })),
+          },
+        },
+      ],
+    };
+    const topNames = results.slice(0, 6).map((f) => f.businessName || f.name);
+    const what = `${searchSubName || searchCatName || "עצמאיות"}${searchCityName ? ` ב${searchCityName}` : ""}`;
+    const combos = seoCombos(d);
+    let related = [];
+    if (category && searchCityName) {
+      related = combos.catCity.filter((x) => x.cat === category && x.city !== city).slice(0, 8).map((x) => ({ href: `/search?category=${encodeURIComponent(x.cat)}&city=${encodeURIComponent(x.city)}`, label: `${searchCatName} ב${cityName(d, x.city)}` }));
+    } else if (category) {
+      related = combos.catCity.filter((x) => x.cat === category).slice(0, 8).map((x) => ({ href: `/search?category=${encodeURIComponent(x.cat)}&city=${encodeURIComponent(x.city)}`, label: `${searchCatName} ב${cityName(d, x.city)}` }));
+    } else if (city) {
+      related = combos.catCity.filter((x) => x.city === city).slice(0, 8).map((x) => ({ href: `/search?category=${encodeURIComponent(x.cat)}&city=${encodeURIComponent(x.city)}`, label: `${catName(d, x.cat)} ב${searchCityName}` }));
+    }
+    searchSeoHtml = `<section class="muted" style="max-width:760px;margin:26px auto 0;text-align:right;font-size:14.5px;" aria-label="סיכום">
+      <p>${results.length ? `ב-SheCan יש ${seoCountLabel(results.length)} בתחום ${esc(what)}${topNames.length ? `, בהן ${topNames.map(esc).join(", ")}` : ""}. לכל עצמאית כרטיסיית עסק עם תיאור, ביקורות של לקוחות ופרטי יצירת קשר.` : `כרגע אין עצמאיות מאושרות בתחום ${esc(what)}. אפשר לנסות תחום או עיר קרובים, או לפרסם בקשה.`}</p>
+      ${related.length ? `<p>עוד באתר: ${related.map((r) => `<a href="${esc(r.href)}" style="color:var(--rose-dark);font-weight:700;">${esc(r.label)}</a>`).join(" · ")}</p>` : ""}
+    </section>`;
+  }
   sendHtml(res, 200, page({
-    title: searchTitle, session: ctx.session, body, query, wide: true, catBar: true,
-    description: searchDescription, canonicalUrl: searchCanonical,
+    title: searchTitle, session: ctx.session, body: body + searchSeoHtml, query, wide: true, catBar: true,
+    description: searchDescription, canonicalUrl: searchCanonical, jsonLd: searchLd || undefined,
   }));
 });
 
@@ -3663,19 +3713,51 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const profileTitle = `${f.businessName || f.name} - ${profileCatLabel}${profileCityLabel ? ` ב${profileCityLabel}` : ""}`;
   const profileCanonical = `${getOrigin(req)}/freelancer/${f.id}`;
   const profileAvatar = avatarUri(f, d);
-  const profileImageAbs = (profileAvatar && !profileAvatar.startsWith("data:")) ? `${getOrigin(req)}${profileAvatar}` : null;
+  const profileImgPath = profileAvatar ? imgSrc(profileAvatar) : null;
+  const profileImageAbs = profileImgPath ? (/^https?:/i.test(profileImgPath) ? profileImgPath : `${getOrigin(req)}${profileImgPath}`) : null;
+  const profileIg = instagramHandleAndUrl(f.instagram);
+  const profileSameAs = [profileIg && profileIg.url, /^https?:\/\//i.test(f.portfolioUrl || "") ? f.portfolioUrl : null].filter(Boolean);
+  const profileServiceTypes = [catName(d, f.categoryId)].concat(subcatNames(d, f.categoryId, f.subcategoryIds) ? subcatNames(d, f.categoryId, f.subcategoryIds).split(/\s*[,،]\s*/) : []).filter((x) => x && x !== "-");
+  const profileAreas = [profileCityLabel].concat(f.offersOnline ? ["ישראל (שירות אונליין)"] : []).filter(Boolean);
+  const profileReviewsLd = reviews.slice(0, 5).filter((r) => r.rating && r.text).map((r) => ({
+    "@type": "Review",
+    reviewRating: { "@type": "Rating", ratingValue: r.rating, bestRating: 5, worstRating: 1 },
+    author: { "@type": "Person", name: (r.isAnonymous ? "" : r.authorName) || "לקוחה" },
+    reviewBody: clip(String(r.text), 300),
+    ...(r.createdAt ? { datePublished: String(r.createdAt).slice(0, 10) } : {}),
+  }));
   const profileJsonLd = {
     "@context": "https://schema.org",
-    "@type": "LocalBusiness",
-    name: f.businessName || f.name,
-    description: profileDescription,
-    url: profileCanonical,
-    ...(profileImageAbs ? { image: profileImageAbs } : {}),
-    ...(f.phone ? { telephone: f.phone } : {}),
-    ...(profileCityLabel ? { address: { "@type": "PostalAddress", addressLocality: profileCityLabel, addressCountry: "IL" } } : {}),
-    ...(profileReviewCount > 0 && profileAvgRating !== null ? {
-      aggregateRating: { "@type": "AggregateRating", ratingValue: Number(profileAvgRating.toFixed(1)), reviewCount: profileReviewCount },
-    } : {}),
+    "@graph": [
+      {
+        "@type": ["LocalBusiness", "ProfessionalService"],
+        "@id": `${profileCanonical}#business`,
+        name: f.businessName || f.name,
+        description: profileDescription,
+        url: profileCanonical,
+        inLanguage: "he",
+        ...(profileImageAbs ? { image: profileImageAbs } : {}),
+        ...(f.phone ? { telephone: f.phone } : {}),
+        ...(profileCityLabel ? { address: { "@type": "PostalAddress", addressLocality: profileCityLabel, addressCountry: "IL" } } : {}),
+        ...(profileServiceTypes.length ? { serviceType: profileServiceTypes, knowsAbout: profileServiceTypes } : {}),
+        ...(profileAreas.length ? { areaServed: profileAreas } : {}),
+        ...(profileSameAs.length ? { sameAs: profileSameAs } : {}),
+        ...(dealVisibleToCustomers(f) && f.dealText ? { makesOffer: { "@type": "Offer", name: "הטבה ללקוחות SheCan", description: clip(String(f.dealText), 200) } } : {}),
+        ...(profileReviewCount > 0 && profileAvgRating !== null ? {
+          aggregateRating: { "@type": "AggregateRating", ratingValue: Number(profileAvgRating.toFixed(1)), reviewCount: profileReviewCount, bestRating: 5, worstRating: 1 },
+        } : {}),
+        ...(profileReviewsLd.length ? { review: profileReviewsLd } : {}),
+        parentOrganization: { "@type": "Organization", name: "SheCan", url: `${getOrigin(req)}/` },
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "דף הבית", item: `${getOrigin(req)}/` },
+          { "@type": "ListItem", position: 2, name: catName(d, f.categoryId), item: `${getOrigin(req)}/search?category=${encodeURIComponent(f.categoryId)}` },
+          { "@type": "ListItem", position: 3, name: f.businessName || f.name, item: profileCanonical },
+        ],
+      },
+    ],
   };
   sendHtml(res, 200, page({
     title: profileTitle, session: ctx.session, body, query,
@@ -3790,7 +3872,26 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   </div>`}
   </div>
   `;
-  sendHtml(res, 200, page({ title: l.businessName, session: ctx.session, body, query }));
+  const lsCanonical = `${getOrigin(req)}/freelancer/${f.id}/listing/${l.id}`;
+  const lsCat = catName(d, l.categoryId);
+  const lsCity = f.cityId ? cityName(d, f.cityId) : "";
+  const lsDesc = clip(String(l.description || "").trim(), 160) || `${l.businessName} - ${lsCat}${lsCity ? ` ב${lsCity}` : ""}. מצאי עוד עצמאיות ב-SheCan.`;
+  const lsImgSrc = !NF && (l.logoDataUri || (l.galleryPhotos && l.galleryPhotos[0]) || f.logoDataUri) ? imgSrc(l.logoDataUri || (l.galleryPhotos && l.galleryPhotos[0]) || f.logoDataUri) : null;
+  const lsImgAbs = lsImgSrc ? (/^https?:/i.test(lsImgSrc) ? lsImgSrc : `${getOrigin(req)}${lsImgSrc}`) : null;
+  sendHtml(res, 200, page({
+    title: `${l.businessName} - ${lsCat}${lsCity ? ` ב${lsCity}` : ""}`, session: ctx.session, body, query,
+    description: lsDesc, canonicalUrl: lsCanonical, ogImage: lsImgAbs || undefined,
+    jsonLd: NF ? undefined : {
+      "@context": "https://schema.org",
+      "@type": ["LocalBusiness", "ProfessionalService"],
+      name: l.businessName, description: lsDesc, url: lsCanonical, inLanguage: "he",
+      ...(lsImgAbs ? { image: lsImgAbs } : {}),
+      ...(f.phone ? { telephone: f.phone } : {}),
+      ...(lsCity ? { address: { "@type": "PostalAddress", addressLocality: lsCity, addressCountry: "IL" } } : {}),
+      serviceType: [lsCat].filter((x) => x && x !== "-"),
+      parentOrganization: { "@type": "Organization", name: "SheCan", url: `${getOrigin(req)}/` },
+    },
+  }));
 });
 
 // הגנה מפני שליחה כפולה (לחיצה כפולה על "שליחה", או לחיצה חוזרת כשהשרת איטי/מתעורר) - אם אותה שולחת כבר
@@ -7537,7 +7638,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
 
 route("GET", "/logout", async (req, res, params, query, ctx) => {
   if (ctx.sid) auth.destroySession(ctx.sid);
-  redirect(res, "/", clearCookie);
+  redirect(res, `/?ok=${encodeURIComponent("התנתקת בהצלחה. נשמח לראות אותך שוב 💗")}`, clearCookie);
 });
 
 // ----- Customer account -----
@@ -7699,6 +7800,7 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
   ${referralPopupHtml}
   ${dealReportReminderPopupHtml}
   <h1 class="section-title">היי ${esc(customer.name)} <span style="color:var(--danger);">♥</span></h1>
+  <div style="text-align:center;margin:-8px 0 14px;"><a class="btn btn-small btn-outline" href="/logout">🚪 התנתקות מהחשבון</a></div>
 
   <div class="panel" id="account-profile-section" style="max-width:520px;margin:0 auto;scroll-margin-top:90px;">
     <h3>הפרטים שלך</h3>
@@ -7998,6 +8100,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   ${welcomePopupHtml}
   ${dealReminderPopupHtml}
   <h1 class="section-title">היי ${esc(f.name.split(" ")[0])}, בואי נעדכן קצת</h1>
+  <div style="text-align:center;margin:-8px 0 14px;"><a class="btn btn-small btn-outline" href="/logout">🚪 התנתקות מהחשבון</a></div>
   ${hiddenDealNoticeHtml}
 
   <p class="muted" style="text-align:center;max-width:640px;margin:0 auto 20px;">כעצמאית יש לך גם אופציה להירשם גם כלקוחה - שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים.</p>
@@ -14404,15 +14507,183 @@ route("GET", "/signature.svg", async (req, res) => {
   res.end(SC_SIGNATURE_SVG);
 });
 
+// ===================================================================================
+// הכנה לחיפוש מבוסס בינה מלאכותית (GEO/AEO, 2026-11) - ר' גם llms.txt / llms-full.txt / sitemap.xml /
+// /faq / ה-JSON-LD בעמודי הבית, החיפוש והפרופיל. כל עוד searchEngineVisible כבוי (מתג בניהול) הכל
+// נשאר חסום כמו קודם; כשהוא דלוק, גם הסורקים של מנועי ה-AI (ChatGPT, Claude, Perplexity, גוגל
+// Gemini/AI Overviews, אפל, אמזון ועוד) מקבלים הרשאה מפורשת - חוץ מהאזורים הפרטיים (ניהול, אזור
+// אישי, כניסה).
+// ===================================================================================
+const SEO_AI_CRAWLERS = ["Googlebot", "Bingbot", "GPTBot", "OAI-SearchBot", "ChatGPT-User", "ClaudeBot", "Claude-SearchBot", "Claude-User",
+  "PerplexityBot", "Perplexity-User", "Google-Extended", "Applebot", "Applebot-Extended", "Amazonbot", "DuckAssistBot", "meta-externalagent", "CCBot"];
+const SEO_PRIVATE_PATHS = ["/admin", "/account", "/freelancer-dashboard", "/login", "/logout", "/signup", "/forgot-password", "/reset-password", "/support", "/favorite", "/api/"];
+
 route("GET", "/robots.txt", async (req, res, params, query, ctx) => {
   const d = db.load();
-  const txt = mode.isNetfree()
-    ? (mode.indexable() ? `User-agent: *\nAllow: /\nSitemap: ${getOrigin(req)}/sitemap.xml\n` : "User-agent: *\nDisallow: /\n")
-    : d.settings.searchEngineVisible
-    ? "User-agent: *\nAllow: /\nSitemap: https://shecan.co.il/sitemap.xml\n"
-    : "User-agent: *\nDisallow: /\n";
+  const origin = getOrigin(req);
+  let txt;
+  if (mode.isNetfree()) {
+    txt = mode.indexable() ? `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n` : "User-agent: *\nDisallow: /\n";
+  } else if (d.settings.searchEngineVisible) {
+    const rules = SEO_PRIVATE_PATHS.map((x) => `Disallow: ${x}`).join("\n");
+    txt = ["*"].concat(SEO_AI_CRAWLERS).map((ua) => `User-agent: ${ua}\nAllow: /\n${rules}`).join("\n\n")
+      + `\n\nSitemap: ${origin}/sitemap.xml\n`;
+  } else {
+    txt = "User-agent: *\nDisallow: /\n";
+  }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
   res.end(txt);
+});
+
+// נתוני SEO משותפים: אילו שילובי תחום+עיר / תת-תחום / עיר באמת יש בהם לפחות עצמאית אחת מאושרת
+// (רק עמודים עם תוצאות נכנסים למפת האתר ולקישורים הפנימיים - לא עמודים ריקים).
+function seoPublicFreelancers(d) {
+  return d.freelancers.filter((f) => f.status === "approved" && f.active !== false);
+}
+function seoCombos(d) {
+  const fl = seoPublicFreelancers(d);
+  const catCity = [], catSub = [], cityOnly = [], catCounts = {};
+  d.categories.forEach((c) => {
+    const inCat = fl.filter((f) => freelancerMatchesCategory(f, c.id));
+    catCounts[c.id] = inCat.length;
+    if (!inCat.length) return;
+    const byCity = {};
+    inCat.forEach((f) => { if (f.cityId) byCity[f.cityId] = (byCity[f.cityId] || 0) + 1; });
+    Object.keys(byCity).forEach((cid) => { if (d.cities.some((x) => x.id === cid)) catCity.push({ cat: c.id, city: cid, count: byCity[cid] }); });
+    (c.subcategories || []).forEach((sc) => {
+      const n = inCat.filter((f) => freelancerSubcatMatches(f, sc.id)).length;
+      if (n) catSub.push({ cat: c.id, sub: sc.id, count: n });
+    });
+  });
+  const byCity2 = {};
+  fl.forEach((f) => { if (f.cityId) byCity2[f.cityId] = (byCity2[f.cityId] || 0) + 1; });
+  Object.keys(byCity2).forEach((cid) => { if (d.cities.some((x) => x.id === cid)) cityOnly.push({ city: cid, count: byCity2[cid] }); });
+  return { catCity, catSub, cityOnly, catCounts };
+}
+function seoCountLabel(n) { return n === 1 ? "עצמאית אחת" : `${n} עצמאיות`; }
+function seoMdText(x) { return String(x || "").replace(/[\[\]\r\n]+/g, " ").replace(/\s+/g, " ").trim(); }
+function seoFreelancerLine(d, f, origin) {
+  const name = seoMdText(f.businessName || f.name);
+  const cat = seoMdText(subcatNames(d, f.categoryId, f.subcategoryIds) || catName(d, f.categoryId));
+  const city = f.cityId ? cityName(d, f.cityId) : "";
+  const where = [city, f.offersOnline ? "שירות אונליין" : "", f.offersHomeVisit ? "הגעה עד הבית" : ""].filter(Boolean).join(", ");
+  const rawDesc = seoMdText(f.description);
+  const desc = rawDesc.length > 220 ? clip(rawDesc, 220).replace(/\s+\S*$/, "") + "…" : rawDesc;
+  const deal = dealVisibleToCustomers(f) && f.dealText ? ` הטבה ללקוחות SheCan: ${clip(seoMdText(f.dealText), 100)}.` : "";
+  return `- [${name}](${origin}/freelancer/${encodeURIComponent(f.id)}): ${cat}${where ? ` · ${where}` : ""}.${desc ? ` ${desc}${/[.!?…]$/.test(desc) ? "" : "."}` : ""}${deal}`;
+}
+const SEO_FAQ_FIXED = {
+  what: "SheCan היא קהילה ומדריך עסקים של עצמאיות בישראל. כל עצמאית מפרסמת כרטיסיית עסק עם התחום, העיר, תיאור, ביקורות ולעיתים הטבה בלעדית ללקוחות SheCan, ואפשר לחפש ולמצוא אותה לפי תחום ועיר.",
+  find: "נכנסים לעמוד החיפוש, בוחרים תחום (ותת-תחום) ועיר, ומקבלים את כל העצמאיות המתאימות. אפשר לסנן גם לפי שירות אונליין, הגעה עד הבית, עצמאיות עם הטבה, או עצמאיות קרובות אליי, ולמיין לפי פופולריות, הטבות או דירוג.",
+  contact: "בכרטיסיית העסק אפשר ללחוץ לחיוג או לוואטסאפ (כשהעצמאית הוסיפה מספר), לשלוח לה הודעה ישירה דרך האתר אחרי התחברות כלקוחה, ולפתוח את האינסטגרם או תיק העבודות שלה.",
+  deal: "עצמאיות רבות ב-SheCan מציעות הטבה בלעדית ללקוחות הקהילה. ההטבה מופיעה בכרטיסיית העסק, ואת כל ההטבות אפשר לראות בעמוד ההטבות באתר.",
+  trust: "כל עצמאית שנרשמת עוברת בדיקה ואישור ידני של SheCan לפני שהיא עולה לאתר. לקוחות יכולות להשאיר המלצות ודירוג על עצמאיות, ואפשר לדווח על המלצה שנראית לא תקינה.",
+  join: "עצמאית שרוצה לפרסם את העסק שלה נרשמת בעמוד ההצטרפות (join) באתר. פרטים על ההרשמה ועל מסלולי הפרסום מופיעים בעמוד \"איך זה עובד\".",
+  support: "אפשר לפנות אלינו דרך עמוד יצירת הקשר באתר, או דרך כפתור התמיכה הצף בפינת המסך.",
+};
+function seoFaqItems(d) {
+  const { catCounts, cityOnly } = seoCombos(d);
+  const catList = d.categories.filter((c) => catCounts[c.id]).map((c) => c.name);
+  const cityList = cityOnly.slice().sort((a, b) => b.count - a.count).map((x) => cityName(d, x.city));
+  const items = [
+    { q: "מה זה SheCan?", a: SEO_FAQ_FIXED.what },
+    { q: "איך מוצאים עצמאית בתחום ובעיר שמתאימים לי?", a: SEO_FAQ_FIXED.find },
+  ];
+  if (catList.length) items.push({ q: "באילו תחומים יש עצמאיות ב-SheCan?", a: `נכון להיום יש ב-SheCan עצמאיות בתחומים: ${catList.join(", ")}.` });
+  if (cityList.length) items.push({ q: "באילו ערים יש עצמאיות ב-SheCan?", a: `יש עצמאיות המופיעות ב-SheCan בערים: ${cityList.join(", ")}. חלקן מציעות גם שירות אונליין או הגעה עד הבית.` });
+  items.push({ q: "איך יוצרים קשר עם עצמאית?", a: SEO_FAQ_FIXED.contact });
+  items.push({ q: "מה זו הטבה בלעדית ב-SheCan?", a: SEO_FAQ_FIXED.deal });
+  items.push({ q: "האם אפשר לסמוך על העצמאיות והביקורות באתר?", a: SEO_FAQ_FIXED.trust });
+  items.push({ q: "איך מפרסמים את העסק שלי ב-SheCan?", a: SEO_FAQ_FIXED.join });
+  items.push({ q: "איך פונים לצוות SheCan?", a: SEO_FAQ_FIXED.support });
+  return items;
+}
+
+// אימות בעלות ל-Google Search Console (קובץ HTML) - הקובץ שגוגל מבקשת להעלות לשורש האתר. חשוב להשאיר אותו
+// כאן גם אחרי שהאימות הצליח, אחרת האימות מתבטל.
+route("GET", "/google75cbd4341ce6d118.html", async (req, res) => {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end("google-site-verification: google75cbd4341ce6d118.html");
+});
+
+route("GET", "/llms.txt", async (req, res, params, query, ctx) => {
+  if (mode.isNetfree()) return sendHtml(res, 404, "Not found");
+  const d = db.load();
+  const origin = getOrigin(req);
+  const { catCounts, cityOnly } = seoCombos(d);
+  const total = seoPublicFreelancers(d).length;
+  const lines = [];
+  lines.push("# SheCan", "");
+  lines.push(`> SheCan (שיקן) היא קהילה ומדריך עסקים בעברית של עצמאיות בישראל: ${total} עסקים של עצמאיות מכל התחומים, עם חיפוש לפי תחום ועיר, ביקורות של לקוחות והטבות בלעדיות.`);
+  lines.push(`> SheCan is a Hebrew-language directory and community of women freelancers and small-business owners in Israel. Browse businesses by category and city, read customer reviews, and contact each freelancer directly.`, "");
+  lines.push("## עמודים מרכזיים", "");
+  lines.push(`- [חיפוש עצמאיות לפי תחום ועיר](${origin}/search): הדרך הראשית למצוא עצמאית מתאימה`);
+  lines.push(`- [הטבות בלעדיות](${origin}/deals): הטבות של עצמאיות ללקוחות SheCan`);
+  lines.push(`- [שאלות נפוצות](${origin}/faq): מה זה SheCan, איך מוצאים עצמאית, איך יוצרים קשר`);
+  lines.push(`- [איך SheCan עובד](${origin}/how-it-works)`);
+  lines.push(`- [הצטרפות עצמאיות](${origin}/join): פרסום עסק חדש באתר`);
+  lines.push(`- [מגזין SheCan](${origin}/magazine)`);
+  lines.push(`- [סיפורי השראה - SheCan Stories](${origin}/stories)`);
+  lines.push(`- [מי אנחנו](${origin}/about)`, "");
+  lines.push("## תחומים", "");
+  d.categories.filter((c) => catCounts[c.id]).forEach((c) => {
+    const subs = (c.subcategories || []).map((x) => x.name).filter(Boolean);
+    lines.push(`- [${seoMdText(c.name)}](${origin}/search?category=${encodeURIComponent(c.id)}): ${seoCountLabel(catCounts[c.id])}${subs.length ? ` · תחומי משנה: ${subs.join(", ")}` : ""}`);
+  });
+  lines.push("", "## ערים", "");
+  cityOnly.slice().sort((a, b) => b.count - a.count).forEach((x) => {
+    lines.push(`- [${seoMdText(cityName(d, x.city))}](${origin}/search?city=${encodeURIComponent(x.city)}): ${seoCountLabel(x.count)}`);
+  });
+  lines.push("", "## רשימה מלאה", "");
+  lines.push(`- [כל העסקים באתר, עם תיאור קצר לכל אחד](${origin}/llms-full.txt)`, "");
+  res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+  res.end(lines.join("\n"));
+});
+
+route("GET", "/llms-full.txt", async (req, res, params, query, ctx) => {
+  if (mode.isNetfree()) return sendHtml(res, 404, "Not found");
+  const d = db.load();
+  const origin = getOrigin(req);
+  const fl = seoPublicFreelancers(d);
+  const lines = [];
+  lines.push("# SheCan - רשימת העסקים המלאה", "");
+  lines.push(`> ${fl.length} עצמאיות מאושרות, מסודרות לפי תחום. כל שורה: שם העסק (קישור לכרטיסייה), תחום, מיקום, תיאור והטבה. פרטי יצירת קשר זמינים בכרטיסיית העסק עצמה. סיכום קצר של האתר: ${origin}/llms.txt`, "");
+  d.categories.forEach((c) => {
+    const inCat = fl.filter((f) => f.categoryId === c.id).sort((a, b) => reviewCountFor(d, b.id) - reviewCountFor(d, a.id));
+    if (!inCat.length) return;
+    lines.push(`## ${seoMdText(c.name)}`, "");
+    inCat.slice(0, 500).forEach((f) => lines.push(seoFreelancerLine(d, f, origin)));
+    lines.push("");
+  });
+  const uncategorized = fl.filter((f) => !d.categories.some((c) => c.id === f.categoryId));
+  if (uncategorized.length) {
+    lines.push("## נוספים", "");
+    uncategorized.slice(0, 200).forEach((f) => lines.push(seoFreelancerLine(d, f, origin)));
+    lines.push("");
+  }
+  res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+  res.end(lines.join("\n"));
+});
+
+route("GET", "/faq", async (req, res, params, query, ctx) => {
+  if (mode.isNetfree()) return sendHtml(res, 404, "Not found");
+  const d = db.load();
+  const origin = getOrigin(req);
+  const items = seoFaqItems(d);
+  const body = `
+  <h1 class="section-title">שאלות נפוצות על SheCan</h1>
+  <p class="muted" style="text-align:center;max-width:640px;margin:0 auto 22px;">כל מה שחשוב לדעת - איך מוצאים עצמאית, איך יוצרים קשר, ואיך מפרסמים עסק.</p>
+  ${items.map((it) => `<div class="panel" style="max-width:720px;margin:0 auto 14px;text-align:right;"><h2 style="margin:0 0 6px;font-size:19px;">${esc(it.q)}</h2><p style="margin:0;">${esc(it.a)}</p></div>`).join("")}
+  <p class="muted" style="text-align:center;margin-top:20px;">לא מצאת תשובה? <a href="/contact" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">בואי נדבר</a> · <a href="/search" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">לחיפוש עצמאיות</a></p>`;
+  sendHtml(res, 200, page({
+    title: "שאלות נפוצות", session: ctx.session, body, query,
+    description: "שאלות ותשובות על SheCan - קהילת העצמאיות בישראל: איך מוצאים עצמאית לפי תחום ועיר, איך יוצרים קשר, איך מפרסמים עסק ומה זו הטבה בלעדית.",
+    canonicalUrl: `${origin}/faq`,
+    jsonLd: {
+      "@context": "https://schema.org", "@type": "FAQPage", inLanguage: "he",
+      mainEntity: items.map((it) => ({ "@type": "Question", name: it.q, acceptedAnswer: { "@type": "Answer", text: it.a } })),
+    },
+  }));
 });
 
 // ----- sitemap.xml (נוסף 2026-08-27, לפי בקשה מפורשת לשיפור הדירוג בגוגל) -----
@@ -14439,7 +14710,20 @@ route("GET", "/sitemap.xml", async (req, res, params, query, ctx) => {
   } else {
     addUrl("/about", "monthly", "0.3");
   }
-  d.categories.forEach((c) => addUrl(`/search?category=${encodeURIComponent(c.id)}`, "weekly", "0.7"));
+  const sitemapCatCounts = NFS ? null : seoCombos(d).catCounts;
+  d.categories.filter((c) => NFS || sitemapCatCounts[c.id]).forEach((c) => addUrl(`/search?category=${encodeURIComponent(c.id)}`, "weekly", "0.7"));
+  if (!NFS) {
+    addUrl("/faq", "monthly", "0.6");
+    addUrl("/how-it-works", "monthly", "0.5");
+    addUrl("/about", "monthly", "0.4");
+    addUrl("/reviews", "weekly", "0.4");
+    if (d.settings.influencersEnabled) addUrl("/influencers", "daily", "0.5");
+    // עמודי "תחום בעיר" / "תת-תחום" / "עיר" - רק שילובים שיש בהם לפחות עצמאית אחת (אלה העמודים שגוגל ומנועי AI מציגים כשמחפשים "מאפרת בחיפה").
+    const combos = seoCombos(d);
+    combos.catCity.forEach((x) => addUrl(`/search?category=${encodeURIComponent(x.cat)}&city=${encodeURIComponent(x.city)}`, "weekly", "0.6"));
+    combos.catSub.forEach((x) => addUrl(`/search?category=${encodeURIComponent(x.cat)}&subcategory=${encodeURIComponent(x.sub)}`, "weekly", "0.6"));
+    combos.cityOnly.forEach((x) => addUrl(`/search?city=${encodeURIComponent(x.city)}`, "weekly", "0.6"));
+  }
   d.freelancers.filter((f) => f.status === "approved" && f.active !== false && (!NFS || mode.freelancerVisible(f))).forEach((f) => {
     addUrl(`/freelancer/${encodeURIComponent(f.id)}`, "weekly", "0.8");
     (f.additionalListings || []).filter((l) => l.status === "approved").forEach((l) => {
@@ -14680,6 +14964,49 @@ function infSearchStrips(d, { category, resultCatIds, customer, nextUrl }) {
   const footerHtml = INF_CSS + (Object.keys(statusData).length ? infViewerHtml(customer, statusData, nextUrl) : "");
   return { strips, footerHtml };
 }
+// פינת הסטטוסים בדף הבית (2026-10) - שני חלקים בשורה אחת, כל אחד עם מקום קבוע משלו כדי
+// שהסטטוסים של העצמאיות לא יקחו את המקום של המשפיעניות (ולהפך): "מהמשפיעניות" (סטטוסים
+// פעילים מ-influencerStatuses, נשלט ע"י influencersEnabled) ו"מהעסקים" (freelancerStatuses,
+// נשלט ע"י freelancerStatusesEnabled). חלק ריק לא מוצג והשני תופס את כל הרוחב. כשהפינה מוצגת
+// הפס הצף של העצמאיות מוסתר בדף הבית (page({home:true})), כדי לא להציג אותו פעמיים.
+function homeStatusesHtml(d, ctx) {
+  if (mode.isNetfree()) return "";
+  const isCustomer = requireRole(ctx.session, "customer");
+  let infHtml = "", infViewer = "";
+  if (d.settings.influencersEnabled) {
+    if (infPruneStatuses(d)) db.save();
+    const infs = infSortFeatured(d, infAll(d).filter((i) => i.active !== false && i.kind === "status" && infActiveStatuses(d, i.id).length));
+    if (infs.length) {
+      const statusData = {};
+      infs.forEach((i) => { statusData[i.id] = { name: i.name, items: infActiveStatuses(d, i.id).map((s) => ({ id: s.id, type: s.type, url: s.url || "", text: s.text || "" })) }; });
+      infHtml = infs.map((inf) => `<button type="button" class="hs-item" onclick="scInfOpen('${esc(inf.id)}')" aria-label="צפייה בסטטוס של ${esc(inf.name)}"><span class="inf-ring">${infAvatarHtml(inf, 58)}</span><span class="hs-name">${esc(inf.name)}${inf.featured ? " ⭐" : ""}</span></button>`).join("");
+      infViewer = infViewerHtml(isCustomer, statusData, "/");
+    }
+  }
+  const frList = statusCirclesList(d);
+  const frHtml = frList.map((x) => `<div class="hs-item">${x.html}<span class="hs-name">${esc(x.name)}</span></div>`).join("");
+  if (!infHtml && !frHtml) return "";
+  const both = !!(infHtml && frHtml);
+  return `${INF_CSS}<style>
+.home-stories{margin:18px auto 6px;max-width:980px;}
+.hs-grid{display:grid;gap:12px;grid-template-columns:${both ? "1fr 1fr" : "1fr"};}
+.hs-col{background:var(--white);border-radius:14px;padding:10px 12px 8px;box-shadow:0 2px 10px rgba(0,0,0,.06);min-width:0;}
+.hs-head{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:14px;margin-bottom:8px;gap:8px;}
+.hs-head a{font-size:12.5px;font-weight:700;color:var(--rose-dark);text-decoration:none;white-space:nowrap;}
+.hs-row{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:thin;}
+.hs-item{display:flex;flex-direction:column;align-items:center;gap:4px;width:70px;flex-shrink:0;background:none;border:0;padding:0;font:inherit;cursor:default;}
+button.hs-item{cursor:pointer;}
+.hs-name{font-size:12px;line-height:1.2;text-align:center;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dark);}
+@media (max-width:720px){.hs-grid{grid-template-columns:1fr;}.home-stories{margin-top:12px;}}
+</style>
+<section class="home-stories" aria-label="סטטוסים">
+  <div class="hs-grid">
+    ${infHtml ? `<div class="hs-col"><div class="hs-head"><span>✨ ${esc(infPageName(d))}</span><a href="/influencers">לכולן ←</a></div><div class="hs-row">${infHtml}</div></div>` : ""}
+    ${frHtml ? `<div class="hs-col"><div class="hs-head"><span>📸 מהעסקים</span></div><div class="hs-row">${frHtml}</div></div>` : ""}
+  </div>
+</section>${infViewer}`;
+}
+
 function infInterleave(cardHtmls, strips, every) {
   const n = cardHtmls.length;
   const e = Math.max(3, every);
@@ -15404,7 +15731,7 @@ const SITE_VISIT_SKIP_PREFIXES = ["/admin", "/freelancer-dashboard", "/influence
 // left the chat open for 10 minutes alone would have added ~200 to the count. The matching admin
 // poll (GET /admin/support/thread/:key/poll) never had this problem - it already starts with
 // "/admin", covered by the prefix list above.
-const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/signature.svg", "/sitemap.xml", "/logout", "/support/poll"]);
+const SITE_VISIT_SKIP_EXACT = new Set(["/manifest.json", "/sw.js", "/robots.txt", "/signature.svg", "/sitemap.xml", "/google75cbd4341ce6d118.html", "/llms.txt", "/llms-full.txt", "/logout", "/support/poll"]);
 
 // Best-effort bot/crawler detection via User-Agent, added per Sapir's request after she noticed
 // a traffic spike with no promotion behind it - the raw totalVisits/dailyVisits counters above
