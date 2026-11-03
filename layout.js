@@ -296,11 +296,11 @@ function netfreeNav(session, opts) {
   let accountLinks = `<a class="nav-link" href="/login">אזור אישי</a><a class="nav-btn" href="/signup">הרשמה כלקוחה</a>`;
   if (session && session.role === "customer") {
     const c = d.customers.find((x) => x.id === session.id);
-    accountLinks = `<a class="nav-link" href="/account" title="אזור אישי">${c ? esc(c.name) : "האזור שלי"}</a><a class="nav-link" href="/logout">יציאה</a>`;
+    accountLinks = `<a class="nav-link" href="/account" title="אזור אישי">${c ? esc(c.name) : "האזור שלי"}</a><a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   } else if (session && session.role === "freelancer") {
-    accountLinks = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי</a><a class="nav-link" href="/logout">יציאה</a>`;
+    accountLinks = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי</a><a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   } else if (session) {
-    accountLinks = `<a class="nav-link" href="/logout">יציאה</a>`;
+    accountLinks = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   }
   const logo = settings.netfreeLogoDataUri
     ? `<img src="${esc(settings.netfreeLogoDataUri)}" alt="${esc(brand)}" class="brand-logo" />`
@@ -358,16 +358,16 @@ function nav(session, opts) {
         <button type="submit" class="nav-link" style="background:none;border:1px solid transparent;cursor:pointer;font:inherit;" title="יש לך הודעות ממתינות כעצמאית">🧵 הודעות כעצמאית${badge(freelancerUnread)}</button>
       </form>` : "";
     rightFirst = `<a class="nav-link" href="/account" title="אזור אישי">${label}${badge(unreadChatCount(session))}</a>`;
-    right = `${switchToFreelancerBtn}<a class="nav-link" href="/logout">יציאה</a>`;
+    right = `${switchToFreelancerBtn}<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   } else if (session && session.role === "freelancer") {
     rightFirst = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי${badge(unreadChatCount(session))}</a>`;
-    right = `<a class="nav-link" href="/logout">יציאה</a>`;
+    right = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   } else if (session && session.role === "influencer") {
     rightFirst = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי</a>`;
-    right = `<a class="nav-link" href="/logout">יציאה</a>`;
+    right = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   } else if (session && session.role === "admin") {
     rightFirst = `<a class="nav-link" href="/admin" title="ניהול">ניהול${pendingBadge(pendingAdminCount())}</a>`;
-    right = `<a class="nav-link" href="/logout">יציאה</a>`;
+    right = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   }
   // לוגו קטן בסרגל + "בס"ד" קטן לידו (במקום פס נפרד); אם אין לוגו מועלה - רק "בס"ד".
   const brandInner = settings.siteLogoDataUri
@@ -1498,6 +1498,14 @@ form .field{margin-bottom:6px;}
 #scCardsGrid[data-view="compact"] .cq-btn span:last-child{display:none;}
 #scCardsGrid[data-view="compact"] .cq-btn{padding:4px 9px;}
 #scCardsGrid[data-view="compact"] .card-fav{width:26px;height:26px;font-size:14px;top:5px;right:5px;}
+.sc-cm-overlay{position:fixed;inset:0;background:rgba(30,24,20,.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:800;display:none;align-items:center;justify-content:center;padding:18px;}
+.sc-cm-overlay.open{display:flex;}
+.sc-cm-box{position:relative;background:var(--white);border-radius:22px;box-shadow:0 18px 60px rgba(0,0,0,.35);width:min(860px,100%);height:min(88vh,900px);overflow:hidden;}
+.sc-cm-box iframe{width:100%;height:100%;border:0;display:block;background:var(--white);}
+.sc-cm-close{position:absolute;top:14px;left:14px;z-index:3;width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.95);box-shadow:0 2px 10px rgba(0,0,0,.2);font-size:17px;font-weight:800;cursor:pointer;color:var(--dark);}
+.sc-cm-full{position:absolute;top:20px;right:16px;z-index:3;background:rgba(255,255,255,.95);box-shadow:0 2px 10px rgba(0,0,0,.2);border-radius:999px;padding:5px 14px;font-size:13px;font-weight:800;color:var(--dark);}
+.sc-cm-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--rose-dark);z-index:1;}
+@media (max-width:720px){.sc-cm-overlay{padding:8px;}.sc-cm-box{height:94vh;border-radius:18px;}}
 .sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--dark);color:#fff;padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:700;z-index:900;box-shadow:0 6px 18px rgba(0,0,0,.25);max-width:90vw;text-align:center;}
 
 .sc-s-sort{font-family:inherit;font-size:13px;padding:4px 8px;border:1px solid #e1d6c9;border-radius:999px;background:var(--white);color:var(--dark);font-weight:700;max-width:160px;}
@@ -1833,27 +1841,32 @@ function sidebarColumnsHtml(d) {
 // אמיתי (עד 3 קבצים שלה מוצגים ברצף אחרי לחיצה על העיגול שלה, ר' scOpenStatusViewer). לא
 // נוגעת בדיסק ולא שומרת - זה רק סינון תצוגה טהור; הניקוי בפועל (מחיקת קבצים שפגו) קורה בצד
 // שרת ב-pruneFreelancerStatuses (server.js), לא כאן.
-function statusRailHtml(d) {
-  if (!d.settings.freelancerStatusesEnabled) return "";
+// רשימת עיגולי הסטטוסים של העצמאיות ({name, html}) - משותפת לפס הצף (statusRailHtml) ולפינת
+// הסטטוסים בדף הבית (homeStatusesHtml ב-server.js), כדי ששניהם יציגו בדיוק אותם נתונים.
+function statusCirclesList(d) {
+  if (!d.settings.freelancerStatusesEnabled) return [];
   const now = Date.now();
   const active = (d.freelancerStatuses || []).filter((s) => new Date(s.expiresAt).getTime() > now);
-  if (!active.length) return "";
+  if (!active.length) return [];
   const byFreelancer = {};
   active.forEach((s) => { (byFreelancer[s.freelancerId] = byFreelancer[s.freelancerId] || []).push(s); });
-  const positionClass = d.settings.freelancerStatusesPosition === "side" ? "sc-status-side" : "sc-status-bottom";
-  const circles = Object.keys(byFreelancer).map((fid) => {
+  return Object.keys(byFreelancer).map((fid) => {
     const f = d.freelancers.find((x) => x.id === fid);
-    if (!f || f.status !== "approved" || f.active === false) return "";
+    if (!f || f.status !== "approved" || f.active === false) return null;
     const items = byFreelancer[fid].slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
       .map((it) => ({ id: it.id, type: it.type, url: it.url, heartCount: it.heartCount || 0 }));
     const name = f.businessName || f.name || "";
     const avatar = f.logoDataUri || f.photoDataUri;
-    return `<div class="sc-status-circle" data-items="${esc(JSON.stringify(items))}" data-name="${esc(name)}" data-freelancer-id="${esc(f.id)}" onclick="scOpenStatusViewer(this)" title="${esc(name)}" role="button" tabindex="0">
+    return { name, html: `<div class="sc-status-circle" data-items="${esc(JSON.stringify(items))}" data-name="${esc(name)}" data-freelancer-id="${esc(f.id)}" onclick="scOpenStatusViewer(this)" title="${esc(name)}" role="button" tabindex="0">
       ${avatar ? `<img src="${esc(avatar)}" alt="${esc(name)}" />` : `<div class="sc-status-circle-fallback">${esc(name.trim().charAt(0) || "?")}</div>`}
-    </div>`;
-  }).filter(Boolean).join("");
-  if (!circles) return "";
-  return `<div class="sc-status-rail ${positionClass}" id="scStatusRail">${circles}</div>`;
+    </div>` };
+  }).filter(Boolean);
+}
+function statusRailHtml(d) {
+  const list = statusCirclesList(d);
+  if (!list.length) return "";
+  const positionClass = d.settings.freelancerStatusesPosition === "side" ? "sc-status-side" : "sc-status-bottom";
+  return `<div class="sc-status-rail ${positionClass}" id="scStatusRail">${list.map((x) => x.html).join("")}</div>`;
 }
 
 // תיאור ברירת מחדל (meta description) לכל עמוד שלא מעביר description משלו - נבחר עמודים
@@ -1903,6 +1916,10 @@ function page({ title, session, body, query, noSidebars, wide, description, cano
     ? `${flashHtml(query)}${body}`
     : `<div class="page-with-sidebars"><div class="main-col">${flashHtml(query)}${body}</div>${sidebarColumnsHtml(d)}</div>`;
   const mainHtml = NF ? mode.sanitizeHtml(mainHtmlRaw) : mainHtmlRaw;
+  // מצב "חלון קופץ" (embed=1): הפרופיל נטען בתוך iframe בחלון הקופץ של הכרטיסים (scOpenCardModal),
+  // לכן מסתירים את כל מסגרת האתר (תפריט, תחתית, עמודות צד, באנרים, כפתורים צפים) ומשאירים רק תוכן.
+  const EMBED = !NF && !!(query && typeof query.get === "function" && query.get("embed") === "1");
+  const embedHead = EMBED ? `<base target="_top" /><meta name="robots" content="noindex, nofollow" /><style>.site-header-sticky,.sc-bottom-nav,.site-footer,.top-banner-wrap,.side-col,.sc-a11y-widget,.sc-support-widget,#scCookieBanner,.sc-bottom-banner,.sc-status-rail,.skip-link,.cat-bar,.sc-install-banner,nav.breadcrumb{display:none !important;}body{padding-bottom:0 !important;}.page-with-sidebars{display:block !important;}.page-with-sidebars .main-col{width:auto;}main .container{padding-top:58px;}</style>` : "";
   return `<!doctype html>
 <html lang="he" dir="rtl">
 <head>
@@ -1943,12 +1960,13 @@ ${NF ? "" : '<link rel="manifest" href="/manifest.json" />'}
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="apple-mobile-web-app-title" content="${esc(siteName)}" />
 <style>${CSS}</style>
+${embedHead}
 ${d.settings.siteBackgroundImageDataUri ? `<style>body{background-image:url('${d.settings.siteBackgroundImageDataUri}');background-size:cover;background-position:top center;background-repeat:no-repeat;background-attachment:fixed;}</style>` : ""}
 </head>
 <body>
 <a href="#main-content" class="skip-link">דלגי לתוכן הראשי</a>
 ${nav(session, { home: !!home, catBar: !!catBar })}
-${favScriptHtml}
+${favScriptHtml}${NF ? "<script>window.SC_NO_CARD_MODAL=1;</script>" : ""}
 <main id="main-content" tabindex="-1">
 <div class="container">
 ${mainHtml}
@@ -1960,7 +1978,7 @@ ${footer()}
   <img id="scLightboxImg" src="" alt="" />
   <button type="button" class="sc-lightbox-nav sc-lightbox-next" id="scLightboxNext" onclick="scLightboxStep(event,-1)" style="display:none;" aria-label="התמונה הבאה">‹</button>
 </div>
-${NF ? "" : statusRailHtml(d)}
+${(NF || home) ? "" : statusRailHtml(d)}
 ${NF ? "" : `<div class="sc-status-viewer-overlay" id="scStatusViewer" onclick="scCloseStatusViewer(event)" role="dialog" aria-label="צפייה בסטטוס" aria-modal="true">
   <button type="button" class="sc-status-viewer-close" onclick="event.stopPropagation();scCloseStatusViewerBtn();" aria-label="סגירה">✕</button>
   <button type="button" class="sc-status-viewer-nav sc-status-viewer-prev" id="scStatusViewerPrev" onclick="event.stopPropagation();scStatusViewerStep(1);" style="display:none;" aria-label="הקודם">›</button>
@@ -3570,6 +3588,54 @@ function scCardGo(e, el){
   if (!h) return;
   if (el.getAttribute("data-blank")) window.open(h, "_blank", "noopener"); else window.location.href = h;
 }
+// ---- חלון קופץ לכרטיסי עסקים (2026-10) - לחיצה על כרטיס בחיפוש/בית/קטגוריה פותחת את הפרופיל בחלון
+// מעוגל מעל הדף (iframe עם ?embed=1, ר' EMBED ב-page()) במקום לעבור לעמוד אחר. קישור הכרטיס עצמו
+// נשאר רגיל (קליק אמצעי / Ctrl / פתיחה בלשונית חדשה עובדים כרגיל). כפתור "חזרה" של הדפדפן/טלפון
+// סוגר את החלון ולא יוצא מהדף. לא פעיל בתוך החלון עצמו (כדי לא לפתוח חלון בתוך חלון).
+var scCardModalOpen = false;
+function scOpenCardModal(href, fromPop){
+  var ov = document.getElementById("scCardModal");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "scCardModal"; ov.className = "sc-cm-overlay";
+    ov.setAttribute("role", "dialog"); ov.setAttribute("aria-modal", "true"); ov.setAttribute("aria-label", "פרופיל עסק");
+    ov.innerHTML = '<div class="sc-cm-box"><button type="button" class="sc-cm-close" aria-label="סגירה">✕</button><a class="sc-cm-full" id="scCmFull" href="#">לדף המלא ↗</a><div class="sc-cm-loading" id="scCmLoading">טוענת…</div><iframe id="scCmFrame" title="פרופיל עסק"></iframe></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener("click", function(e){ if (e.target === ov) scCloseCardModal(); });
+    ov.querySelector(".sc-cm-close").addEventListener("click", function(){ scCloseCardModal(); });
+    document.getElementById("scCmFrame").addEventListener("load", function(){ var l = document.getElementById("scCmLoading"); if (l) l.style.display = "none"; });
+  }
+  var sep = href.indexOf("?") === -1 ? "?" : "&";
+  var fr = document.getElementById("scCmFrame");
+  document.getElementById("scCmLoading").style.display = "block";
+  fr.src = href + sep + "embed=1";
+  document.getElementById("scCmFull").setAttribute("href", href);
+  ov.classList.add("open");
+  document.documentElement.style.overflow = "hidden";
+  scCardModalOpen = true;
+  if (!fromPop) { try { history.pushState({ scCardModal: 1 }, ""); } catch (e) {} }
+}
+function scCloseCardModal(fromPop){
+  var ov = document.getElementById("scCardModal");
+  if (!ov || !scCardModalOpen) return;
+  ov.classList.remove("open");
+  document.getElementById("scCmFrame").src = "about:blank";
+  document.documentElement.style.overflow = "";
+  scCardModalOpen = false;
+  if (!fromPop) { try { if (history.state && history.state.scCardModal) history.back(); } catch (e) {} }
+}
+window.addEventListener("popstate", function(){ if (scCardModalOpen) scCloseCardModal(true); });
+document.addEventListener("keydown", function(e){ if (e.key === "Escape" && scCardModalOpen) scCloseCardModal(); });
+document.addEventListener("click", function(e){
+  if (window.self !== window.top || window.SC_NO_CARD_MODAL) return;
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  var a = e.target && e.target.closest ? e.target.closest("a.card") : null;
+  if (!a) return;
+  var h = a.getAttribute("href") || "";
+  if (!/^\\/freelancer\\/[^\\/?#]+(\\/listing\\/[^\\/?#]+)?$/.test(h)) return;
+  e.preventDefault();
+  scOpenCardModal(h);
+});
 function scToast(msg){
   var t = document.createElement("div");
   t.className = "sc-toast"; t.setAttribute("role", "status"); t.textContent = msg;
@@ -3674,4 +3740,4 @@ ${NF ? "" : `<div class="sc-support-widget sc-support-collapsed">
 </html>`;
 }
 
-module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE };
+module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE, statusCirclesList };
