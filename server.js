@@ -122,6 +122,16 @@ const whatsappIconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="#
 // instead of crashing, so the site keeps working while email isn't configured.
 // `attachments` (optional) is Resend's own format: [{ filename, content: <base64 string> }] -
 // used for the join/review QR images on freelancer approval (see /admin/freelancer/:id/approve).
+// גרסת טקסט פשוט של המייל (multipart) - מייל HTML בלבד, בלי גרסת טקסט, הוא אחד הדברים שמגדילים סיכוי לספאם.
+function emailHtmlToText(html) {
+  return String(html || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (m, href, txt) => { const t = txt.replace(/<[^>]+>/g, "").trim(); return t && t !== href ? `${t} (${href})` : href; })
+    .replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|h[1-6]|li|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
 async function sendEmail(to, subject, html, attachments) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL || "SheCan <onboarding@resend.dev>";
@@ -130,7 +140,10 @@ async function sendEmail(to, subject, html, attachments) {
     return { ok: false, reason: "not_configured" };
   }
   try {
-    const payload = { from, to, subject, html };
+    const payload = { from, to, subject, html, text: emailHtmlToText(html) };
+    // כתובת למענה (Reply-To) - אם הוגדר מייל יצירת קשר בניהול. מייל עם כתובת מענה אמיתית וגם גרסת טקסט
+    // נראה פחות כמו "ספאם" לספקי המייל (Gmail וכו').
+    try { const rt = (db.load().settings.contactEmail || "").trim(); if (rt) payload.reply_to = rt; } catch (e) {}
     if (attachments && attachments.length) payload.attachments = attachments;
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -3624,6 +3637,12 @@ route("GET", "/freelancer/:id", async (req, res, params, query, ctx) => {
   const dealBlockHtml = dealVisibleToCustomers(f) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(f.dealText || ""))}
+      ${(f.dealCode && NF) ? (
+        !mode.accountsEnabled() ? ""
+          : !isCustomer
+          ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
+          : couponGated ? "" : `<div style="margin-top:8px;font-weight:800;">קוד קופון: <span dir="ltr" style="background:var(--cream);border-radius:8px;padding:3px 10px;">${esc(f.dealCode)}</span></div>`
+      ) : ""}
       ${(f.dealCode && !NF) ? (
         !isCustomer
           ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
@@ -3818,6 +3837,12 @@ route("GET", "/freelancer/:id/listing/:lid", async (req, res, params, query, ctx
   const dealBlockHtml = dealVisibleToCustomers(l) ? `
     <div class="deal-box deal-box-compact">
       ${detailLine("🎁", esc(l.dealText || ""))}
+      ${(l.dealCode && NF) ? (
+        !mode.accountsEnabled() ? ""
+          : !isCustomer
+          ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
+          : couponGated ? "" : `<div style="margin-top:8px;font-weight:800;">קוד קופון: <span dir="ltr" style="background:var(--cream);border-radius:8px;padding:3px 10px;">${esc(l.dealCode)}</span></div>`
+      ) : ""}
       ${(l.dealCode && !NF) ? (
         !isCustomer
           ? `<a class="btn btn-small" style="margin-top:8px;display:inline-block;" href="${loginUrl}">התחברי כדי לצפות בקוד הקופון</a>`
@@ -7290,6 +7315,25 @@ function safeNextUrl(next) {
 // so whatever she already typed (role + email - never the password, for security) stays filled
 // in and she can just fix the one thing that was wrong - same pattern as joinFormBody/join.
 function loginFormBody({ next, roleParam, emailPrefill }) {
+  // בנטפרי: כניסה ללקוחות ולעצמאיות (בלי "מנהלת") - ההרשמה/הכניסה של לקוחות נשארת, רק הטקסטים הותאמו (ר' signupFormBody).
+  if (mode.isNetfree()) {
+    return `
+  <h1 class="section-title">שמחות לראות אותך שוב</h1>
+  <form class="panel" method="post" action="/login" style="max-width:420px;margin:0 auto;">
+    ${next ? `<input type="hidden" name="next" value="${esc(next)}" />` : ""}
+    <label>מי את?
+    <select name="role">
+      <option value="customer" ${roleParam !== "freelancer" ? "selected" : ""}>לקוחה</option>
+      <option value="freelancer" ${roleParam === "freelancer" ? "selected" : ""}>עצמאית</option>
+    </select></label>
+    <label>מייל<input type="email" name="email" value="${esc(emailPrefill || "")}" required /></label>
+    <label>סיסמה<input type="password" name="password" required /></label>
+    <button class="btn" style="margin-top:16px;width:100%;" type="submit">כניסה</button>
+  </form>
+  <p class="muted" style="text-align:center;margin-top:14px;"><a href="/forgot-password">שכחת סיסמה?</a></p>
+  <p class="muted" style="text-align:center;margin-top:6px;">עוד לא איתנו? <a href="/signup">עדיין לא נרשמתי</a> או <a href="/join">יש לי עסק</a></p>
+  `;
+  }
   return `
   <h1 class="section-title">שמחות לראות אותך שוב</h1>
   <form class="panel" method="post" action="/login" style="max-width:420px;margin:0 auto;">
@@ -7323,6 +7367,7 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
   const password = body.get("password");
   const next = safeNextUrl(body.get("next"));
   const d = db.load();
+  if (mode.isNetfree() && role !== "freelancer" && role !== "customer") return redirect(res, "/login");
   let user, list;
   if (role === "customer") list = d.customers;
   else if (role === "freelancer") list = d.freelancers;
@@ -7457,6 +7502,36 @@ route("GET", "/verify-email", async (req, res, params, query, ctx) => {
 // stays filled in - same pattern as loginFormBody/joinFormBody above.
 function signupFormBody(d, { refId, referrer, prefill }) {
   const p = prefill || {};
+  // בנטפרי: תיאור מצומצם - רק מה שבאמת קיים שם (צפייה בקודי קופון), בלי הזירה/מגזין/המלצות/מועדפות/הודעות/הפניות/התראות.
+  if (mode.isNetfree()) {
+    return `
+  <h1 class="section-title">הרשמה</h1>
+  <div style="max-width:520px;margin:0 auto;text-align:center;font-size:15px;color:var(--gray);">
+    <p>הרשמה קצרה, ואחריה אפשר לצפות בקודי הקופון וההטבות של העסקים שמופיעים באתר.</p>
+  </div>
+  <form class="panel" method="post" action="/signup" style="max-width:420px;margin:24px auto 0;">
+    <input type="hidden" name="ref" value="" />
+    <div style="position:absolute;left:-9999px;top:-9999px;" aria-hidden="true">
+      <label>השאירי שדה זה ריק<input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+    </div>
+    <label>שם מלא<input type="text" name="name" value="${esc(p.name || "")}" required /></label>
+    <label>מייל<input type="email" name="email" value="${esc(p.email || "")}" required /></label>
+    <label>בחרי סיסמה<input type="password" name="password" required /></label>
+    <label>מגדר
+    <select name="gender" required>
+      <option value="">בחרי...</option>
+      <option value="female" ${p.gender === "female" ? "selected" : ""}>אישה</option>
+      <option value="male" ${p.gender === "male" ? "selected" : ""}>גבר</option>
+    </select></label>
+    ${prefill ? `<p class="muted" style="font-size:13px;">שימי לב - מסיבות אבטחה צריך להקליד את הסיסמה מחדש, שאר הפרטים שמילאת נשמרו.</p>` : ""}
+    <label style="display:flex;align-items:flex-start;gap:8px;font-weight:600;margin-top:14px;background:var(--cream);border-radius:8px;padding:10px 12px;">
+      <input type="checkbox" name="publicVisibilityConsent" value="1" ${p.publicVisibilityConsent ? "checked" : ""} required style="width:auto;margin-top:3px;" />
+      <span>אני מאשרת את <a href="/terms">התקנון</a> ו<a href="/privacy">מדיניות הפרטיות</a>.</span>
+    </label>
+    <button class="btn" style="margin-top:16px;width:100%;" type="submit">הרשמה</button>
+  </form>
+  `;
+  }
   return `
   <h1 class="section-title">ההרשמה לוקחת דקה!</h1>
   <div style="max-width:520px;margin:0 auto;text-align:center;font-size:15px;color:var(--gray);">
@@ -7796,6 +7871,25 @@ route("GET", "/account", async (req, res, params, query, ctx) => {
     .slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .map((x) => ({ ...x, freelancer: d.freelancers.find((f) => f.id === x.freelancerId) }));
 
+  if (mode.isNetfree()) {
+    const nfAccBody = `
+  <h1 class="section-title">היי ${esc(customer.name)}</h1>
+  <div style="text-align:center;margin:-8px 0 14px;"><a class="btn btn-small btn-outline" href="/logout">🚪 התנתקות מהחשבון</a></div>
+  <div class="panel" style="max-width:520px;margin:0 auto 16px;">
+    <h3>הפרטים שלך</h3>
+    <form method="post" action="/account/update-name">
+      <label>השם שלך
+      <input type="text" name="name" maxlength="80" required value="${esc(customer.name)}" /></label>
+      <button class="btn btn-small" style="margin-top:10px;" type="submit">שמירת השם</button>
+    </form>
+  </div>
+  <div class="panel" style="max-width:520px;margin:0 auto;text-align:center;">
+    <h3>קודי קופון</h3>
+    <p class="muted">כשאת מחוברת, קוד הקופון של כל עסק מופיע בכרטיס שלו.</p>
+    <a class="btn btn-small" href="/deals">לעסקים עם הטבה</a>
+  </div>`;
+    return sendHtml(res, 200, page({ title: "האזור שלי", session: ctx.session, body: nfAccBody, query, noSidebars: true }));
+  }
   const body = `
   ${referralPopupHtml}
   ${dealReportReminderPopupHtml}
