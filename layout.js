@@ -229,8 +229,10 @@ function tickerSubcatLabel(d, categoryId, subcategoryIdsOrId) {
 function dealsTickerHtml() {
   const d = db.load();
   const entries = [];
+  const NFT = mode.isNetfree();
   d.freelancers.forEach((f) => {
     if (f.status !== "approved" || f.active === false) return;
+    if (NFT && !mode.freelancerVisible(f)) return;
     // bannerText/bannerHidden: עריכה ידנית מהאדמין (ר' /admin#banner-management) - כשיש טקסט
     // מותאם לבאנר משתמשים בו במקום ב-dealText המקורי, וכש-bannerHidden מסומן מדלגים על ההטבה
     // הזו לגמרי, בלי לגעת בפרופיל של העצמאית עצמה.
@@ -257,8 +259,9 @@ function dealsTickerHtml() {
   // המפריד בין ההטבות - לפי בקשה מפורשת, כשיש לוגו מותאם מועלה (ר' settings.siteLogoDataUri,
   // אותו לוגו בדיוק כמו בסרגל העליון) מציגים אותו מוקטן במקום הנקודה "•"; בלי לוגו מועלה
   // (ברירת המחדל) נשארים עם הנקודה הרגילה, כדי שהבאנר לעולם לא יישאר בלי מפריד כלשהו.
-  const tickerSep = d.settings.siteLogoDataUri
-    ? `<span class="deals-ticker-sep deals-ticker-sep-logo"><img src="${d.settings.siteLogoDataUri}" alt="" /></span>`
+  const tickerLogo = NFT ? d.settings.netfreeLogoDataUri : d.settings.siteLogoDataUri;
+  const tickerSep = tickerLogo
+    ? `<span class="deals-ticker-sep deals-ticker-sep-logo"><img src="${tickerLogo}" alt="" /></span>`
     : `<span class="deals-ticker-sep">•</span>`;
   // כשיש מעט מדי הטבות כדי למלא את רוחב המסך, הבאנר היה משאיר "חור" ריק בזמן שהוא רץ (רואים
   // רגע של רקע ריק לפני שהוא חוזר ללופ). כדי למנוע את זה, חוזרים על הרשימה המלאה כמה "סיבובים"
@@ -276,7 +279,7 @@ function dealsTickerHtml() {
   const durationSeconds = Math.max(50, padded.length * 16);
   return `
   <div class="deals-ticker-wrap" aria-label="הטבות מהעסקים באתר">
-    <div class="deals-ticker-label">הטבות<br>SheCan<br>בלעדיות</div>
+    <div class="deals-ticker-label">${NFT ? "הטבות<br>מהעסקים" : "הטבות<br>SheCan<br>בלעדיות"}</div>
     <div class="deals-ticker-scroll">
     <div class="deals-ticker-track" style="animation-duration:${durationSeconds}s;">
       <div class="deals-ticker-content">${itemsHtml}</div>
@@ -339,7 +342,7 @@ function netfreeFooter() {
 
 function nav(session, opts) {
   opts = opts || {};
-  if (mode.isNetfree()) return netfreeNav(session, opts);
+  const NFN = mode.isNetfree();
   const d = db.load();
   const settings = d.settings;
   // החשבון מחולק לשניים: rightFirst (אזור אישי / שם הלקוחה) יושב בראש עמודת החשבון בצד שמאל של הסרגל, ו-right
@@ -369,21 +372,41 @@ function nav(session, opts) {
     rightFirst = `<a class="nav-link" href="/admin" title="ניהול">ניהול${pendingBadge(pendingAdminCount())}</a>`;
     right = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
   }
+  // גרסת נטפרי (2026-11): אותו סרגל בדיוק כמו באתר הרגיל, רק עם הקישורים שקיימים בנטפרי.
+  const nfAccountsOn = NFN && mode.accountsEnabled();
+  if (NFN) {
+    if (session && session.role === "customer") {
+      const c = d.customers.find((x) => x.id === session.id);
+      rightFirst = `<a class="nav-link" href="/account" title="אזור אישי">${c ? esc(c.name) : "האזור שלי"}</a>`;
+      right = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
+    } else if (session && session.role === "freelancer") {
+      rightFirst = `<a class="nav-link" href="/freelancer-dashboard" title="אזור אישי">האזור שלי</a>`;
+      right = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
+    } else if (session) {
+      rightFirst = "";
+      right = `<a class="nav-link" href="/logout">🚪 התנתקות</a>`;
+    }
+  }
   // לוגו קטן בסרגל + "בס"ד" קטן לידו (במקום פס נפרד); אם אין לוגו מועלה - רק "בס"ד".
-  const brandInner = settings.siteLogoDataUri
-    ? `<img src="${settings.siteLogoDataUri}" alt="SheCan" class="brand-logo" />`
-    : ``;
+  const nfBrand = NFN ? mode.brandName() : "";
+  const brandInner = NFN
+    ? (settings.netfreeLogoDataUri
+        ? `<img src="${esc(settings.netfreeLogoDataUri)}" alt="${esc(nfBrand)}" class="brand-logo" />`
+        : `<span style="font-weight:800;font-size:20px;color:var(--dark);">${esc(nfBrand)}</span>`)
+    : (settings.siteLogoDataUri
+      ? `<img src="${settings.siteLogoDataUri}" alt="SheCan" class="brand-logo" />`
+      : ``);
   const isHome = !!opts.home;
   const pluralName = esc((settings.influencersPageName || "").trim() || "SheCan Muses");
-  const communityBadge = badge(communityUnseenCount(session));
-  const arenaBadge = badge(arenaUnseenPollCount(session));
+  const communityBadge = NFN ? "" : badge(communityUnseenCount(session));
+  const arenaBadge = NFN ? "" : badge(arenaUnseenPollCount(session));
   // אזור אישי בתפריט התחתון/נייד: לפי סוג המשתמשת
   let myHref = "/login", myLabel = "כניסה";
   if (session && session.role === "customer") { myHref = "/account"; myLabel = "האזור שלי"; }
   else if (session && (session.role === "freelancer" || session.role === "influencer")) { myHref = "/freelancer-dashboard"; myLabel = "האזור שלי"; }
   else if (session && session.role === "admin") { myHref = "/admin"; myLabel = "ניהול"; }
   return `
-  ${isHome && settings.topBannerDataUri ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${settings.topBannerDataUri}" alt="SheCan" class="top-banner" /></a></div>` : ""}
+  ${isHome && (NFN ? settings.netfreeTopBannerDataUri : settings.topBannerDataUri) ? `<div class="top-banner-wrap"><a href="/" aria-label="חזרה לדף הבית"><img src="${esc(NFN ? settings.netfreeTopBannerDataUri : settings.topBannerDataUri)}" alt="${NFN ? esc(nfBrand) : "SheCan"}" class="top-banner" /></a></div>` : ""}
   <div class="site-header-sticky" id="scStickyHeader">
     <header class="site-header" role="banner" id="scSiteHeader">
       <div class="container header-inner sc-hdr">
@@ -393,7 +416,7 @@ function nav(session, opts) {
           <a class="nav-link" href="/">דף הבית</a>
           <a class="nav-link" href="/search"><span>חיפוש</span><span aria-hidden="true" style="color:var(--rose-dark);">🔍</span></a>
           <a class="nav-link" href="/deals">הטבות</a>
-          <a class="nav-link" href="/stories">Stories</a>
+          ${NFN ? `<a class="nav-link" href="/about">אודות</a>` : `<a class="nav-link" href="/stories">Stories</a>
           <a class="nav-link nav-link-community" href="/community">קהילה${communityBadge}</a>
           <a class="nav-link nav-link-arena" href="/arena">🥊 הזירה${arenaBadge}</a>
           <a class="nav-link" href="/influencers">${pluralName}</a>
@@ -404,25 +427,25 @@ function nav(session, opts) {
               <a href="/patternmakers">✂️ מודליסטיות</a>
               <a href="/about">מי אנחנו</a>
             </div>
-          </details>
+          </details>`}
         </nav>
-        <nav class="nav-side sc-nav-side" aria-label="חשבון">
+        ${(NFN && !nfAccountsOn) ? "" : `<nav class="nav-side sc-nav-side" aria-label="חשבון">
           <a class="nav-link nav-link-cta sc-cta" href="/join"><span class="sc-cta-full">📣 פרסמי את העסק שלך</span><span class="sc-cta-short">📣 פרסמי עסק</span></a>
           <span class="sc-account-links">${rightFirst}${right}</span>
-        </nav>
+        </nav>`}
       </div>
       <div class="sc-mobile-menu" id="scMobileMenu" hidden>
         <a href="/">🏠 דף הבית</a>
         <a href="/search">🔍 חיפוש</a>
-        <a href="/deals">🎁 הטבות SheCan</a>
-        <a href="/stories">SheCan Stories</a>
+        <a href="/deals">🎁 ${NFN ? "הטבות" : "הטבות SheCan"}</a>
+        ${NFN ? `<a href="/about">אודות</a>` : `<a href="/stories">SheCan Stories</a>
         <a href="/magazine">מגזין SheCan</a>
         <a href="/influencers">${pluralName}</a>
         <a href="/community">👥 קהילת SheCan${communityBadge}</a>
         <a href="/arena">🥊 הזירה${arenaBadge}</a>
-        <a href="/patternmakers">✂️ מודליסטיות</a>
-        <a href="/join">📣 פרסמי את העסק שלך</a>
-        <div class="sc-mobile-menu-account">${rightFirst}${right}</div>
+        <a href="/patternmakers">✂️ מודליסטיות</a>`}
+        ${(NFN && !nfAccountsOn) ? "" : `<a href="/join">📣 פרסמי את העסק שלך</a>
+        <div class="sc-mobile-menu-account">${rightFirst}${right}</div>`}
         <button type="button" class="sc-mobile-menu-a11y" onclick="scToggleMobileMenu(false);scA11yTogglePanel();">♿ נגישות</button>
       </div>
     </header>
@@ -432,8 +455,8 @@ function nav(session, opts) {
   <nav class="sc-bottom-nav" id="scBottomNav" aria-label="ניווט תחתון">
     <a href="/search" data-bn="/search"><span aria-hidden="true">🔍</span>חיפוש</a>
     <a href="/deals" data-bn="/deals"><span aria-hidden="true">🎁</span>הטבות</a>
-    <a href="/community" data-bn="/community"><span aria-hidden="true">👥</span>קהילה</a>
-    <a href="${myHref}" data-bn="${myHref}"><span aria-hidden="true">👤</span>${myLabel}</a>
+    ${NFN ? `<a href="/about" data-bn="/about"><span aria-hidden="true">ℹ️</span>אודות</a>` : `<a href="/community" data-bn="/community"><span aria-hidden="true">👥</span>קהילה</a>`}
+    ${(NFN && !nfAccountsOn) ? "" : `<a href="${myHref}" data-bn="${myHref}"><span aria-hidden="true">👤</span>${myLabel}</a>`}
   </nav>`;
 }
 
@@ -1761,8 +1784,8 @@ function featuredStripHtml(d, opts) {
 
 // ---- סרגל תחומים עם תפריט תתי-תחומים (2026-11-01). בדסקטופ בלבד (במובייל יש כפתורי תחומים בחיפוש) ----
 function catBarHtml(d) {
-  if (mode.isNetfree() || !d.categories.length) return "";
-  const feat = featuredItems(d);
+  if (!d.categories.length) return "";
+  const feat = mode.isNetfree() ? [] : featuredItems(d);
   const VISIBLE = 5;
   const visibleCats = d.categories.slice(0, VISIBLE), moreCats = d.categories.slice(VISIBLE);
   const btn = (c) => `<button type="button" class="cat-btn" data-cat="${esc(c.id)}" aria-expanded="false" aria-controls="catMega-${esc(c.id)}" title="${esc(c.name)}">${esc(c.name)}<span class="cat-caret" aria-hidden="true">▾</span></button>`;

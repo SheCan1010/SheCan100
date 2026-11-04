@@ -2656,31 +2656,26 @@ route("GET", "/deploy-check", async (req, res) => {
 // (מירוצים, סיפורים, מגזין, קהילה...) - הוא נבנה כאן במפורש ולא נגזר מדף הבית הרגיל, כדי
 // שפיצ'רים חדשים בבית הרגיל לעולם לא יגיעו לכאן בטעות.
 function netfreeHomeBody(d) {
-  const brand = mode.brandName();
+  // (2026-11) אותו מראה בדיוק כמו דף הבית הרגיל (כותרת, חיפוש, תחומים, עסקים נבחרים), רק עם מה שקיים בנטפרי.
   const tagline = (d.settings.netfreeTagline || "").trim() || "מצאי עסקים של עצמאיות לפי תחום ועיר";
-  const catTiles = d.categories.map((c) => `<a class="card" href="/search?category=${encodeURIComponent(c.id)}" style="text-align:center;padding:18px 10px;"><div style="font-size:30px;">${categoryIcon(c.name)}</div><h3 class="card-name" style="margin:6px 0 0;">${esc(c.name)}</h3></a>`).join("");
   const eligible = d.freelancers.filter((f) => mode.freelancerVisible(f));
   const byReviews = (a, b) => reviewCountFor(d, b.id) - reviewCountFor(d, a.id);
   const featured = eligible.filter((f) => f.tier === "premium").slice().sort(byReviews)
-    .concat(eligible.filter((f) => f.tier !== "premium").slice().sort(byReviews)).slice(0, 12);
-  const catOptions = d.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+    .concat(eligible.filter((f) => f.tier !== "premium").slice().sort(byReviews)).slice(0, 6);
+  const viewRow = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button></div>`;
   return `
-  <div style="text-align:center;margin:10px 0 24px;">
-    <h1 class="section-title" style="margin-bottom:6px;">${esc(brand)}</h1>
-    <p class="muted" style="font-size:20px;margin:0;">${esc(tagline)}</p>
+  <section class="hero">
+    <p class="hero-sub2">${esc(tagline)}</p>
+  </section>
+  ${searchBarHtml(d, {})}
+  <div class="home-cats">
+  <h2 class="section-title">מה למצוא לך היום?</h2>
+  <div class="cat-grid">
+    ${d.categories.slice(0, 12).map((c) => `<a class="cat-card" href="/search?category=${encodeURIComponent(c.id)}"><span class="cat-icon">${categoryIcon(c.name)}</span>${esc(c.name)}</a>`).join("")}
   </div>
-  <form class="search-box" action="/search" method="get" role="search" aria-label="חיפוש עסקים" style="margin-right:0;margin-left:0;">
-    <div class="search-row">
-      <input type="text" name="q" placeholder="חפשי לפי שם עסק או תחום" autocomplete="off" />
-    </div>
-    <div class="search-row" style="margin-top:10px;">
-      <select name="category"><option value="">כל התחומים</option>${catOptions}</select>
-      <button class="btn" type="submit">חפשי</button>
-    </div>
-  </form>
-  <h2 class="section-title" style="margin-top:30px;">תחומים</h2>
-  <div class="grid">${catTiles}</div>
-  ${featured.length ? `<h2 class="section-title" style="margin-top:30px;">עסקים נבחרים</h2><div class="grid">${featured.map((f) => freelancerCard(f, d)).join("")}</div>` : ""}
+  </div>
+  ${featured.length ? `<h2 class="section-title">קצת מהעסקים שלנו</h2>${viewRow}<div class="grid" id="scCardsGrid" data-view="medium">${featured.map((f) => freelancerCard(f, d)).join("")}</div>` : ""}
+  ${searchBarScriptsHtml(d)}
   `;
 }
 
@@ -2690,7 +2685,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
   if (mode.isNetfree()) {
     const brand = mode.brandName();
     return sendHtml(res, 200, page({
-      title: (d.settings.netfreeTagline || "").trim() || "מדריך עסקים של עצמאיות", session: null, body: netfreeHomeBody(d), query,
+      title: (d.settings.netfreeTagline || "").trim() || "מדריך עסקים של עצמאיות", session: ctx.session, body: netfreeHomeBody(d), query, home: true, catBar: true, wide: true,
       description: (d.settings.netfreeDescription || "").trim() || `${brand} - מדריך עסקים של עצמאיות, לפי תחום ועיר.`,
       canonicalUrl: `${getOrigin(req)}/`,
     }));
@@ -6735,7 +6730,7 @@ route("GET", "/deals", async (req, res, params, query, ctx) => {
       .slice().sort((a, b) => reviewCountFor(d, b.id) - reviewCountFor(d, a.id));
     const cards = withDeal.map((f) => freelancerCard(f, d)).join("");
     const nfBody = `<h1 class="section-title">הטבות</h1><p class="muted" style="text-align:center;">עסקים שמציעים הטבה מיוחדת.</p>${cards ? `<div class="grid">${cards}</div>` : `<p class="muted" style="text-align:center;">עוד אין הטבות פעילות.</p>`}`;
-    return sendHtml(res, 200, page({ title: "הטבות", session: null, body: nfBody, query, canonicalUrl: `${getOrigin(req)}/deals` }));
+    return sendHtml(res, 200, page({ title: "הטבות", session: ctx.session, body: nfBody, query, canonicalUrl: `${getOrigin(req)}/deals` }));
   }
   const withDeals = d.freelancers
     .filter((f) => f.status === "approved" && f.active !== false && dealVisibleToCustomers(f));
@@ -13740,7 +13735,7 @@ route("GET", "/about", async (req, res, params, query, ctx) => {
     const brand = mode.brandName();
     const txt = (d.settings.netfreeAboutText || "").trim() || `${brand} הוא מדריך עסקים של עצמאיות בישראל. אפשר לחפש עסק לפי תחום ועיר, ולפנות אליו ישירות בטלפון או בוואטסאפ.`;
     const nfBody = `<h1 class="section-title">אודות</h1><div class="panel" style="text-align:right;max-width:680px;margin:0 auto;">${renderRichText(txt)}</div>`;
-    return sendHtml(res, 200, page({ title: "אודות", session: null, body: nfBody, query, canonicalUrl: `${getOrigin(req)}/about` }));
+    return sendHtml(res, 200, page({ title: "אודות", session: ctx.session, body: nfBody, query, canonicalUrl: `${getOrigin(req)}/about` }));
   }
   const body = `<h1 class="section-title">מי אנחנו</h1><div class="panel" style="text-align:right;max-width:680px;margin:0 auto;">${renderRichText(d.settings.aboutText)}</div><p class="muted" style="text-align:center;margin-top:18px;">יש לך שאלה או רצית לספר לנו משהו? <a href="/contact" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">בואי נדבר</a> ❤️</p>`;
   sendHtml(res, 200, page({ title: "מי אנחנו", session: ctx.session, body, query }));
@@ -14359,7 +14354,7 @@ route("GET", "/terms", async (req, res, params, query, ctx) => {
   const d = db.load();
   if (mode.isNetfree()) {
     const txt = (d.settings.netfreeTermsText || "").trim() || "האתר הוא מדריך עסקים. האחריות על השירות, המחיר והתנאים היא של בעלת העסק בלבד. השימוש באתר באחריות הגולשת.";
-    return sendHtml(res, 200, page({ title: "תקנון", session: null, body: `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
+    return sendHtml(res, 200, page({ title: "תקנון", session: ctx.session, body: `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
   }
   const body = `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(d.settings.termsText)}</div>`;
   sendHtml(res, 200, page({ title: "תקנון", session: ctx.session, body, query }));
@@ -14369,7 +14364,7 @@ route("GET", "/privacy", async (req, res, params, query, ctx) => {
   const d = db.load();
   if (mode.isNetfree()) {
     const txt = (d.settings.netfreePrivacyText || "").trim() || "האתר אינו דורש הרשמה ואינו אוסף פרטים אישיים מהגולשות. הפרטים המוצגים על כל עסק נמסרו על ידי בעלת העסק.";
-    return sendHtml(res, 200, page({ title: "מדיניות פרטיות", session: null, body: `<h1 class="section-title">מדיניות פרטיות</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
+    return sendHtml(res, 200, page({ title: "מדיניות פרטיות", session: ctx.session, body: `<h1 class="section-title">מדיניות פרטיות</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
   }
   const body = `<h1 class="section-title">מדיניות פרטיות</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(d.settings.privacyPolicyText)}</div>`;
   sendHtml(res, 200, page({ title: "מדיניות פרטיות", session: ctx.session, body, query }));
