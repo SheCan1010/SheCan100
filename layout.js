@@ -443,7 +443,7 @@ function footer() {
   <footer class="site-footer" role="contentinfo">
     <div class="container footer-inner">
       <div>SheCan <span aria-hidden="true" style="color:var(--danger);">♥</span> הבית של העצמאיות בישראל</div>
-      <nav class="footer-links" aria-label="קישורי תחתית"><a href="/about">מי אנחנו</a> · <a href="/how-it-works">איך זה עובד</a> · <a href="/reviews">מה אומרות עלינו</a> · <a href="/contact">דברו איתנו</a> · <a href="/coming-soon">COMING SOON</a> · <a href="/terms">תקנון</a> · <a href="/privacy">מדיניות פרטיות</a> · <a href="/accessibility">הצהרת נגישות</a></nav>
+      <nav class="footer-links" aria-label="קישורי תחתית"><a href="/about">מי אנחנו</a> · <a href="/how-it-works">איך זה עובד</a> · <a href="/faq">שאלות נפוצות</a> · <a href="/reviews">מה אומרות עלינו</a> · <a href="/contact">דברו איתנו</a> · <a href="/coming-soon">COMING SOON</a> · <a href="/terms">תקנון</a> · <a href="/privacy">מדיניות פרטיות</a> · <a href="/accessibility">הצהרת נגישות</a></nav>
     </div>
   </footer>`;
 }
@@ -1520,12 +1520,12 @@ form .field{margin-bottom:6px;}
 /* ===== כרטיסיית עצמאית ממוקדת (2026-11-01) ===== */
 .pf-wrap .profile-detail{max-width:720px;}
 .pf-hero{text-align:right;padding:0 24px 22px;}
-.pf-cover{height:170px;margin:0 -24px;border-radius:16px 16px 0 0;background-size:cover;background-position:center;background-color:#e9ddd0;}
-.pf-cover-plain{height:84px;background:linear-gradient(135deg,#e6d6c4,#f3e9dd 60%,#ead9c6);}
+.pf-cover{height:84px;margin:0 -24px;border-radius:16px 16px 0 0;background-size:cover;background-position:center;background-color:#e9ddd0;}
+.pf-cover-plain{height:64px;background:linear-gradient(135deg,#e6d6c4,#f3e9dd 60%,#ead9c6);}
 .pf-top{display:flex;gap:16px;align-items:flex-start;}
 .pf-top .pf-id{padding-top:10px;}
-.pf-logo-box{position:relative;z-index:3;width:104px;height:78px;margin-top:-40px;background:#fff;border:3px solid #fff;border-radius:16px;display:flex;align-items:center;justify-content:center;padding:4px;overflow:hidden;flex-shrink:0;cursor:zoom-in;box-shadow:0 3px 12px rgba(80,60,40,.25);transform-origin:top right;transition:transform .28s ease,box-shadow .28s ease;}
-@media (hover:hover) and (min-width:721px){.pf-logo-box:hover{transform:scale(2.3);z-index:30;box-shadow:0 12px 34px rgba(80,60,40,.38);}}
+.pf-logo-box{position:relative;z-index:3;width:150px;height:120px;margin-top:-52px;background:#fff;border:3px solid #fff;border-radius:16px;display:flex;align-items:center;justify-content:center;padding:4px;overflow:hidden;flex-shrink:0;cursor:zoom-in;box-shadow:0 3px 12px rgba(80,60,40,.25);transform-origin:top right;transition:transform .28s ease,box-shadow .28s ease;}
+@media (hover:hover) and (min-width:721px){.pf-logo-box:hover{transform:scale(1.7);z-index:30;box-shadow:0 12px 34px rgba(80,60,40,.38);}}
 .pf-logo-box img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;}
 .pf-logo-initials{background:linear-gradient(135deg,var(--rose),var(--cream));color:var(--white);font-size:34px;font-weight:700;cursor:default;}
 .pf-id{min-width:0;flex:1;}
@@ -1559,9 +1559,9 @@ form .field{margin-bottom:6px;}
 @media (max-width:720px){
   .pf-hero{padding:16px 14px;}
   .pf-hero{padding:0 14px 16px;}
-  .pf-cover{height:110px;margin:0 -14px;}
-  .pf-cover-plain{height:64px;}
-  .pf-logo-box{width:84px;height:64px;margin-top:-32px;border-radius:13px;padding:3px;}
+  .pf-cover{height:64px;margin:0 -14px;}
+  .pf-cover-plain{height:52px;}
+  .pf-logo-box{width:112px;height:90px;margin-top:-40px;border-radius:13px;padding:3px;}
   .pf-name{font-size:19px;}
   .pf-actions{display:none;}
   .pf-sticky{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:650;background:#fff;border-top:1px solid #e5ddd0;box-shadow:0 -3px 14px rgba(0,0,0,.12);padding:8px 10px calc(8px + env(safe-area-inset-bottom));gap:8px;}
@@ -1920,13 +1920,14 @@ function page({ title, session, body, query, noSidebars, wide, description, cano
   // לכן מסתירים את כל מסגרת האתר (תפריט, תחתית, עמודות צד, באנרים, כפתורים צפים) ומשאירים רק תוכן.
   const EMBED = !NF && !!(query && typeof query.get === "function" && query.get("embed") === "1");
   const embedHead = EMBED ? `<base target="_top" /><meta name="robots" content="noindex, nofollow" /><style>.site-header-sticky,.sc-bottom-nav,.site-footer,.top-banner-wrap,.side-col,.sc-a11y-widget,.sc-support-widget,#scCookieBanner,.sc-bottom-banner,.sc-status-rail,.skip-link,.cat-bar,.sc-install-banner,nav.breadcrumb{display:none !important;}body{padding-bottom:0 !important;}.page-with-sidebars{display:block !important;}.page-with-sidebars .main-col{width:auto;}main .container{padding-top:58px;}</style>` : "";
-  return `<!doctype html>
+  const pageHtml = `<!doctype html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(title)} | ${esc(siteName)}</title>
-${(NF ? mode.indexable() : searchEngineVisible) ? "" : '<meta name="robots" content="noindex, nofollow" />'}
+${(NF ? mode.indexable() : searchEngineVisible) ? ((NF || EMBED) ? "" : '<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />') : '<meta name="robots" content="noindex, nofollow" />'}
+${NF ? "" : '<link rel="alternate" type="text/markdown" href="/llms.txt" title="SheCan - תקציר לבינה מלאכותית" />'}
 <meta name="description" content="${esc(metaDescription)}" />
 ${canonicalUrl ? `<link rel="canonical" href="${esc(canonicalUrl)}" />` : ""}
 <meta property="og:site_name" content="${esc(siteName)}" />
@@ -3588,6 +3589,7 @@ function scCardGo(e, el){
   if (!h) return;
   if (el.getAttribute("data-blank")) window.open(h, "_blank", "noopener"); else window.location.href = h;
 }
+/*SC_CM_START*/
 // ---- חלון קופץ לכרטיסי עסקים (2026-10) - לחיצה על כרטיס בחיפוש/בית/קטגוריה פותחת את הפרופיל בחלון
 // מעוגל מעל הדף (iframe עם ?embed=1, ר' EMBED ב-page()) במקום לעבור לעמוד אחר. קישור הכרטיס עצמו
 // נשאר רגיל (קליק אמצעי / Ctrl / פתיחה בלשונית חדשה עובדים כרגיל). כפתור "חזרה" של הדפדפן/טלפון
@@ -3636,6 +3638,7 @@ document.addEventListener("click", function(e){
   e.preventDefault();
   scOpenCardModal(h);
 });
+/*SC_CM_END*/
 function scToast(msg){
   var t = document.createElement("div");
   t.className = "sc-toast"; t.setAttribute("role", "status"); t.textContent = msg;
@@ -3738,6 +3741,8 @@ ${NF ? "" : `<div class="sc-support-widget sc-support-collapsed">
 </script>`}
 </body>
 </html>`;
+  // מצב נטפרי: מסירים לגמרי את קוד החלון הקופץ של הכרטיסים (iframe וכו') - הוא לא פעיל שם ולא צריך להופיע בקוד.
+  return NF ? pageHtml.replace(/\/\*SC_CM_START\*\/[\s\S]*?\/\*SC_CM_END\*\//g, "").replace(/\.sc-cm-[a-z-]+[^{]*\{[^}]*\}\n?/g, "") : pageHtml;
 }
 
 module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE, statusCirclesList };
