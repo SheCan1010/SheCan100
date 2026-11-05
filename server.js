@@ -132,6 +132,19 @@ function emailHtmlToText(html) {
     .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
+// הפנייה לתמיכה: באתר הרגיל יש כפתור תמיכה צף בכל עמוד; באתר נטפרי אין, ולכן שם מפנים למייל הקשר.
+// באתר נטפרי מוצג רק הלוגו (בלי תמונת פרופיל ובלי גלריה) - הערה קצרה ליד שדות העלאת תמונות כדי שהטקסט יהיה נכון.
+function nfPhotosNote() {
+  return mode.isNetfree() ? `<p class="muted" style="margin:2px 0 8px;font-size:12.5px;">בגרסה הזו של האתר מוצג רק הלוגו. תמונות שיועלו כאן נשמרות בפרופיל שלך ואינן מוצגות כאן.</p>` : "";
+}
+
+function supportHint() {
+  if (!mode.isNetfree()) return "אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.";
+  let mail = "";
+  try { mail = (db.load().settings.netfreeContactEmail || "").trim(); } catch (e) {}
+  return mail ? `אפשר לפנות אלינו במייל: ${mail}` : "אפשר לפנות להנהלת האתר.";
+}
+
 async function sendEmail(to, subject, html, attachments) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL || "SheCan <onboarding@resend.dev>";
@@ -140,6 +153,12 @@ async function sendEmail(to, subject, html, attachments) {
     return { ok: false, reason: "not_configured" };
   }
   try {
+    // בבקשה שהגיעה מאתר נטפרי - שם המותג במייל הוא שם המותג של נטפרי (ולא "SheCan" הרגיל).
+    if (mode.isNetfree()) {
+      const nfb = mode.brandName();
+      const swap = (t) => String(t).replace(/SheCan(?![A-Za-z0-9]| עסקים)/g, nfb);
+      subject = swap(subject); html = swap(html);
+    }
     const payload = { from, to, subject, html, text: emailHtmlToText(html) };
     // כתובת למענה (Reply-To) - אם הוגדר מייל יצירת קשר בניהול. מייל עם כתובת מענה אמיתית וגם גרסת טקסט
     // נראה פחות כמו "ספאם" לספקי המייל (Gmail וכו').
@@ -159,6 +178,14 @@ async function sendEmail(to, subject, html, attachments) {
     console.warn("[email] send threw", e.message);
     return { ok: false, reason: "send_failed" };
   }
+}
+
+// כתובת האתר של נטפרי (הדומיין הראשון ברשימת netfreeHosts) - לקישורים במיילים שנשלחים מהניהול
+// (מתוך הדומיין הרגיל) לעצמאית/לקוחה שנרשמה דרך נטפרי.
+function netfreeOrigin(req) {
+  const hosts = mode.configuredHosts();
+  const proto = (req && req.headers["x-forwarded-proto"]) || "https";
+  return hosts.length ? `${proto}://${hosts[0]}` : getOrigin(req);
 }
 
 function getOrigin(req) {
@@ -1057,6 +1084,7 @@ function extraListingFormBlock(d, prefix, idx, listing) {
     <input type="file" name="${prefix}Gallery2_${idx}" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="${prefix}Gallery3_${idx}" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="${prefix}Gallery4_${idx}" accept="image/*" />
+    ${nfPhotosNote()}
     <label>ספרי בכמה מילים על התחום הזה (עד 500 תווים)<textarea name="${prefix}Description${idx}" maxlength="500">${esc(l.description || "")}</textarea></label>
     <label>ההטבה בתחום הזה (עד 200 תווים) *<textarea name="${prefix}DealText${idx}" maxlength="200">${esc(l.dealText || "")}</textarea></label>
     <p class="muted" style="margin:-6px 0 0;font-size:13px;">* חובה - בלי הטבה התחום הזה לא יאושר לפרסום.</p>
@@ -1066,8 +1094,8 @@ function extraListingFormBlock(d, prefix, idx, listing) {
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:0;"><input type="checkbox" name="${prefix}OffersOnline${idx}" value="1" ${l.offersOnline ? "checked" : ""} style="width:auto;" /> 💻 נותנת שירות אונליין / דיגיטלית</label>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:6px;"><input type="checkbox" name="${prefix}OffersHomeVisit${idx}" value="1" ${l.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
     <label>קישור לתיק עבודות (לא חובה)<input type="text" name="${prefix}PortfolioUrl${idx}" value="${esc(l.portfolioUrl || "")}" placeholder="https://..." /></label>
-    <label>איזו רמה מתאימה לתחום הזה?
-    <select name="${prefix}Tier${idx}"><option value="basic" ${l.tier === "basic" ? "selected" : ""}>בסיסית</option><option value="premium" ${l.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
+    ${mode.isNetfree() ? "" : `<label>איזו רמה מתאימה לתחום הזה?
+    <select name="${prefix}Tier${idx}"><option value="basic" ${l.tier === "basic" ? "selected" : ""}>בסיסית</option><option value="premium" ${l.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>`}
   `;
 }
 // Reads one extraListingFormBlock's submitted fields (by index) into a listing object, or
@@ -1124,7 +1152,7 @@ function applyExtraListingUpdate(d, body, prefix, listing) {
   listing.offersOnline = body.get(`${prefix}OffersOnline`) === "1";
   listing.offersHomeVisit = body.get(`${prefix}OffersHomeVisit`) === "1";
   listing.portfolioUrl = (body.get(`${prefix}PortfolioUrl`) || "").trim();
-  listing.tier = body.get(`${prefix}Tier`) === "premium" ? "premium" : "basic";
+  if (!mode.isNetfree()) listing.tier = body.get(`${prefix}Tier`) === "premium" ? "premium" : "basic";
 }
 
 // A freelancer who does a few different things can pick extra categories beyond her main
@@ -3064,18 +3092,18 @@ function searchBarHtml(d, o) {
         <input type="text" id="scSearchQ" name="q" value="${esc(o.rawQ || "")}" placeholder="למשל: מאפרת, עורכת וידאו"${o.live ? ' oninput="scLiveFilter()"' : ""} autocomplete="off" role="combobox" aria-expanded="false" aria-controls="scSuggest" aria-autocomplete="list" aria-label="מה את מחפשת?" data-no-draft="1" />
         <div id="scSuggest" class="sc-s-suggest" role="listbox" hidden></div>
       </div>
-      ${NF ? "" : `<div class="sc-s-seg sc-s-seg-loc">
+      <div class="sc-s-seg sc-s-seg-loc">
         <label>📍 איפה?</label>
         ${cityAutocompleteHtml({ fieldName: "from", selectedId: o.fromId, selectedName: o.fromId ? cityName(d, o.fromId) : "", placeholder: "עיר, למשל: רמת גן", ariaLabel: "איפה" })}
-      </div>`}
+      </div>
       <button class="sc-s-gobtn" type="submit">חפשי</button>
     </div>
-    ${NF ? "" : `<p id="scNearNote" class="muted sc-s-note" aria-live="polite"></p>`}
+    <p id="scNearNote" class="muted sc-s-note" aria-live="polite"></p>
     <div class="sc-s-pills" role="group" aria-label="סינון מהיר">
       <label class="sc-s-toggle"><input type="checkbox" id="scWithDealFilter" name="withDeal" value="1" ${o.withDeal ? "checked" : ""}${auto} /><span>🎁 עם הטבה</span></label>
       <label class="sc-s-toggle"><input type="checkbox" id="scHomeVisitFilter" name="homeVisit" value="1" ${o.homeVisit ? "checked" : ""}${auto} /><span>🚗 מגיעה עד הבית</span></label>
-      ${NF ? "" : `<button type="button" class="sc-s-pillbtn" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
-      <select class="sc-s-radius" name="radius" id="scRadius" aria-label="עד כמה רחוק">${SEARCH_RADIUS_CHOICES.map((r) => `<option value="${r}" ${r === radiusSel ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>`}
+      <button type="button" class="sc-s-pillbtn" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
+      <select class="sc-s-radius" name="radius" id="scRadius" aria-label="עד כמה רחוק">${SEARCH_RADIUS_CHOICES.map((r) => `<option value="${r}" ${r === radiusSel ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>
     </div>
     <div class="sc-s-popular" aria-label="חיפושים נפוצים">${popularSearchChipsHtml(d, NF)}</div>
     ${o.extraInner || ""}
@@ -3089,7 +3117,7 @@ function searchBarScriptsHtml(d) {
     subcategoriesOf(d, c.id).forEach((sc) => suggestData.push(["s", `${sc.name} (${c.name})`, `/search?category=${encodeURIComponent(c.id)}&subcategory=${encodeURIComponent(sc.id)}`]));
   });
   const suggestJson = JSON.stringify(suggestData).replace(/</g, "\\u003c");
-  const nearCitiesJson = NF ? "{}" : JSON.stringify(Object.fromEntries(d.cities.filter((c) => CITY_COORDS[c.name]).map((c) => [c.id, [...CITY_COORDS[c.name], c.name]]))).replace(/</g, "\\u003c");
+  const nearCitiesJson = JSON.stringify(Object.fromEntries(d.cities.filter((c) => CITY_COORDS[c.name]).map((c) => [c.id, [...CITY_COORDS[c.name], c.name]]))).replace(/</g, "\\u003c");
   return `
       <script>
       (function () {
@@ -3131,7 +3159,7 @@ function searchBarScriptsHtml(d) {
         document.addEventListener("click", function (e) { if (!box.contains(e.target) && e.target !== input) close(); });
       })();
       </script>
-      ${NF ? "" : `<script>
+      ${false ? "" : `<script>
       var SC_NEAR_CITIES = ${nearCitiesJson};
       function scNearMe() {
         var note = document.getElementById("scNearNote");
@@ -3184,7 +3212,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   const NF = mode.isNetfree();
   // "בסביבה שלי": from = עיר המוצא של הלקוחה (נבחרה ידנית, או נבחרה ע"י כפתור המיקום בדפדפן - הקואורדינטות
   // המדויקות שלה לא מגיעות לשרת, רק מזהה העיר הקרובה אליה). radius = ק"מ (0 = בלי הגבלה). לא פעיל בנטפרי.
-  const fromId = (!NF && d.cities.some((c) => c.id === (query.get("from") || ""))) ? query.get("from") : "";
+  const fromId = d.cities.some((c) => c.id === (query.get("from") || "")) ? query.get("from") : "";
   const fromCoords = fromId ? cityCoords(d, fromId) : null;
   const RADIUS_OPTIONS = [5, 10, 25, 50, 100, 0];
   const radiusRaw = parseInt(query.get("radius"), 10);
@@ -3293,7 +3321,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
     if (subcategory) breadcrumbItems.push({ label: subcatName(d, category, subcategory), href: `/search?category=${category}&subcategory=${subcategory}` });
   }
   // תיבת "חיפוש חכם" (AI) הוסרה מעמוד החיפוש לפי בקשה מפורשת (2026-10-04) - נשאר רק החיפוש הרגיל.
-  const nearCitiesJson = NF ? "{}" : JSON.stringify(Object.fromEntries(d.cities.filter((c) => CITY_COORDS[c.name]).map((c) => [c.id, [...CITY_COORDS[c.name], c.name]]))).replace(/</g, "\\u003c");
+  const nearCitiesJson = JSON.stringify(Object.fromEntries(d.cities.filter((c) => CITY_COORDS[c.name]).map((c) => [c.id, [...CITY_COORDS[c.name], c.name]]))).replace(/</g, "\\u003c");
   // ----- חיפוש ידידותי: קישורים שמשנים פרמטר אחד ושומרים את השאר -----
   const searchUrl = (ov) => {
     const sp = new URLSearchParams(query);
@@ -3345,7 +3373,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   });
   // הצעות בהקלדה: רק תחומים ותתי-תחומים כלליים (בלי שמות עצמאיות/עסקים) - לפי בקשה מפורשת.
   const suggestJson = JSON.stringify(suggestData).replace(/</g, "\\u003c");
-  const sortOptions = [["", fromId ? "הכי קרובות אליי" : "ברירת מחדל"], ["popular", "הכי פופולריות"], ["deals", "עם הטבה קודם"], ["rating", "דירוג גבוה"]];
+  const sortOptions = [["", fromId ? "הכי קרובות אליי" : "ברירת מחדל"], ["popular", "הכי פופולריות"], ["deals", "עם הטבה קודם"], ...(mode.isNetfree() ? [] : [["rating", "דירוג גבוה"]])];
   const sortSelectHtml = combinedCards.length > 1 ? `<span class="sc-s-view-label" style="margin-inline-start:10px;">מיון:</span><select class="sc-s-sort" aria-label="מיון התוצאות" onchange="location.href=this.value">${sortOptions.map(([v, label]) => `<option value="${esc(searchUrl({ sort: v || null }))}"${sortMode === v ? " selected" : ""}>${label}</option>`).join("")}</select>` : "";
   const viewRowHtml = `<div class="sc-s-view" role="group" aria-label="בחירת תצוגה"><span class="sc-s-view-label">תצוגה:</span><button type="button" class="view-btn" data-view-mode="compact" onclick="scSetResultsView('compact')">מצומצמת</button><button type="button" class="view-btn active" data-view-mode="medium" onclick="scSetResultsView('medium')">רגילה</button><button type="button" class="view-btn" data-view-mode="expanded" onclick="scSetResultsView('expanded')">מורחבת</button>${sortSelectHtml}</div>`;
   const advOpen = !!city;
@@ -3361,7 +3389,7 @@ route("GET", "/search", async (req, res, params, query, ctx) => {
   ${breadcrumbItems.length ? breadcrumbHtml(breadcrumbItems) : ""}
   <h1 class="section-title">מי מחכה לך היום?</h1>
       ${searchBarHtml(d, { rawQ, fromId, radius, withDeal, homeVisit, autoSubmit: true, live: true, extraInner: `${detailsHtml}` })}
-      <div class="sc-s-chips${NF ? "" : " sc-s-chips-cats"}" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
+      <div class="sc-s-chips sc-s-chips-cats" role="group" aria-label="בחירת תחום">${catChipsHtml}</div>
       ${subChipsHtml ? `<div class="sc-s-chips sc-s-subchips" role="group" aria-label="בחירת תת-תחום">${subChipsHtml}</div>` : ""}
       ${statusBarHtml}
       ${combinedCards.length ? viewRowHtml : ""}
@@ -6851,6 +6879,14 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <summary>💡 מה תקבלי אצלנו? (לחצי לקריאה)</summary>
     <p style="text-align:center;font-size:23px;font-weight:800;color:var(--rose-dark);margin:20px 0 12px;">בואי נדבר תכלס -</p>
     <p style="text-align:center;">מה תקבלי אצלנו?</p>
+    ${mode.isNetfree() ? `
+    <ul class="bullet-list" style="margin:0;padding-inline-start:4px;line-height:1.9;list-style:none;text-align:right;">
+      <li><span class="bullet-icon">🌸</span><span><strong>חשיפה ללקוחות שמחפשות בדיוק את מה שאת נותנת:</strong> העסק שלך מופיע במאגר העצמאיות, וניתן למצוא אותו לפי תחום, עיר והטבה.</span></li>
+      <li><span class="bullet-icon">🌸</span><span><strong>כרטיסיית עסק יפהפייה:</strong> הצגה מרשימה של העסק שלך שתגרום ללקוחות לעצור ולהסתכל.</span></li>
+      <li><span class="bullet-icon">🌸</span><span><strong>הטבה שמושכת לקוחות:</strong> תני ללקוחות הטבה מיוחדת - זה המגנט הכי חזק להבאת לקוחות חדשות אלייך, והיא תופיע גם בבאנר ההטבות באתר.</span></li>
+      <li><span class="bullet-icon">🌸</span><span><strong>דרך ישירה ליצור קשר:</strong> בכרטיסייה שלך מופיעים הטלפון והוואטסאפ של העסק, כדי שלקוחות יוכלו לפנות אלייך ישירות.</span></li>
+    </ul>
+    ` : `
     <ul class="bullet-list" style="margin:0;padding-inline-start:4px;line-height:1.9;list-style:none;text-align:right;">
       <li><span class="bullet-icon">🌸</span><span><strong>חשיפה שאי אפשר לפספס:</strong> אנחנו לוקחות את היחצון והפרסום על עצמנו - עם הבלטות מיוחדות בקהילה ששמות את העסק שלך במרכז הבמה.</span></li>
       <li><span class="bullet-icon">🌸</span><span><strong>כרטיסיית עסק יפהפייה:</strong> הצגה מרשימה של העסק שלך שתגרום ללקוחות לעצור ולהסתכל.</span></li>
@@ -6859,10 +6895,11 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <li><span class="bullet-icon">🌸</span><span><strong>קשר ישיר מהרגע הראשון:</strong> לקוחות יוכלו להתכתב איתך ישירות מהאזור האישי שלהן באתר, בלי מיילים מיותרים ובלי תיווכים.</span></li>
       <li><span class="bullet-icon">🌸</span><span><strong>השתתפות פעילה ב"זירה":</strong> תשובות לשאלות לקוחות ופרסום סקרים אישיים – הזדמנות מעולה לבלוט כמומחית, לקבל פידבקים חשובים ולמשוך אליך לקוחות חדשות.</span></li>
     </ul>
-    <p class="muted" style="margin-top:14px;font-size:13.5px;">💡 טיפ: הכרטיסיות שיש להן הכי הרבה דירוגים וחוות דעת מוצגות ראשונות באתר - אז כדאי לעודד לקוחות מרוצות להשאיר לך חוות דעת.</p>
+    `}
+    ${mode.isNetfree() ? "" : `<p class="muted" style="margin-top:14px;font-size:13.5px;">💡 טיפ: הכרטיסיות שיש להן הכי הרבה דירוגים וחוות דעת מוצגות ראשונות באתר - אז כדאי לעודד לקוחות מרוצות להשאיר לך חוות דעת.</p>`}
 
   <div class="flash flash-ok" style="max-width:680px;">${!charging ? "ההרשמה כרגע ב-0 ₪ - בחינם לחלוטין לכל המייסדות! לאחר תקופת ההשקה, ההצטרפות תהיה כרוכה בדמי מנוי חודשיים, אך אתן – המייסדות – תיהנו מהנחה קבועה ובלעדית לכל החיים." : "ההצטרפות כרוכה בדמי מנוי חודשיים."}</div>
-  ${!charging ? founderPricingBlockHtml(d) : ""}
+  ${!charging && !mode.isNetfree() ? founderPricingBlockHtml(d) : ""}
     </details>
   </div>
 
@@ -6896,7 +6933,7 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <span>אני מאשרת שהפרטים, התמונות והתיאור שאעלה יוצגו בכרטיסייה הפומבית שלי באתר SheCan, ושכל מי שנכנסת/נכנס לאתר - כולל גברים, ולא רק נשים - יכולה/יכול לצפות בהם.</span>
     </label>
 
-    ${charging ? `
+    ${!mode.isNetfree() && charging ? `
     <label>🌸 איזו רמה מתאימה לך?
     <select name="tier"><option value="basic" ${p.tier !== "premium" ? "selected" : ""}>בסיסית</option><option value="premium" ${p.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
 
@@ -6910,18 +6947,19 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       <summary>✨ להוסיף עוד פרטים עכשיו? (לא חובה - מגדיל את הסיכוי שיפנו אלייך)</summary>
     <label>🌸 תת-תחום (לא חובה - אפשר לסמן כמה)</label>
     <div id="scSubcatBox" style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;margin:-6px 0 6px;">${subcatCheckboxesForPrefill}</div>
-    <label>🌸 לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" value="${esc(p.subcategorySuggestion || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
-    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
+    <label>🌸 לא מוצאת תת-תחום מתאים? כתבי לנו הצעה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" value="${esc(p.subcategorySuggestion || "")}" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההצעה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
     <label>🌸 כמה שנים את בתחום?
     <select name="yearsInField"><option value="">בחרי</option>${yearsInFieldOptionsHtml(p.yearsInField || "")}</select></label>
     ${mode.isNetfree() ? "" : `<label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>`}
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" id="joinLogoInput" accept="image/*" data-sc-crop="1" /></label>
-    <label>🌸 תמונות להתרשמות (עד 4, לא חובה) - יופיעו בגלריה קטנה בכרטיסייה שלך${filesNote}
+    <label>🌸 תמונות להתרשמות (עד 4, לא חובה)${mode.isNetfree() ? "" : " - יופיעו בגלריה קטנה בכרטיסייה שלך"}${filesNote}
     <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
     <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery4" accept="image/*" />
+    ${nfPhotosNote()}
     <label>🌸 תארי את השירות שאת נותנת (עד 500 תווים)<textarea name="description" maxlength="500" placeholder="כאן את מתארת את השירות שאת נותנת - מה את עושה ואיך את עוזרת ללקוחות שלך. כתבי בגוף ראשון, בצורה אישית וחמימה, כאילו את מספרת לחברה - זה מה שיזמין לקוחות לקרוא ולהתחבר אלייך.">${esc(p.description || "")}</textarea></label>
     <label>🌸 תני ללקוחות סיבה טובה לבחור בך (עד 200 תווים)</label>
     <div style="background:#fff4e8;border:1px dashed var(--rose-dark);border-radius:10px;padding:10px 14px;margin:0 0 8px;font-size:14px;line-height:1.6;">
@@ -6929,15 +6967,15 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
       עצמאית שנותנת הטבה ללקוחות (אחרי שאישרנו אותה) <strong>מופיעה למעלה בבאנר ההטבות</strong> בכל עמוד באתר - וזו חשיפה מטורפת ללקוחות שמחפשות הטבות! בנוסף היא מופיעה כשלקוחה מסמנת בחיפוש <strong>"🎁 עם הטבה"</strong>. ההטבה לא חובה והפרופיל שלך יאושר גם בלעדיה, אבל בלי הטבה העסק לא יופיע בבאנר ובסינון הזה.
     </div>
     <textarea name="dealText" maxlength="200" placeholder="זו ההזדמנות שלך לבלוט! הציעי הטבה שווה (למשל: הנחה, פגישת ייעוץ מתנה, בונוס מיוחד). הטבה אטרקטיבית היא המפתח לסגירת העסקה הראשונה שלך כאן.">${esc(p.dealText || "")}</textarea>
-${!charging ? `
+${!mode.isNetfree() && !charging ? `
     <label>🌸 איזו רמה מתאימה לך?
     <select name="tier"><option value="basic" ${p.tier !== "premium" ? "selected" : ""}>בסיסית</option><option value="premium" ${p.tier === "premium" ? "selected" : ""}>מומלצת</option></select></label>
 
-    ` : ""}    <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
-    <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לך (בזירה או במסר), כשלקוחה מתעניינת פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בזירה בתחום שלך.</p>
+    ` : ""}    ${mode.isNetfree() ? "" : `<label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-top:14px;"><input type="checkbox" name="wantsPushNotifications" value="1" ${p.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
+    <p class="muted" style="margin:2px 0 0;font-size:12.5px;">תקבלי התראה רק כשעונים לך (בזירה או במסר), כשלקוחה מתעניינת פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בזירה בתחום שלך.</p>`}
 
     <div class="muted" style="margin-top:16px;background:var(--cream);border-radius:8px;padding:12px 14px;font-size:14px;">
-      ברגע שתסיימי להירשם, המערכת שלנו תייצר עבורך באופן אוטומטי קוד קופון אישי וייחודי (בסגנון SheCan1234), שתוכלי להעביר ללקוחות שלך. הקוד הזה יהיה הכרטיס המזהה שלך בקהילה.
+      ברגע שתסיימי להירשם, המערכת שלנו תייצר עבורך באופן אוטומטי קוד קופון אישי וייחודי (בסגנון SheCan1234), שתוכלי להעביר ללקוחות שלך. ${mode.isNetfree() ? "הקוד יוצג בכרטיסייה שלך ללקוחות רשומות באתר." : "הקוד הזה יהיה הכרטיס המזהה שלך בקהילה."}
     </div>
 
     <div class="panel" style="background:var(--cream);margin-top:16px;">
@@ -6948,6 +6986,7 @@ ${!charging ? `
       <button type="button" class="btn btn-outline btn-small" id="scAddExtraListingBtn" style="margin-top:14px;" onclick="scAddExtraListing()">➕ הוספת תחום</button>
     </div>
 
+    ${mode.isNetfree() ? "" : `
     <div class="panel" style="background:var(--cream);margin-top:16px;position:relative;" id="scJoinQuotePanel">
       <button type="button" onclick="var p=document.getElementById('scJoinQuotePanel');if(p)p.style.display='none';" aria-label="לא רלוונטי בשבילי" title="לא רלוונטי בשבילי" style="position:absolute;top:4px;left:6px;background:none;border:none;font-size:20px;color:var(--gray);cursor:pointer;padding:10px;">✕</button>
       <h4 style="margin-top:0;">יש לך משפט השראה שמייצג אותך? (לא חובה)</h4>
@@ -6964,10 +7003,12 @@ ${!charging ? `
       <input type="file" name="storyPhoto" accept="image/*" /></label>
       ${storyQuestionsJoin.map((q, i) => `<label>🌸 ${esc(q)}<textarea name="storyAnswer${i}" maxlength="800" data-sc-story-q="1">${esc((p.storyAnswers && p.storyAnswers[i]) || "")}</textarea></label>`).join("")}
       <div class="muted" data-sc-story-count-note style="font-size:12.5px;margin-top:4px;"></div>
-    </div>
+    </div>`}
+
 
     </details>
 
+    ${mode.isNetfree() ? "" : `
     <details class="sc-join-more" ${(isRetry || referrerFreelancer || influencerCodePrefill) ? "open" : ""}>
       <summary>🎟️ הגעת דרך חברה או משפיענית? (לא חובה)</summary>
     <input type="hidden" name="ref" value="${esc(refId)}" />
@@ -6991,7 +7032,7 @@ ${!charging ? `
       <p class="muted" style="font-size:13.5px;margin:6px 0 0;"><strong>חשוב לנו מאוד:</strong> אם הגעת אלינו דרך משפיענית (סטטוס, אינסטגרם או קבוצת צ'אט) - נא לכתוב את קוד הקופון האישי שלה, כדי שההפניה תירשם על שמה. אם לא הגעת דרך אף אחת - אפשר להשאיר ריק.</p>
     </div>
 
-    </details>
+    </details>`}
 
     <div style="margin-top:16px;">
       <button class="btn" style="width:100%;" type="submit">${charging ? "המשך לתשלום" : "הרשמה ✨"}</button>
@@ -7081,7 +7122,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   // "מצליחה" בשקט עם בדיוק אותה הודעת הצלחה כמו הרשמה אמיתית, בלי ליצור שום חשבון ובלי לשלוח
   // אף מייל/פוש - כדי לא ללמד בוט להתחמק בפעם הבאה (ר' גם הסוף הרגיל של הפונקציה למטה, שמשתמש
   // באותה פונקציית עזר בדיוק).
-  const joinSuccessRedirect = () => redirect(res, `/login?ok=${encodeURIComponent("קיבלנו! נעבור על הפרופיל שלך ונאשר אותו בקרוב - ואז תוכלי להתחבר. טיפ: כעצמאית יש לך גם אופציה להירשם בנפרד כלקוחה - רק שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים, צריך להחליף ביניהם.")}`);
+  const joinSuccessRedirect = () => redirect(res, `/login?ok=${encodeURIComponent(mode.isNetfree() ? "קיבלנו! נעבור על הפרופיל שלך ונאשר אותו בקרוב - ואז תוכלי להתחבר." : "קיבלנו! נעבור על הפרופיל שלך ונאשר אותו בקרוב - ואז תוכלי להתחבר. טיפ: כעצמאית יש לך גם אופציה להירשם בנפרד כלקוחה - רק שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים, צריך להחליף ביניהם.")}`);
   if ((body.get("website") || "").trim()) return joinSuccessRedirect();
   if (isJoinRateLimited(getClientIp(req))) return joinSuccessRedirect();
   // On any validation failure below, re-render the same form (200, not a redirect) with
@@ -7198,6 +7239,7 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     description: clip(body.get("description"), 500), dealText: clip(body.get("dealText"), 200), dealCode,
     yearsInField: body.get("yearsInField") || "",
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+    joinedViaNetfree: mode.isNetfree(),
     // נשמר לתיעוד - חובה לאשר (ר' publicListingConsent למעלה) שהכרטיסייה הפומבית שלה גלויה
     // לכלל הציבור (כולל גברים), לא רק לנשים. שמירת התאריך נותנת הוכחה בדיעבד שהאישור אכן ניתן.
     publicListingConsentAt: new Date().toISOString(),
@@ -7380,13 +7422,13 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
     return rerenderLoginError("עוד רגע סבלנות - הפרופיל שלך ממתין לאישור, ונעדכן אותך ברגע שהוא יאושר.");
   }
   if (role === "customer" && user.accountLocked) {
-    return rerenderLoginError("החשבון שלך עדיין ממתין לבדיקה ידנית ולא ניתן להתחבר איתו כרגע. אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.");
+    return rerenderLoginError("החשבון שלך עדיין ממתין לבדיקה ידנית ולא ניתן להתחבר איתו כרגע. " + supportHint());
   }
   // חסימה בעקבות דיווח של עצמאית שספיר אישרה (ר' POST /admin/customer-report/:id/block, נוסף
   // לפי בקשה מפורשת 2026-09-21) - שדה נפרד מ-accountLocked (שמיועד רק לנעילה האוטומטית של
   // חשבון גברי בהרשמה), כדי שפאנל הניהול יוכל להבחין בין שני הסוגים ולהציג לכל אחד הסבר נכון.
   if (role === "customer" && user.suspended) {
-    return rerenderLoginError("החשבון שלך הושעה על ידי הנהלת SheCan ולא ניתן להתחבר איתו כרגע. אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.");
+    return rerenderLoginError("החשבון שלך הושעה על ידי הנהלת SheCan ולא ניתן להתחבר איתו כרגע. " + supportHint());
   }
   const sid = auth.createSession(role, user.id);
   const loginCookies = role === "admin" ? sessionCookie(sid) : [sessionCookie(sid), identityCookie(role, user.id)];
@@ -7657,7 +7699,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     <h1 class="section-title">ההרשמה התקבלה</h1>
     <div class="panel" style="max-width:460px;margin:24px auto;text-align:center;">
       <p>החשבון שלך נקלט, אבל עדיין לא פעיל - הוא ממתין לבדיקה ידנית של הנהלת האתר לפני שאפשר להתחבר איתו.</p>
-      <p class="muted">אם זה דחוף, אפשר לפנות אלינו דרך כפתור התמיכה 💬 שמופיע בכל עמוד באתר.</p>
+      <p class="muted">אם זה דחוף, ${supportHint()}</p>
       <p style="margin-top:16px;"><a href="/">חזרה לעמוד הבית</a></p>
     </div>`;
     return sendHtml(res, 200, page({ title: "ההרשמה התקבלה", session: ctx.session, body: lockedBody }));
@@ -7686,6 +7728,7 @@ route("POST", "/signup", async (req, res, params, query, ctx) => {
     emailVerified: false, emailVerifyToken,
     gender: "female", accountLocked: false,
     wantsPushNotifications: body.get("wantsPushNotifications") === "1",
+    signedUpViaNetfree: mode.isNetfree(),
     // נשמר לתיעוד - חובה לאשר (ר' publicVisibilityConsent למעלה) שתוכן ציבורי שהיא עשויה
     // לכתוב (חוות דעת/זירה) גלוי לכלל הציבור, לא רק לנשים. התאריך נותן הוכחה בדיעבד שהאישור ניתן.
     publicVisibilityConsentAt: new Date().toISOString(),
@@ -8104,7 +8147,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   // its own working link) when that contest is active. Marked seen right away so it only
   // ever shows once, even if she just closes it without clicking anything.
   let welcomePopupHtml = "";
-  if (f.status === "approved" && !f.welcomePopupSeen) {
+  if (f.status === "approved" && !f.welcomePopupSeen && !mode.isNetfree()) {
     const freelancerRefLinkPopup = `${getOrigin(req)}/join?ref=${f.id}`;
     welcomePopupHtml = `
     <div class="sc-modal-overlay" onclick="if(event.target===this) this.remove();">
@@ -8134,7 +8177,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   // מסומן על אובייקט הסשן עצמו (זיכרון בלבד, לא נשמר ב-db) ולא כשדה קבוע על העצמאית. לא
   // מוצג יחד עם פופאפ הברוכה-הבאה למעלה, כדי שלא יוצגו שני פופאפים בבת אחת.
   let dealReminderPopupHtml = "";
-  if (!welcomePopupHtml && f.status === "approved" && !ctx.session.dealReminderShown) {
+  if (!welcomePopupHtml && !mode.isNetfree() && f.status === "approved" && !ctx.session.dealReminderShown) {
     dealReminderPopupHtml = `
     <div class="sc-modal-overlay" onclick="if(event.target===this) this.remove();">
       <div class="sc-modal" style="max-width:420px;">
@@ -8185,6 +8228,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     </div>
     ${(f.dealReapprovalRequestedAt) ? `<p class="muted" style="margin-top:8px;">🔔 שלחת בקשה לאישור מחדש ב-${esc(new Date(f.dealReapprovalRequestedAt).toLocaleString("he-IL"))} - אנחנו נבדוק בקרוב.</p>` : ""}
   </div>` : "";
+  const NFD = mode.isNetfree();
   const freelancerBodyHtml = `
   ${welcomePopupHtml}
   ${dealReminderPopupHtml}
@@ -8192,21 +8236,21 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   <div style="text-align:center;margin:-8px 0 14px;"><a class="btn btn-small btn-outline" href="/logout">🚪 התנתקות מהחשבון</a></div>
   ${hiddenDealNoticeHtml}
 
-  <p class="muted" style="text-align:center;max-width:640px;margin:0 auto 20px;">כעצמאית יש לך גם אופציה להירשם גם כלקוחה - שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים.</p>
+  ${NFD ? "" : `<p class="muted" style="text-align:center;max-width:640px;margin:0 auto 20px;">כעצמאית יש לך גם אופציה להירשם גם כלקוחה - שימי לב שאי אפשר להתחבר בו-זמנית לשני הפרופילים.</p>`}
 
   <div class="narrow-panels">
   <div class="panel">
     ${f.joinType === "founding" ? `<span class="founding-badge">מייסדת ✦</span> ` : ""}
     ${f.isLeadingBusiness ? `<span class="badge badge-leading">👑 נותנת חסות</span> ` : ""}
-    ${isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">${f.adSource === "race" ? "📣 עסק מוביל פעיל" : "📣 מודעה פעילה"}${f.isAdvertisedUntil ? ` (פרס מרוץ ההפניות, עד ${esc(f.isAdvertisedUntil)})` : ""}</span> ` : ""}
-    <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"} · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}</span>
-    ${f.paymentStatus === "pending_payment" ? `
+    ${!NFD && isFreelancerCurrentlyAdvertised(f) ? `<span class="badge badge-ad">${f.adSource === "race" ? "📣 עסק מוביל פעיל" : "📣 מודעה פעילה"}${f.isAdvertisedUntil ? ` (פרס מרוץ ההפניות, עד ${esc(f.isAdvertisedUntil)})` : ""}</span> ` : ""}
+    <span class="muted">סטטוס: ${f.status !== "approved" ? "עדיין ממתינה לאישור" : f.active === false ? "מושהית זמנית - לא מוצגת באתר" : "את באוויר!"}${NFD ? "" : ` · תשלום: ${statusLabel} · רמה: ${f.tier === "premium" ? "מומלצת" : "בסיסית"}`}</span>
+    ${!NFD && f.paymentStatus === "pending_payment" ? `
     <form method="post" action="/freelancer-dashboard/redeem-vip-code" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
       <label style="flex:1;min-width:180px;">יש לך קוד VIP? הזיני כאן ופטרי את עצמך מהתשלום
       <input type="text" name="code" placeholder="לדוגמה: VIP1234" required /></label>
       <button class="btn btn-small" type="submit">מימוש קוד</button>
     </form>` : ""}
-    ${f.tier !== "premium" ? (
+    ${!NFD && f.tier !== "premium" ? (
       f.tierUpgradeRequestedAt
         ? `<p class="muted" style="margin-top:8px;font-size:13px;">🔔 בקשת השדרוג שלך לרמת "מומלצת" נשלחה - ניצור איתך קשר לגבי התשלום.</p>`
         : `<form method="post" action="/freelancer-dashboard/request-tier-upgrade" style="margin-top:8px;">
@@ -8221,7 +8265,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <div class="chat-thread" style="text-align:right;">${myAdminMessages.map((m) => `<div class="chat-msg from-admin">${m.context ? `<div style="font-size:12px;font-weight:700;opacity:.85;margin-bottom:4px;">לגבי: ${esc(m.context)}</div>` : ""}${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>
   </div>` : ""}
 
-  <div class="panel" id="scGroupChatPanel">
+  ${NFD ? "" : `<div class="panel" id="scGroupChatPanel">
     <h3>קבוצת SheCan 👯‍♀️</h3>
     <p class="muted">כאן ההנהלה משתפת עדכונים עם כל העצמאיות${groupChatCanPost ? " - וגם אתן יכולות לכתוב כאן!" : "."}</p>
     ${groupMessages.length ? `<div class="chat-thread" style="text-align:right;">${groupMessages.map((m) => `<div class="chat-msg ${m.authorType === "admin" ? "from-admin" : "from-freelancer"}">${m.authorType !== "admin" ? `<div style="font-size:12px;font-weight:700;opacity:.85;margin-bottom:4px;">${esc(m.authorName || "עצמאית")}</div>` : ""}${esc(m.text)}<span class="chat-meta">${esc(new Date(m.date).toLocaleString("he-IL"))}</span></div>`).join("")}</div>` : `<p class="muted">עדיין אין הודעות בקבוצה.</p>`}
@@ -8230,16 +8274,16 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
       <textarea name="text" maxlength="2000" placeholder="כתבי הודעה לקבוצה..." required></textarea>
       <button class="btn btn-small" type="submit">שליחה לקבוצה</button>
     </form>` : `<p class="muted" style="font-size:12.5px;margin-top:8px;">כרגע רק ההנהלה יכולה לפרסם בקבוצה.</p>`}
-  </div>
+  </div>`}
 
-  ${serviceRequestsSectionHtml}
+  ${NFD ? "" : serviceRequestsSectionHtml}
 
-  <div class="panel">
+  ${NFD ? "" : `<div class="panel">
     <h3>💡 איך להופיע ראשונה?</h3>
     <p class="muted">האתר מציג קודם את הכרטיסיות עם הכי הרבה דירוגים וחוות דעת - אז כדאי לעודד כל לקוחה מרוצה להשאיר לך חוות דעת בכרטיסייה שלך. ככל שיהיו לך יותר חוות דעת מאושרות, כך תופיעי גבוה יותר בתוצאות.</p>
-  </div>
+  </div>`}
 
-  <div class="panel">
+  ${NFD ? "" : `<div class="panel">
     <h3>עוברת למצב לקוחה</h3>
     ${matchingCustomer ? `
       <p class="muted">יש לך גם חשבון לקוחה עם המייל הזה. אפשר לעבור אליו בלחיצה אחת - את תמיד תוכלי לחזור למצב עצמאית מהתפריט למעלה.</p>
@@ -8247,19 +8291,19 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
         <button class="btn btn-small" type="submit">מעבר למצב לקוחה</button>
       </form>
     ` : `<p class="muted">עדיין אין לך חשבון לקוחה עם המייל הזה. אפשר <a href="/signup" style="color:var(--rose-dark);font-weight:800;text-decoration:underline;">להירשם כלקוחה</a> ואז לחזור לכאן כדי לעבור בין המצבים בלחיצה אחת.</p>`}
-  </div>
+  </div>`}
 
   <div class="panel" style="text-align:center;">
     <h3>כרטיס ביקור דיגיטלי</h3>
-    <p class="muted">בנטוורקינג, פשוט תראי ללקוחה את הקוד או תשלחי לה את הקישור - הכל כבר מרוכז שם: ההטבה, ההמלצות והדרך ליצור קשר.</p>
-    <img src="${qrUrl}" alt="QR לכרטיסייה שלך" style="width:160px;height:160px;margin:10px auto;display:block;" />
+    <p class="muted">בנטוורקינג, פשוט תראי ללקוחה את הקוד או תשלחי לה את הקישור - הכל כבר מרוכז שם: ${NFD ? "ההטבה והדרך ליצור קשר" : "ההטבה, ההמלצות והדרך ליצור קשר"}.</p>
+    ${NFD ? "" : `<img src="${qrUrl}" alt="QR לכרטיסייה שלך" style="width:160px;height:160px;margin:10px auto;display:block;" />`}
     <div style="display:flex;gap:8px;max-width:420px;margin:10px auto 0;">
       <input type="text" id="scProfileLink" value="${esc(profileUrl)}" readonly style="flex:1;" />
       <button type="button" class="btn btn-small" onclick="scCopyProfileLink()">העתקת קישור</button>
     </div>
   </div>
 
-  ${d.settings.freelancerReferralContestActive ? `
+  ${!NFD && d.settings.freelancerReferralContestActive ? `
   <div class="panel referral-promo-panel">
     <h3 style="margin-top:0;">צרפי חברות וקבלי את המקום הראשון!</h3>
     <p class="muted">רוצה לקבל חשיפה מטורפת בדף הבית לחודש? העתיקי את הקישור האישי שלך, שלחי לחברות עצמאיות, וכל מי שתירשם דרכו תעזור לך לטפס לראש העמוד בתור "העסק המוביל" של החודש למשך חודש שלם!!</p>
@@ -8277,7 +8321,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     goalLabel: `שההרשמה החינמית תסתיים (וזה יכול לקרות בכל רגע)`, noun: "חברות", rivalNoun: "עצמאיות",
   })}` : ""}
 
-  <div class="panel" style="text-align:center;">
+  ${NFD ? "" : `<div class="panel" style="text-align:center;">
     <h3>הסיפור שלך</h3>
     ${!myStory ? `
       <p class="muted">עני בכמה מילים על השאלות הבאות ונבנה מזה את סיפור ההשראה שלך - הוא יעבור אלינו לאישור, ואחרי שהוא יאושר תקבלי קישור לשתף אותו. לא חייבת לענות על כולן - אבל צריך לענות על לפחות ${Math.min(STORY_MIN_ANSWERS, storyQuestions.length)} מהשאלות כדי לשלוח.</p>
@@ -8306,9 +8350,9 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
         <button class="btn" style="margin-top:14px;" type="submit">עדכון הסיפור שלי</button>
       </form>
     `}
-  </div>
+  </div>`}
 
-  ${d.settings.freelancerStatusesEnabled ? `
+  ${!NFD && d.settings.freelancerStatusesEnabled ? `
   <div class="panel" style="text-align:center;">
     <h3>הסטטוסים שלך (${myActiveStatuses.length}/3)</h3>
     ${f.tier !== "premium" ? `
@@ -8340,14 +8384,15 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <h3>הפרופיל שלך</h3>
     ${avatarUri(f) ? `<div style="margin-bottom:10px;">${photoOrInitials(avatarUri(f), f.businessName, "profile-photo")}</div>` : ""}
     <label>תמונת פרופיל ${f.photoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="photo" accept="image/*" /></label>
+    ${nfPhotosNote()}
     <label>לוגו העסק ${f.logoDataUri ? "(להחלפה)" : "(לא חובה)"}<input type="file" name="logo" id="dashLogoInput" accept="image/*" data-sc-crop="1" /></label>
     <label>שם העסק<input type="text" name="businessName" id="dashBusinessName" value="${esc(f.businessName)}" required /></label>
     <label>תחום
     <select name="categoryId" id="dashCategorySelect" onchange="scUpdateSubcatCheckboxes(this, 'scSubcatBox');scToggleOtherCategory(this, 'scOtherCategoryBoxDash');">${catOptions}<option value="__other__">אחר - התחום שלי לא ברשימה</option></select></label>
     <label>תת-תחום (לא חובה - אפשר לסמן כמה)</label>
     <div id="scSubcatBox" style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;margin:-6px 0 6px;">${subcatCheckboxes}</div>
-    <label>לא מוצאת תת-תחום מתאים? כתבי לנו המלצה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
-    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההמלצה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
+    <label>לא מוצאת תת-תחום מתאים? כתבי לנו הצעה ונבדוק להוסיף אותה (לא חובה)<input type="text" name="subcategorySuggestion" maxlength="80" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
+    <p class="muted" style="margin:-6px 0 6px;font-size:12.5px;">💡 ההצעה תישלח לבדיקה - היא לא נוספת אוטומטית, ותוכלי לבחור אותה מהרשימה אחרי שתאושר.</p>
     <div id="scOtherCategoryBoxDash" style="display:none;">
       <label>מה שם התחום שלך?<input type="text" name="customCategory" placeholder="למשל: עיצוב אירועים" /></label>
       <label>תת-תחום (לא חובה)<input type="text" name="customSubcategory" placeholder="למשל: עיצוב שולחנות מתוקים" /></label>
@@ -8366,9 +8411,9 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <p class="muted" style="margin-top:-4px;font-size:13px;">הטבה לא חובה, אבל עצמאית עם הטבה שאושרה מופיעה למעלה בבאנר ובסינון "🎁 עם הטבה" בחיפוש - חשיפה מטורפת ללקוחות.</p>
     <label>כמה שנים את בתחום?
     <select name="yearsInField"><option value="">בחרי</option>${yearsInFieldOptionsHtml(f.yearsInField || "")}</select></label>
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="wantsPushNotifications" value="1" ${f.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
-    <p class="muted" style="margin-top:-4px;font-size:12.5px;">התראה רק כשעונים לך, כשלקוחה פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בתחום שלך בזירה.</p>
-    ${f.weeklyTipPublished ? `
+    ${NFD ? "" : `<label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="wantsPushNotifications" value="1" ${f.wantsPushNotifications ? "checked" : ""} style="width:auto;" /> 🔔 כן, תשלחו לי התראות</label>
+    <p class="muted" style="margin-top:-4px;font-size:12.5px;">התראה רק כשעונים לך, כשלקוחה פונה אלייך ישירות, או כשמתפרסמת שאלה חדשה בתחום שלך בזירה.</p>`}
+    ${NFD ? "" : f.weeklyTipPublished ? `
     <label>משפט ההשראה שלך: (עד 300 תווים)
     <p class="muted" style="margin:4px 0 0;">${esc(f.inspirationQuote || "")}</p>
     </label>
@@ -8388,6 +8433,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
     <input type="file" name="gallery4" accept="image/*" />
+    ${nfPhotosNote()}
     <button class="btn" style="margin-top:14px;" type="submit">שמירה</button>
   </form>
 
@@ -8414,7 +8460,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ` : `<p class="muted">הגעת למקסימום של 3 תחומים נוספים.</p>`}
   </div>
 
-  ${f.galleryRequiresApproval ? `
+  ${!NFD && f.galleryRequiresApproval ? `
   <div class="panel" id="scGalleryRequestsPanel">
     <h3>🔒 בקשות צפייה בגלריה (${myGalleryRequests.length})</h3>
     <p class="muted">הגלריה שלך מוגדרת כרגע כ"דורשת אישור פר-לקוחה" - כל בקשה כאן מחכה להחלטה שלך.</p>
@@ -8429,7 +8475,7 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     `).join("") : `<p class="muted">אין כרגע בקשות ממתינות.</p>`}
   </div>` : ""}
 
-  <div class="panel" id="scMessagesPanel" style="scroll-margin-top:90px;">
+  ${NFD ? "" : `<div class="panel" id="scMessagesPanel" style="scroll-margin-top:90px;">
     <h3>ההודעות שלך 💬</h3>
     ${conversations.length ? conversations.map((c) => {
       const isBlocked = (f.blockedCustomerIds || []).includes(c.customer.id);
@@ -8459,9 +8505,9 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
       </div>
     `;
     }).join("") : `<p class="muted">עוד לא קיבלת הודעות - הן יופיעו כאן ברגע שלקוחה תכתוב לך מהכרטיסייה שלך.</p>`}
-  </div>
+  </div>`}
 
-  <div class="panel" id="deal-close-section" style="scroll-margin-top:90px;">
+  ${NFD ? "" : `<div class="panel" id="deal-close-section" style="scroll-margin-top:90px;">
     <h3>💰 סימון עסקה שנסגרה</h3>
     <p class="muted">כשעסקה עם לקוחה נסגרת באמת, כתבי כאן את המייל שלה - נשלח לה בקשת אישור (במייל/בהתראה), וברגע שהיא תאשר זה יופיע כאן כ"אושרה". כדי שזה יעבוד, חשוב שהיא תהיה רשומה באתר עם המייל הזה.</p>
     <form method="post" action="/freelancer-dashboard/deal/close">
@@ -8475,9 +8521,9 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     ${myDeals.length ? `<div class="table-scroll" style="margin-top:16px;"><table class="table-simple"><tr><th>לקוחה</th><th>סטטוס</th><th>תאריך</th></tr>
       ${myDeals.map((dl) => `<tr><td>${esc(dl.customerName)}</td><td>${dealStatusLabel(dl.status)}</td><td>${esc(new Date(dl.createdAt).toLocaleDateString("he-IL"))}</td></tr>`).join("")}
     </table></div>` : ""}
-  </div>
+  </div>`}
 
-  <div class="panel">
+  ${NFD ? "" : `<div class="panel">
     <h3>מה אומרות עלייך</h3>
     ${reviews.length ? reviews.map((r) => `
       ${r.listingId ? `<p class="muted" style="margin:0 0 -6px;font-size:13px;">על התחום: ${esc(reviewTargetLabel(d, r))}</p>` : ""}
@@ -8489,14 +8535,14 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
         </form>
       ` : ""}
     `).join("") : `<p class="muted">עוד אין ביקורות - הן יופיעו כאן ברגע שלקוחות מרוצות יכתבו לך כמה מילים.</p>`}
-  </div>
+  </div>`}
   </div>
   `;
   // משפיענית: אותו אזור אישי + טאב "אזור משפיענית" (ר' infDashboardWrap). הודעות לקוחות שהגיעו
   // מסומנות כנקראו אחרי שהספירה "חדשות" כבר חושבה לתצוגה הזו.
   let body = freelancerBodyHtml;
   const myInf = infForFreelancer(d, f.id);
-  if (myInf) {
+  if (myInf && !mode.isNetfree()) {
     if (infPruneStatuses(d)) db.save();
     body = infDashboardWrap(d, f, myInf, freelancerBodyHtml, req);
     let infMarked = false;
@@ -9153,13 +9199,13 @@ route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   f.dealText = clip(body.get("dealText"), 200);
   const newYearsInField = body.get("yearsInField");
   if (newYearsInField) f.yearsInField = newYearsInField;
-  f.wantsPushNotifications = body.get("wantsPushNotifications") === "1";
+  if (!mode.isNetfree()) f.wantsPushNotifications = body.get("wantsPushNotifications") === "1";
   // Locked (server-side, not just hidden in the form) once it's actually been shown as the
   // published weekly tip - see getWeeklyFeature, which sets weeklyTipPublished the moment her
   // turn in the rotation comes up. Otherwise, a new/changed quote goes into inspirationQuotePending
   // and waits for admin approval (POST /admin/inspiration-quote/:id/approve) before it can ever
   // become the live f.inspirationQuote - so only reviewed quotes reach the homepage rotation.
-  if (!f.weeklyTipPublished) {
+  if (!f.weeklyTipPublished && !mode.isNetfree()) {
     const newQuote = clip((body.get("inspirationQuote") || "").trim(), 300);
     if (!newQuote) f.inspirationQuotePending = "";
     else if (newQuote !== f.inspirationQuote) f.inspirationQuotePending = newQuote;
@@ -13121,7 +13167,8 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
     }
     f.status = "approved";
     if (f.paymentStatus === "pending_payment") f.paymentStatus = "active";
-    const profileUrl = `${getOrigin(req)}/freelancer/${f.id}`;
+    const nfJoined = !!f.joinedViaNetfree;
+    const profileUrl = `${nfJoined ? netfreeOrigin(req) : getOrigin(req)}/freelancer/${f.id}`;
     // A quick push heads-up if she has notifications enabled (unchanged from before) - this
     // can't carry a file attachment, so unlike the general notify() helper (push OR email), the
     // approval email below is always sent too, regardless of push, since it's the only way to
@@ -13147,6 +13194,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
       // logged and skipped silently - the approval itself, and the rest of this email, must
       // never be blocked by an image-generation problem.
       try {
+        if (nfJoined) throw new Error("netfree-joined freelancer - no share images");
         if (!STORY_IMAGES_ENABLED) throw new Error("story images temporarily disabled (STORY_IMAGES_ENABLED=false) - see kill switch near top of file");
         const profileQrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(profileUrl)}`);
         if (!profileQrRes.ok) throw new Error(`qrserver responded ${profileQrRes.status}`);
@@ -13165,6 +13213,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
       // request, now that this on-brand version covers the same job. Same
       // build-can-fail-silently safety as (1) above.
       try {
+        if (nfJoined) throw new Error("netfree-joined freelancer - no review image");
         if (!STORY_IMAGES_ENABLED) throw new Error("story images temporarily disabled (STORY_IMAGES_ENABLED=false) - see kill switch near top of file");
         const reviewQrRes = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(reviewUrl)}`);
         if (!reviewQrRes.ok) throw new Error(`qrserver responded ${reviewQrRes.status}`);
@@ -13180,7 +13229,15 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
       // result is now actually checked (like /admin/bulk-import and resend-credentials already
       // do) so a failure shows up right here in the admin message instead of vanishing into a
       // server log nobody's watching.
-      const emailResult = await sendEmail(f.email, "את באוויר! הפרופיל שלך אושר ב-SheCan",
+      const nfBrandMail = mode.brandName();
+      const emailResult = await sendEmail(f.email, nfJoined ? `את באוויר! הפרופיל שלך אושר ב-${nfBrandMail}` : "את באוויר! הפרופיל שלך אושר ב-SheCan",
+        nfJoined ? `<div dir="rtl" style="font-family:Arial,sans-serif;">
+          <p>היי ${esc(f.name || "")},</p>
+          <p>הפרופיל שלך אושר והוא כבר באוויר ב-${esc(nfBrandMail)} 🎉</p>
+          <p>אפשר לראות אותו כאן: <a href="${profileUrl}">${esc(profileUrl)}</a></p>
+          <p>קוד הקופון שלך הוא <strong>${esc(f.dealCode || "")}</strong>. לקוחות רשומות באתר יכולות לראות אותו בכרטיסייה שלך.</p>
+          <p>אפשר להיכנס בכל זמן לאזור האישי ולעדכן את פרטי העסק, התמונות וההטבה: <a href="${netfreeOrigin(req)}/login">${esc(netfreeOrigin(req))}/login</a></p>
+        </div>` :
         `<div dir="rtl" style="font-family:Arial,sans-serif;">
           <p>היי ${esc(f.name || "")},</p>
           <p>יש! הפרופיל שלך אושר והוא כבר באוויר ב-SheCan 🎉</p>
@@ -13194,7 +13251,7 @@ route("POST", "/admin/freelancer/:id/approve", async (req, res, params, query, c
             </ol>
           </div>` : ""}
         </div>`,
-        attachments
+        nfJoined ? [] : attachments
       ).catch(() => ({ ok: false, reason: "send_failed" }));
       if (!emailResult.ok) {
         db.save();
@@ -13299,7 +13356,7 @@ route("POST", "/admin/freelancer/:id/resend-credentials", async (req, res, param
     `<div dir="rtl" style="font-family:Arial,sans-serif;">
       <p>היי ${esc(f.name || f.businessName)}, ✨</p>
       <p>הנה שוב פרטי ההתחברות לאזור האישי שלך ב-SheCan:</p>
-      <p>🔑 אימייל: <strong>${esc(f.email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong><br/>קישור להתחברות: <a href="${getOrigin(req)}/login">${getOrigin(req)}/login</a></p>
+      <p>🔑 אימייל: <strong>${esc(f.email)}</strong><br/>סיסמה זמנית: <strong>${esc(tempPassword)}</strong><br/>קישור להתחברות: <a href="${f.joinedViaNetfree ? netfreeOrigin(req) : getOrigin(req)}/login">${f.joinedViaNetfree ? netfreeOrigin(req) : getOrigin(req)}/login</a></p>
       <p>חשוב - בכניסה הראשונה כדאי לא לשכוח להחליף את הסיסמה הזמנית לסיסמה משלך.</p>
       <p>אם יש לך שאלות, את מוזמנת לשלוח מייל לכתובת: <a href="mailto:Shecan.office@gmail.com">Shecan.office@gmail.com</a></p>
       <p>מחכות לראות אותך בפנים,<br/>צוות SheCan 🌸</p>
@@ -13729,11 +13786,31 @@ route("POST", "/admin/review/:id/delete", async (req, res, params, query, ctx) =
 });
 
 // ----- Static-ish pages -----
+// ברירות המחדל לטקסטים של אתר נטפרי (אודות / תקנון / פרטיות). מותאמות למה שבאמת קיים בגרסה הזו -
+// בלי להזכיר זירה, קהילה, סיפורים, הודעות וכו'. אם נטפרי נחסמת ההרשמה (netfreeAccountsEnabled=false) -
+// הטקסט חוזר לנוסח "אין הרשמה". טקסט מותאם שנשמר בהגדרות הניהול (netfree*Text) עדיין גובר.
+function netfreeDefaultTexts(d) {
+  const brand = mode.brandName();
+  const acc = mode.accountsEnabled();
+  const mail = (d.settings.netfreeContactEmail || "").trim();
+  const contact = mail ? `\n\nליצירת קשר: ${mail}` : "";
+  const about = acc
+    ? `${brand} הוא מדריך עסקים של עצמאיות בישראל. אפשר לחפש עסק לפי תחום ועיר, לראות הטבות שהעסקים מציעים, ולפנות אל העסק ישירות בטלפון או בוואטסאפ.\n\nבעלות עסק יכולות להצטרף ולעדכן את כרטיסיית העסק שלהן, ולקוחות יכולות להירשם כדי לצפות בקודי הקופון של ההטבות.`
+    : `${brand} הוא מדריך עסקים של עצמאיות בישראל. אפשר לחפש עסק לפי תחום ועיר, ולפנות אליו ישירות בטלפון או בוואטסאפ.`;
+  const terms = acc
+    ? `## כללי\n${brand} הוא מדריך עסקים של עצמאיות בישראל. האתר מאפשר לחפש עסקים לפי תחום ועיר, לראות הטבות שהעסקים מציעים ולפנות אליהם ישירות בטלפון או בוואטסאפ.\n\n## אחריות\nהעסקים באתר הם עסקים עצמאיים. האחריות על השירות, המחיר, ההטבה והתנאים היא של בעלת העסק בלבד, והאתר אינו צד לעסקה בין הלקוחה לבין העסק.\n\n## הרשמה של בעלות עסק\nבעלת עסק יכולה להירשם ולפרסם בכרטיסיית העסק שלה את פרטי העסק, תמונות, תיאור והטבה. הפרטים שמפורסמים הם באחריותה, והם מוצגים לכל גולש באתר. ההנהלה רשאית לאשר, לערוך או להסיר כרטיסייה או הטבה.\n\n## הרשמה של לקוחות\nלקוחה יכולה להירשם בשם, כתובת מייל וסיסמה כדי לצפות בקודי הקופון של ההטבות שהעסקים מציעים. השימוש בקוד כפוף לתנאי ההטבה שקבעה בעלת העסק.\n\n## שימוש באתר\nהשימוש באתר באחריות הגולשת. אין להשתמש באתר לצורך הטרדה, התחזות או פרסום תוכן פוגעני.${contact}`
+    : `האתר הוא מדריך עסקים. האחריות על השירות, המחיר והתנאים היא של בעלת העסק בלבד. השימוש באתר באחריות הגולשת.${contact}`;
+  const privacy = acc
+    ? `## איזה מידע נאסף\nבהרשמה של לקוחה נאספים שם, כתובת מייל וסיסמה. הסיסמה נשמרת בצורה מוצפנת. בהרשמה של בעלת עסק נאספים בנוסף פרטי העסק שהיא מוסרת: שם העסק, תחום, עיר, טלפון, תיאור, תמונות והטבה.\n\n## מה מוצג לציבור\nפרטי העסק שבעלת העסק מסרה לפרסום מוצגים בכרטיסיית העסק לכל גולש. השם, המייל והסיסמה של לקוחות אינם מוצגים לאף גולש.\n\n## שימוש במידע\nכתובת המייל משמשת רק לפעולות החשבון, כמו אימות הכתובת ושחזור סיסמה, ומועברת לספק שירות שליחת הדוא"ל לצורך כך בלבד. איננו מוכרות מידע ואיננו מעבירות אותו לצדדים שלישיים לצורכי פרסום.\n\n## עוגיות\nהאתר משתמש בעוגיות חיוניות בלבד, לצורך שמירת ההתחברות. אין עוגיות מעקב או פרסום.\n\n## מחיקת מידע\nאפשר לבקש מחיקה של החשבון והמידע האישי בפנייה אלינו.${contact}`
+    : `האתר אינו דורש הרשמה ואינו אוסף פרטים אישיים מהגולשות. הפרטים המוצגים על כל עסק נמסרו על ידי בעלת העסק.${contact}`;
+  return { about, terms, privacy };
+}
+
 route("GET", "/about", async (req, res, params, query, ctx) => {
   const d = db.load();
   if (mode.isNetfree()) {
     const brand = mode.brandName();
-    const txt = (d.settings.netfreeAboutText || "").trim() || `${brand} הוא מדריך עסקים של עצמאיות בישראל. אפשר לחפש עסק לפי תחום ועיר, ולפנות אליו ישירות בטלפון או בוואטסאפ.`;
+    const txt = (d.settings.netfreeAboutText || "").trim() || netfreeDefaultTexts(d).about;
     const nfBody = `<h1 class="section-title">אודות</h1><div class="panel" style="text-align:right;max-width:680px;margin:0 auto;">${renderRichText(txt)}</div>`;
     return sendHtml(res, 200, page({ title: "אודות", session: ctx.session, body: nfBody, query, canonicalUrl: `${getOrigin(req)}/about` }));
   }
@@ -14353,7 +14430,7 @@ route("GET", "/admin/support/open-summary", async (req, res, params, query, ctx)
 route("GET", "/terms", async (req, res, params, query, ctx) => {
   const d = db.load();
   if (mode.isNetfree()) {
-    const txt = (d.settings.netfreeTermsText || "").trim() || "האתר הוא מדריך עסקים. האחריות על השירות, המחיר והתנאים היא של בעלת העסק בלבד. השימוש באתר באחריות הגולשת.";
+    const txt = (d.settings.netfreeTermsText || "").trim() || netfreeDefaultTexts(d).terms;
     return sendHtml(res, 200, page({ title: "תקנון", session: ctx.session, body: `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
   }
   const body = `<h1 class="section-title">תקנון</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(d.settings.termsText)}</div>`;
@@ -14363,7 +14440,7 @@ route("GET", "/terms", async (req, res, params, query, ctx) => {
 route("GET", "/privacy", async (req, res, params, query, ctx) => {
   const d = db.load();
   if (mode.isNetfree()) {
-    const txt = (d.settings.netfreePrivacyText || "").trim() || "האתר אינו דורש הרשמה ואינו אוסף פרטים אישיים מהגולשות. הפרטים המוצגים על כל עסק נמסרו על ידי בעלת העסק.";
+    const txt = (d.settings.netfreePrivacyText || "").trim() || netfreeDefaultTexts(d).privacy;
     return sendHtml(res, 200, page({ title: "מדיניות פרטיות", session: ctx.session, body: `<h1 class="section-title">מדיניות פרטיות</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(txt)}</div>`, query }));
   }
   const body = `<h1 class="section-title">מדיניות פרטיות</h1><div class="panel" style="text-align:right;max-width:720px;margin:0 auto;">${renderRichText(d.settings.privacyPolicyText)}</div>`;
