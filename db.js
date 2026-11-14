@@ -74,6 +74,10 @@ function defaultData() {
       // הרלוונטיים ב-server.js.
       arenaConsultationsEnabled: true,
       // לוח שיתופי פעולה בין עצמאיות (/connect) - כבוי עד שמדליקים בניהול; collabAutoApprove=false = כל כרטיס מחכה לאישור
+      // ליד חכם (תיבת "נחפש בשבילך" בדף הבית ובחיפוש): פעיל כברירת מחדל, אבל כל בקשה מחכה לאישור ידני (leadAutoSend=false)
+      leadEnabled: true,
+      leadAutoSend: false,
+      leadMaxRecipients: 5,
       collabEnabled: false,
       collabAutoApprove: false,
       // מועדון "YouCan" (נוסף 2026-09-02, לפי בקשה מפורשת) - מגביל את פעולת "לצפייה בקוד קופון"
