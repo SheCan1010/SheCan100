@@ -1985,7 +1985,7 @@ ${NF ? "" : '<link rel="manifest" href="/manifest.json" />'}
 <meta name="apple-mobile-web-app-title" content="${esc(siteName)}" />
 <style>${CSS}</style>
 ${embedHead}
-${d.settings.siteBackgroundImageDataUri ? `<style>body{background-image:url('${d.settings.siteBackgroundImageDataUri}');background-size:cover;background-position:top center;background-repeat:no-repeat;background-attachment:fixed;}</style>` : ""}
+${d.settings.siteBackgroundImageDataUri ? `<style>body{background-image:url('${imgSrc(d.settings.siteBackgroundImageDataUri) || ""}');background-size:cover;background-position:top center;background-repeat:no-repeat;background-attachment:fixed;}</style>` : ""}
 </head>
 <body>
 <a href="#main-content" class="skip-link">דלגי לתוכן הראשי</a>
@@ -3765,7 +3765,8 @@ ${NF ? "" : `<div class="sc-support-widget sc-support-collapsed">
 </body>
 </html>`;
   // מצב נטפרי: מסירים לגמרי את קוד החלון הקופץ של הכרטיסים (iframe וכו') - הוא לא פעיל שם ולא צריך להופיע בקוד.
-  return NF ? pageHtml.replace(/\/\*SC_CM_START\*\/[\s\S]*?\/\*SC_CM_END\*\//g, "").replace(/\.sc-cm-[a-z-]+[^{]*\{[^}]*\}\n?/g, "") : pageHtml;
+  // בנטפרי מסירים גם הערות CSS (שמזכירות זירה/קהילה/סיפורים וכו') - הן לא משפיעות על העיצוב.
+  return NF ? pageHtml.replace(/\/\*SC_CM_START\*\/[\s\S]*?\/\*SC_CM_END\*\//g, "").replace(/\.sc-cm-[a-z-]+[^{]*\{[^}]*\}\n?/g, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, (m) => m.replace(/\/\*[\s\S]*?\*\//g, "")) : pageHtml;
 }
 
 module.exports = { page, esc, categoryIcon, cityAutocompleteHtml, breadcrumbHtml, featuredStripHtml, imgSrc, IMG_CACHE, statusCirclesList };
