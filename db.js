@@ -73,6 +73,9 @@ function defaultData() {
       // /admin/toggle-arena-consultations, ואת השימוש בטוגל הזה סביב הלשונית/הטופס/ה-routes
       // הרלוונטיים ב-server.js.
       arenaConsultationsEnabled: true,
+      // לוח שיתופי פעולה בין עצמאיות (/connect) - כבוי עד שמדליקים בניהול; collabAutoApprove=false = כל כרטיס מחכה לאישור
+      collabEnabled: false,
+      collabAutoApprove: false,
       // מועדון "YouCan" (נוסף 2026-09-02, לפי בקשה מפורשת) - מגביל את פעולת "לצפייה בקוד קופון"
       // בלבד (שאר האתר פתוח בדיוק כמו היום) לחברות מועדון בתשלום. כבוי כברירת מחדל - כל עוד
       // youCanEnabled==false שום דבר לא משתנה בפועל לאף אחת. אין עדיין חיבור לסליקה אמיתית
@@ -271,6 +274,8 @@ SheCan הוא אתר אינטרנט בלבד, ואין לנו סניף, משרד
     // פנימי). totalVisits הוא הסה"כ המצטבר, dailyVisits הוא מיפוי תאריך (YYYY-MM-DD) -> מספר
     // כניסות באותו יום, כדי שאפשר יהיה להציג גם מגמה של הימים האחרונים ולא רק מספר אחד יבש.
     siteStats: { totalVisits: 0, dailyVisits: {} },
+    collabs: [], // כרטיסי שיתוף פעולה בין עצמאיות (ר' הבלוק "שיתופי פעולה" ב-server.js)
+    collabRequests: [], // בקשות חיבור בין עצמאיות
     chatMessages: [], // התכתבויות ישירות בין לקוחות לעצמאיות - { id, freelancerId, customerId, fromRole, text, date, read }
     // עמוד "הזירה" - חלק 1: "אתן שואלות, המומחיות עונות". לקוחה שואלת שאלה בתחום/תת-תחום
     // נבחר, השאלה עוברת אישור אדמין, ולאחר אישור נשלח מייל לכל העצמאיות המאושרות באותו
@@ -474,6 +479,8 @@ function migrate(data) {
   if (!Array.isArray(data.contactMessages)) { data.contactMessages = []; changed = true; }
   if (!Array.isArray(data.couponRevealEvents)) { data.couponRevealEvents = []; changed = true; }
   if (!Array.isArray(data.chatMessages)) { data.chatMessages = []; changed = true; }
+  if (!Array.isArray(data.collabs)) { data.collabs = []; changed = true; }
+  if (!Array.isArray(data.collabRequests)) { data.collabRequests = []; changed = true; }
   if (!Array.isArray(data.stories)) { data.stories = []; changed = true; }
   if (!Array.isArray(data.freelancerStatuses)) { data.freelancerStatuses = []; changed = true; }
   if (!Array.isArray(data.arenaQuestions)) { data.arenaQuestions = []; changed = true; }
