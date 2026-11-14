@@ -3266,7 +3266,6 @@ function scShowJoinPreview(){
         ? '<div class="card-photo" style="background-image:url(' + avatarUrl + ');background-size:cover;background-position:center;"></div>'
         : '<div class="card-photo">' + scEsc(name.charAt(0) || "?") + '</div>';
       var badges = [];
-      if (tier === "premium") badges.push('<span class="badge">מומלצת</span>');
       var html = '<div class="card" style="max-width:260px;">' + avatarHtml +
         '<div class="card-body">' +
         '<h3>' + scEsc(name) + '</h3>' +

@@ -73,6 +73,7 @@ function pathAllowed(method, pathname) {
     if (ALLOWED_GET.some((re) => re.test(pathname))) return true;
     return accountsEnabled() && ACCOUNT_GET.some((re) => re.test(pathname));
   }
+  if (method === "POST" && pathname === "/search/ai") return true; // החיפוש החכם - לא תלוי בהרשמה
   if (method === "POST") return accountsEnabled() && ACCOUNT_POST.some((re) => re.test(pathname));
   return false;
 }
@@ -94,7 +95,7 @@ function freelancerVisible(f) {
 // כל קישור (<a>) שמוביל לנתיב שלא ברשימה הלבנה הופך לטקסט רגיל (בלי קישור), וכל טופס שלא
 // מוביל לחיפוש נמחק. כך גם אם איזה רכיב קיים (למשל תג "הסיפור שלה מככב", כפתור מועדפים,
 // קישור לפרסום בקשה) הגיע מקוד שלא התכוונו לגעת בו - הוא לא יוצר קישור/טופס לתוכן אסור.
-const SAFE_FORM_ACTIONS = new Set(["/search"]);
+const SAFE_FORM_ACTIONS = new Set(["/search", "/search/ai"]);
 function linkPath(href) {
   if (!href) return "";
   if (/^(https?:)?\/\//i.test(href)) return null; // חיצוני - לא נוגעים
