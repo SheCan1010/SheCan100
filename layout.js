@@ -1164,6 +1164,12 @@ form .field{margin-bottom:6px;}
 .review{background:var(--white);border-radius:12px;padding:16px 18px;margin-bottom:14px;text-align:right;}
 .review-header{display:flex;align-items:center;justify-content:flex-start;gap:10px;border-bottom:1px solid #eee2d3;padding-bottom:8px;margin-bottom:10px;}
 .review-header .review-name{font-weight:800;}
+.review-header{justify-content:space-between;flex-wrap:wrap;}
+.review-header .review-stars{white-space:nowrap;}
+.review-header .review-stars .stars{color:#D9A441;font-size:16px;letter-spacing:1px;}
+.review-header .review-name{font-size:15.5px;line-height:1.35;}
+.review-date{font-size:12px;color:#9a8f86;margin-top:6px;}
+@media (max-width:720px){.review{padding:14px 14px;}.review-text{font-size:14.5px;line-height:1.7;}}
 .review-text{background:var(--cream);border:1px solid #e5ddd0;border-radius:8px;padding:10px 14px;font-size:15px;}
 .stars{color:var(--rose-dark);font-size:15px;}
 .sc-star-input{display:flex;gap:6px;font-size:30px;justify-content:center;margin:8px 0;line-height:1;}
@@ -1586,6 +1592,12 @@ form .field{margin-bottom:6px;}
   .pf-cover-plain{height:52px;}
   .pf-logo-box{width:112px;height:90px;margin-top:-40px;border-radius:13px;padding:3px;}
   .pf-name{font-size:19px;}
+  /* מובייל: לוגו ושם העסק והפרטים ממורכזים בעמוד (לא נדחסים בצד הלוגו, במיוחד כשהעמודות הצדדיות מצמצמות את הכרטיס) */
+  .pf-top{flex-direction:column;align-items:center;gap:4px;text-align:center;}
+  .pf-top .pf-id{padding-top:4px;width:100%;text-align:center;}
+  .pf-stats,.pf-badges,.pf-links{justify-content:center;}
+  .pf-stats{gap:6px 14px;}
+  .pf-links .pf-link{max-width:100%;overflow-wrap:anywhere;}
   .pf-actions{display:none;}
   .pf-sticky{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:650;background:#fff;border-top:1px solid #e5ddd0;box-shadow:0 -3px 14px rgba(0,0,0,.12);padding:8px 10px calc(8px + env(safe-area-inset-bottom));gap:8px;}
   .pf-sticky .pf-btn{padding:10px 6px;font-size:14px;}
