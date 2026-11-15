@@ -78,6 +78,7 @@ function defaultData() {
       leadEnabled: true,
       leadAutoSend: false,
       leadMaxRecipients: 5,
+      toolsEnabled: true, pricingBenchmarks: [], monthlyStarEnabled: true, monthlyStarPrize: "",
       collabEnabled: false,
       collabAutoApprove: false,
       // מועדון "YouCan" (נוסף 2026-09-02, לפי בקשה מפורשת) - מגביל את פעולת "לצפייה בקוד קופון"
