@@ -1643,9 +1643,9 @@ function subcatsJsMap() {
 // input actually submitted with the form ("cityId" on POST forms, "city" on the GET search
 // filters), `selectedId`/`selectedName` pre-fill it when editing something that already has
 // a city, and `placeholder` is the text shown in the empty field.
-function cityAutocompleteHtml({ fieldName, selectedId, selectedName, placeholder, ariaLabel }) {
+function cityAutocompleteHtml({ fieldName, selectedId, selectedName, placeholder, ariaLabel, textName }) {
   return `<div class="city-autocomplete">
-    <input type="text" class="city-autocomplete-input" placeholder="${esc(placeholder || "הקלידי שם עיר...")}"${ariaLabel ? ` aria-label="${esc(ariaLabel)}"` : ""} autocomplete="off" value="${esc(selectedName || "")}" />
+    <input type="text" class="city-autocomplete-input"${textName ? ` name="${esc(textName)}"` : ""} placeholder="${esc(placeholder || "הקלידי שם עיר...")}"${ariaLabel ? ` aria-label="${esc(ariaLabel)}"` : ""} autocomplete="off" value="${esc(selectedName || "")}" data-orig-id="${esc(selectedId || "")}" data-orig-name="${esc(selectedName || "")}" />
     <input type="hidden" name="${esc(fieldName)}" class="city-autocomplete-hidden" value="${esc(selectedId || "")}" />
     <div class="city-autocomplete-list" hidden></div>
   </div>`;
@@ -2283,7 +2283,30 @@ function scSetupCityAutocomplete(wrap) {
     list.hidden = false;
   }
   input.addEventListener("focus", function () { renderList(input.value); });
-  input.addEventListener("input", function () { hidden.value = ""; renderList(input.value); });
+  // מזהה את העיר מהטקסט שבשדה גם אם היא לא נבחרה מהרשימה (הקלדה מלאה, חזרה לעיר השמורה, או
+  // התאמה יחידה) - כך שעיר שנראית בשדה אף פעם לא "נעלמת" ונשלחת ריקה (באג שדווח בעדכון פרופיל).
+  function resolveCity() {
+    var t = (input.value || "").trim();
+    if (!t) { hidden.value = ""; return; }
+    var origId = input.getAttribute("data-orig-id"), origName = (input.getAttribute("data-orig-name") || "").trim();
+    if (origId && origName && t === origName) { hidden.value = origId; return; }
+    var exact = SC_CITIES.filter(function (c) { return c.name === t; });
+    if (exact.length) { hidden.value = exact[0].id; return; }
+    var part = SC_CITIES.filter(function (c) { return c.name.indexOf(t) !== -1; });
+    hidden.value = part.length === 1 ? part[0].id : "";
+  }
+  input.addEventListener("input", function () { hidden.value = ""; resolveCity(); renderList(input.value); });
+  function resolveAndShow() {
+    resolveCity();
+    if (hidden.value) {
+      var m = SC_CITIES.filter(function (c) { return String(c.id) === String(hidden.value); })[0];
+      if (m && input.value.trim() !== m.name) input.value = m.name;
+    }
+  }
+  input.addEventListener("change", resolveAndShow);
+  input.addEventListener("blur", function () { setTimeout(resolveAndShow, 150); });
+  var parentForm = input.form;
+  if (parentForm) parentForm.addEventListener("submit", resolveAndShow, true);
   // mousedown (not click) fires before the input's blur, so the tap on a suggestion
   // registers before the list gets hidden - this matters on mobile too, where touches
   // are reported as mousedown/mouseup as well.
@@ -2300,6 +2323,58 @@ function scSetupCityAutocomplete(wrap) {
 }
 document.addEventListener("DOMContentLoaded", function () {
   document.querySelectorAll(".city-autocomplete").forEach(scSetupCityAutocomplete);
+});
+
+// ---- טיוטת טופס: בטופס עם data-sc-draft, כל מה שהוקלד (חוץ מקבצים וסיסמאות) נשמר בדפדפן ברגע
+// השליחה. אם השרת החזיר הודעת שגיאה (?err=) - הכול חוזר למקומו בטופס, ומוצגת הודעה שהתמונות
+// צריכות לעלות מחדש. כשהשמירה מצליחה (?ok=) הטיוטה נמחקת.
+document.addEventListener("DOMContentLoaded", function () {
+  var forms = document.querySelectorAll("form[data-sc-draft]");
+  if (!forms.length) return;
+  var qs = new URLSearchParams(location.search);
+  Array.prototype.forEach.call(forms, function (form) {
+    var key = "scDraft:" + form.getAttribute("data-sc-draft");
+    function snap() {
+      var out = [];
+      Array.prototype.forEach.call(form.elements, function (el) {
+        if (!el.name || el.disabled) return;
+        var t = (el.type || "").toLowerCase();
+        if (t === "file" || t === "password" || t === "submit" || t === "button" || el.name === "website") return;
+        out.push({ n: el.name, v: el.value, c: !!el.checked, k: (t === "checkbox" || t === "radio") ? 1 : 0 });
+      });
+      return out;
+    }
+    form.addEventListener("submit", function () {
+      try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), f: snap() })); } catch (e) {}
+    });
+    if (qs.get("ok")) { try { localStorage.removeItem(key); } catch (e) {} return; }
+    if (!qs.get("err")) return;
+    var data = null;
+    try { data = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) {}
+    if (!data || !data.f || Date.now() - data.ts > 3600 * 1000) return;
+    try { localStorage.removeItem(key); } catch (e) {}
+    var els = Array.prototype.slice.call(form.elements);
+    // קודם שדות רגילים ובחירות נפתחות (שינוי תחום בונה מחדש את תתי-התחומים), אחר כך תיבות סימון
+    data.f.forEach(function (x) {
+      if (x.k) return;
+      var el = els.filter(function (e) { return e.name === x.n && !(e.type === "checkbox" || e.type === "radio" || e.type === "file"); })[0];
+      if (!el) return;
+      var changed = el.value !== x.v;
+      el.value = x.v;
+      if (changed && el.tagName === "SELECT") el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    els = Array.prototype.slice.call(form.elements);
+    data.f.forEach(function (x) {
+      if (!x.k) return;
+      els.forEach(function (e) {
+        if (e.name === x.n && (e.type === "checkbox" || e.type === "radio") && e.value === x.v) e.checked = x.c;
+      });
+    });
+    var note = document.createElement("div");
+    note.setAttribute("style", "background:#fff7e6;border:1.5px solid #f0d9a8;border-radius:12px;padding:10px 14px;margin:0 0 14px;font-size:14px;line-height:1.6;");
+    note.innerHTML = "✏️ <strong>כל מה שהקלדת נשמר בטופס</strong> - תקני את מה שצריך ולחצי שמירה שוב. תמונות שהעלית: אם בהודעה למעלה כתוב שהן נשמרו - אין צורך להעלות שוב, אחרת צריך לבחור אותן מחדש.";
+    form.insertBefore(note, form.firstChild);
+  });
 });
 
 // ---- Logo cropper: any <input type="file" data-sc-crop="1"> (freelancer logo uploads, on
