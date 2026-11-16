@@ -797,21 +797,195 @@ function migrate(data) {
 
 let cache = null;
 
+// ===== update152: שכבת נתונים עמידה =====
+// הרקע: ה-save הישן כתב ישירות על db.json (writeFileSync). אם התהליך נהרג באמצע כתיבה (אתחול של
+// Render, חוסר זיכרון, דיפלוי) הקובץ נשאר חתוך, JSON.parse נכשל בעלייה והאתר קרס בלולאה (502).
+// עכשיו: (1) כתיבה אטומית - קובץ זמני + fsync + rename, אז db.json תמיד שלם; (2) גיבוי מתגלגל
+// db.json.bak (לכל היותר פעם ב-3 דקות) + גיבוי יומי ל-7 ימים; (3) אם בכל זאת הקובץ פגום בעלייה -
+// העתק של הפגום נשמר בצד, מנסים לתקן JSON חתוך ולהשוות מול הגיבויים, ובוחרים את המלא ביותר;
+// (4) לעולם לא קורסים בגלל הקובץ - ובמקרה הקיצוני ביותר עולים עם נתונים ריקים והפגום נשאר בצד.
+const BAK_PATH = DB_PATH + ".bak";
+const BAK_EVERY_MS = 3 * 60 * 1000;
+let lastBakAt = 0;
+const recovery = { status: "ok", note: "", at: null };
+
+function stripJunk(text) {
+  // BOM, אפסים בסוף (קורה אחרי נפילת דיסק), רווחים
+  return String(text).replace(/^\uFEFF/, "").replace(/[\u0000\s]+$/, "");
+}
+
+// תיקון JSON חתוך: חותכים בפסיק האחרון מחוץ למחרוזת וסוגרים את הסוגריים הפתוחים.
+function repairTruncatedJson(raw) {
+  const text = stripJunk(raw);
+  try { return JSON.parse(text); } catch (e) {}
+  const stack = [];
+  const cuts = []; // [מיקום חיתוך, סוגריים לסגירה]
+  let inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") stack.push("}");
+    else if (c === "[") stack.push("]");
+    else if (c === "}" || c === "]") stack.pop();
+    else if (c === "," && stack.length) cuts.push([i, stack.slice().reverse().join("")]);
+  }
+  // גם המצב "נחתך מיד אחרי סוגר שנסגר" - נסיון ראשון על הטקסט עצמו + סגירות
+  const attempts = [[text.length, stack.slice().reverse().join("")]];
+  for (let k = cuts.length - 1, n = 0; k >= 0 && n < 400; k--, n++) attempts.push(cuts[k]);
+  for (const [pos, closers] of attempts) {
+    try { return JSON.parse(text.slice(0, pos) + closers); } catch (e) {}
+  }
+  return null;
+}
+
+function weight(d) {
+  // "כמה נתונים יש" - סכום האורכים של כל המערכים/אובייקטים ברמה העליונה, להשוואה בין מועמדים
+  let w = 0;
+  if (d && typeof d === "object") {
+    for (const k of Object.keys(d)) {
+      const v = d[k];
+      if (Array.isArray(v)) w += v.length;
+      else if (v && typeof v === "object") w += Object.keys(v).length;
+    }
+  }
+  return w;
+}
+
+function tryReadJson(file) {
+  try {
+    if (!fs.existsSync(file)) return null;
+    const d = JSON.parse(stripJunk(fs.readFileSync(file, "utf8")));
+    return d && typeof d === "object" ? d : null;
+  } catch (e) { return null; }
+}
+
+function listDailyBackups() {
+  try {
+    return fs.readdirSync(DATA_DIR).filter((f) => /^db\.daily-\d{8}\.json$/.test(f)).sort().reverse();
+  } catch (e) { return []; }
+}
+
+function recoverFromCorrupt(err) {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  let rawText = "";
+  try { rawText = fs.readFileSync(DB_PATH, "utf8"); } catch (e) {}
+  // 1) שומרים את הפגום בצד - לעולם לא מוחקים
+  try { fs.writeFileSync(path.join(DATA_DIR, "db.corrupt-" + ts + ".json"), rawText, "utf8"); } catch (e) {}
+  console.error("[db] db.json פגום (" + (err && err.message) + ") - מנסה לשחזר. עותק של הפגום נשמר ב-db.corrupt-" + ts + ".json");
+  const candidates = [];
+  const repaired = repairTruncatedJson(rawText);
+  if (repaired && typeof repaired === "object") candidates.push({ name: "תיקון הקובץ החתוך", d: repaired });
+  const bak = tryReadJson(BAK_PATH);
+  if (bak) candidates.push({ name: "db.json.bak", d: bak });
+  const tmp = tryReadJson(DB_PATH + ".tmp");
+  if (tmp) candidates.push({ name: "db.json.tmp", d: tmp });
+  for (const f of listDailyBackups()) {
+    const d = tryReadJson(path.join(DATA_DIR, f));
+    if (d) candidates.push({ name: f, d });
+  }
+  if (!candidates.length) return null;
+  // הכי הרבה נתונים: בסיס = הקובץ הראשי המתוקן (אם יש) - הכי עדכני. מה שהחיתוך הוריד (מפתחות
+  // שחסרים לגמרי, או המפתח האחרון שנחתך באמצע) משלימים מהגיבוי הכי מלא.
+  let best = candidates[0];
+  for (const c of candidates) if (weight(c.d) > weight(best.d)) best = c;
+  if (repaired && best.d !== repaired) {
+    const merged = Object.assign({}, repaired);
+    const keys = Object.keys(repaired);
+    const lastKey = keys[keys.length - 1];
+    const size = (v) => (Array.isArray(v) ? v.length : v && typeof v === "object" ? Object.keys(v).length : 0);
+    for (const k of Object.keys(best.d)) {
+      if (!(k in merged)) merged[k] = best.d[k];
+      else if (k === lastKey && size(best.d[k]) > size(merged[k])) merged[k] = best.d[k];
+    }
+    recovery.status = "recovered";
+    recovery.note = "שוחזר: הקובץ הראשי (מתוקן) + השלמה מתוך " + best.name + " (נבדקו " + candidates.length + " מועמדים)";
+    recovery.at = new Date().toISOString();
+    console.error("[db] " + recovery.note);
+    return merged;
+  }
+  recovery.status = "recovered";
+  recovery.note = "שוחזר מתוך: " + best.name + " (נבדקו " + candidates.length + " מועמדים)";
+  recovery.at = new Date().toISOString();
+  console.error("[db] " + recovery.note);
+  return best.d;
+}
+
 function load() {
   if (cache) return cache;
   if (!fs.existsSync(DB_PATH)) {
-    cache = defaultData();
-    save();
-  } else {
-    cache = JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
-    if (migrate(cache)) save();
+    // db.json חסר: אולי נשאר גיבוי (קובץ שנמחק/נעלם) - עדיף על פני התחלה מאפס
+    const fromBak = tryReadJson(BAK_PATH);
+    if (fromBak) {
+      cache = fromBak;
+      recovery.status = "recovered";
+      recovery.note = "db.json חסר - שוחזר מ-db.json.bak";
+      recovery.at = new Date().toISOString();
+      console.error("[db] " + recovery.note);
+      migrate(cache);
+      save();
+    } else {
+      cache = defaultData();
+      save();
+    }
+    return cache;
   }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(stripJunk(fs.readFileSync(DB_PATH, "utf8")));
+    if (!parsed || typeof parsed !== "object") throw new Error("not an object");
+  } catch (err) {
+    parsed = recoverFromCorrupt(err);
+    if (!parsed) {
+      recovery.status = "EMPTY";
+      recovery.note = "db.json פגום ולא נמצא גיבוי תקין - האתר עלה עם נתונים ריקים. הקובץ הפגום נשמר בתיקיית הנתונים (db.corrupt-*.json)";
+      recovery.at = new Date().toISOString();
+      console.error("[db] " + recovery.note);
+      parsed = defaultData();
+    }
+    cache = parsed;
+    migrate(cache);
+    lastBakAt = Date.now(); // לא דורסים את הגיבוי התקין בעותק הפגום
+    save();
+    return cache;
+  }
+  cache = parsed;
+  if (migrate(cache)) save();
   return cache;
 }
 
 function save() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  fs.writeFileSync(DB_PATH, JSON.stringify(cache, null, 2), "utf8");
+  const json = JSON.stringify(cache, null, 2);
+  const tmpPath = DB_PATH + ".tmp";
+  // גיבוי מתגלגל של הגרסה השלמה הקודמת (db.json תמיד שלם כי נכתב אטומית) - עד פעם ב-3 דקות
+  const now = Date.now();
+  if (now - lastBakAt > BAK_EVERY_MS && fs.existsSync(DB_PATH)) {
+    try {
+      fs.copyFileSync(DB_PATH, BAK_PATH);
+      lastBakAt = now;
+      const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const dailyPath = path.join(DATA_DIR, "db.daily-" + day + ".json");
+      if (!fs.existsSync(dailyPath)) {
+        fs.copyFileSync(DB_PATH, dailyPath);
+        for (const old of listDailyBackups().slice(7)) { try { fs.unlinkSync(path.join(DATA_DIR, old)); } catch (e) {} }
+      }
+    } catch (e) { console.error("[db] backup failed:", e.message); }
+  }
+  // כתיבה אטומית: זמני -> fsync -> rename
+  const fd = fs.openSync(tmpPath, "w");
+  try {
+    fs.writeFileSync(fd, json, "utf8");
+    try { fs.fsyncSync(fd); } catch (e) {}
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmpPath, DB_PATH);
 }
 
 function nextId(kind) {
@@ -827,4 +1001,4 @@ function nextId(kind) {
   return id;
 }
 
-module.exports = { load, save, nextId, DB_PATH };
+module.exports = { load, save, nextId, DB_PATH, recovery };
