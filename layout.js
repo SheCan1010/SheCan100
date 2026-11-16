@@ -2033,7 +2033,7 @@ ${NF ? "" : `<div class="sc-status-viewer-overlay" id="scStatusViewer" onclick="
 // on a phone, where a plain banner at the top can easily go unnoticed if the page doesn't
 // happen to load scrolled all the way up. ----
 document.addEventListener("DOMContentLoaded", function () {
-  var errBanner = document.querySelector(".flash-err");
+  var errBanner = document.querySelector(".flash-err, .sc-notice-top");
   if (!errBanner) return;
   errBanner.scrollIntoView({ behavior: "smooth", block: "center" });
   errBanner.classList.add("sc-flash-attention");
@@ -2650,7 +2650,9 @@ document.addEventListener("DOMContentLoaded", scSetupFormAutosave);
       sessionStorage.removeItem(KEY);
       var s = JSON.parse(raw);
       if (s && s.p === location.pathname && !location.hash && Date.now() - s.t < 30000 && s.y > 0) {
-        var restore = function () { window.scrollTo(0, s.y); };
+        // כשיש הודעת שגיאה בעמוד - היא קודמת: לא מחזירים את הגלילה למטה (שם ההודעה נשארת מחוץ למסך
+        // והטופס נראה כאילו "לא קרה כלום"), אלא נותנים להודעה להיגלל למרכז המסך.
+        var restore = function () { if (document.querySelector(".flash-err, .sc-notice-top")) return; window.scrollTo(0, s.y); };
         restore();
         document.addEventListener("DOMContentLoaded", restore);
         window.addEventListener("load", restore);
