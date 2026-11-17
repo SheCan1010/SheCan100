@@ -423,6 +423,7 @@ function nav(session, opts) {
           <details class="sc-more">
             <summary class="nav-link">עוד ▾</summary>
             <div class="sc-more-menu">
+              <a href="/jobs">💼 דרושות</a>
               <a href="/magazine">מגזין SheCan</a>
               <a href="/patternmakers">✂️ מודליסטיות</a>
               <a href="/about">מי אנחנו</a>
@@ -438,6 +439,7 @@ function nav(session, opts) {
         <a href="/">🏠 דף הבית</a>
         <a href="/search">🔍 חיפוש</a>
         <a href="/deals">🎁 ${NFN ? "הטבות" : "הטבות SheCan"}</a>
+        ${NFN ? "" : `<a href="/jobs">💼 דרושות</a>`}
         ${NFN ? `<a href="/about">אודות</a>` : `<a href="/stories">SheCan Stories</a>
         <a href="/magazine">מגזין SheCan</a>
         <a href="/influencers">${pluralName}</a>
@@ -2064,7 +2066,10 @@ function scSetupAdminCollapsibles() {
     var h3 = panel.querySelector(":scope > h3");
     if (!h3) return;
     var titleText = h3.textContent.trim();
-    var key = "scAdminPanelOpen:" + titleText;
+    // update154: המספר בסוגריים בכותרת ("מחכות לאישור שלך (3)") משתנה בכל הרשמה חדשה - אם הוא
+    // חלק מהמפתח, מצב הפתיחה נשכח בכל שינוי והאזור חוזר להיות מקופל ("אין לי איך לראות את
+    // ההרשמה"). לכן המפתח בלי המספר, ואזור שמחכה לה לפעולה (data-badge > 0) נפתח מעצמו.
+    var key = "scAdminPanelOpen:" + titleText.replace(/\\s*\\(\\d+\\)\\s*$/, "");
     if (!panel.id) panel.id = "scAdminPanel" + i;
     var bodyWrap = document.createElement("div");
     bodyWrap.className = "sc-panel-body";
@@ -2078,6 +2083,7 @@ function scSetupAdminCollapsibles() {
     h3.appendChild(toggle);
     var isOpen = false;
     try { isOpen = localStorage.getItem(key) === "1"; } catch (e) {}
+    if ((panel.id === "pending-approvals" || panel.id === "jobs-admin") && (parseInt(panel.getAttribute("data-badge") || "0", 10) || 0) > 0) isOpen = true;
     function applyState(open) {
       bodyWrap.style.display = open ? "" : "none";
       toggle.textContent = open ? "−" : "+";
@@ -2688,6 +2694,126 @@ document.addEventListener("DOMContentLoaded", scSetupFormAutosave);
 })();
 
 
+// (update158) מובייל: (1) הודעה ברורה כשחסר שדה חובה (במקום שהלחיצה על "הרשמה" "לא עושה כלום"), כולל פתיחת
+// אזור מקופל שהשדה נמצא בו; (2) חיווי "שולחת..." בזמן השליחה; (3) הקטנת תמונות גדולות מהטלפון לפני העלאה
+// (תמונה של 5-12MB מהנייד כבר לא נחסמת ולא תוקעת את השליחה ברשת סלולרית).
+(function () {
+  var toast = null;
+  function showToast(msg, ms) {
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "scInvalidToast";
+      toast.setAttribute("role", "alert");
+      toast.style.cssText = "position:fixed;top:64px;right:12px;left:12px;z-index:99999;background:#b3263e;color:#fff;padding:12px 14px;border-radius:12px;font-weight:700;font-size:15px;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.25);display:none;";
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.display = "block";
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { toast.style.display = "none"; }, ms || 7000);
+  }
+  function labelOf(el) {
+    var lab = el.closest ? el.closest("label") : null;
+    var txt = "";
+    if (lab) {
+      var clone = lab.cloneNode(true);
+      Array.prototype.forEach.call(clone.querySelectorAll("input,select,textarea,button,script,style"), function (n) { n.remove(); });
+      txt = (clone.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    if (!txt) txt = el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.name || "";
+    return txt.length > 60 ? txt.slice(0, 57) + "..." : txt;
+  }
+  var invalidBusy = false;
+  document.addEventListener("invalid", function (e) {
+    var el = e.target;
+    if (!el || invalidBusy) return;
+    invalidBusy = true;
+    setTimeout(function () { invalidBusy = false; }, 100);
+    var dt = el.closest ? el.closest("details") : null;
+    while (dt) { dt.open = true; dt = dt.parentElement ? dt.parentElement.closest("details") : null; }
+    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (err) {}
+    var oldOutline = el.style.outline;
+    el.style.outline = "3px solid #b3263e";
+    setTimeout(function () { el.style.outline = oldOutline; }, 5000);
+    showToast("רגע, חסר משהו קטן 💛 " + labelOf(el));
+  }, true);
+
+  // חיווי שליחה
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || form.tagName !== "FORM" || e.defaultPrevented) return;
+    if ((form.getAttribute("method") || "get").toLowerCase() !== "post") return;
+    var btn = e.submitter || form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+    var hasFiles = Array.prototype.some.call(form.querySelectorAll('input[type="file"]'), function (i) { return i.files && i.files.length; });
+    if (btn && !btn.getAttribute("data-sc-orig")) {
+      var isInput = btn.tagName === "INPUT";
+      var orig = isInput ? btn.value : btn.textContent;
+      btn.setAttribute("data-sc-orig", "1");
+      setTimeout(function () { if (isInput) btn.value = "⏳ שולחת..."; else btn.textContent = "⏳ שולחת..."; }, 10);
+      setTimeout(function () { if (isInput) btn.value = orig; else btn.textContent = orig; btn.removeAttribute("data-sc-orig"); }, 20000);
+    }
+    if (hasFiles) showToast("שולחת... 💛 עם תמונות זה יכול לקחת עד דקה, נא לא לסגור את העמוד", 20000);
+  });
+
+  // הקטנת תמונות JPEG גדולות לפני העלאה
+  var MAXD = 1600, MINBYTES = 900 * 1024;
+  function shrinkFile(file) {
+    if (file.type !== "image/jpeg" || file.size < MINBYTES) return Promise.resolve(file);
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth, h = img.naturalHeight;
+          var sc = Math.min(1, MAXD / Math.max(w, h));
+          if (sc === 1 && file.size < 2 * 1024 * 1024) { URL.revokeObjectURL(url); return resolve(file); }
+          var c = document.createElement("canvas");
+          c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(function (b) {
+            URL.revokeObjectURL(url);
+            if (!b || b.size >= file.size) return resolve(file);
+            var dot = file.name.lastIndexOf(".");
+            var base = dot > 0 ? file.name.slice(0, dot) : file.name;
+            try { resolve(new File([b], base + ".jpg", { type: "image/jpeg" })); } catch (err) { resolve(file); }
+          }, "image/jpeg", 0.85);
+        } catch (err) { URL.revokeObjectURL(url); resolve(file); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+  document.addEventListener("change", function (e) {
+    var inp = e.target;
+    if (!inp || inp.type !== "file" || !inp.files || !inp.files.length) return;
+    if (inp.hasAttribute("data-sc-crop") || typeof DataTransfer === "undefined" || typeof File === "undefined") return;
+    var files = Array.prototype.slice.call(inp.files);
+    if (!files.some(function (f) { return f.type === "image/jpeg" && f.size >= MINBYTES; })) return;
+    inp.setAttribute("data-sc-busy", "1");
+    Promise.all(files.map(shrinkFile)).then(function (out) {
+      try {
+        var dt = new DataTransfer();
+        out.forEach(function (f) { dt.items.add(f); });
+        inp.files = dt.files;
+      } catch (err) {}
+      inp.removeAttribute("data-sc-busy");
+      var f = inp.form;
+      if (f && f._scPending && !f.querySelector("[data-sc-busy]")) {
+        f._scPending = false;
+        setTimeout(function () { try { f.requestSubmit(); } catch (err) { f.submit(); } }, 0);
+      }
+    });
+  }, true);
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (f && f.tagName === "FORM" && f.querySelector("[data-sc-busy]")) {
+      e.preventDefault();
+      f._scPending = true;
+      showToast("מכינה את התמונות 💛 הטופס יישלח אוטומטית עוד רגע", 6000);
+    }
+  }, true);
+})();
+
 // Reveals the real deal text on a grid card's fixed "🎁 הטבת SheCan" badge - on hover/focus
 // for desktop, on tap for mobile (which has no hover). Uses one shared tooltip element
 // positioned with position:fixed and JS-computed coordinates instead of a CSS-only tooltip,
@@ -3290,7 +3416,7 @@ function scLiveFilter(){
 // /search results view-mode switcher (מורחבת/בינונית/קומפקטית) - remembers her last choice
 // in this browser via localStorage, so it stays put next time she searches, not just for
 // this one page load.
-var SC_RESULTS_VIEW_KEY = "scResultsView";
+var SC_RESULTS_VIEW_KEY = "scResultsView2"; // (update157) מפתח חדש: מנקה את "מצומצמת" שנשמרה אוטומטית אצל מבקרות בנייד
 function scSetResultsView(mode){
   var grid = document.getElementById("scCardsGrid");
   if (grid) grid.setAttribute("data-view", mode);
@@ -3306,7 +3432,7 @@ function scInitResultsView(){
   if (!grid) return;
   var saved = null;
   try { saved = localStorage.getItem(SC_RESULTS_VIEW_KEY); } catch (e) {}
-  if (!saved && window.innerWidth <= 720 && document.querySelector('.view-btn[data-view-mode="compact"]')) saved = "compact"; // בנייד: תצוגה מצומצמת כברירת מחדל
+  // (update157) בנייד ברירת המחדל היא תצוגה בינונית ("רגילה"), עם אפשרות לצמצם או להרחיב בכפתורי "תצוגה"
   if (saved) scSetResultsView(saved);
 }
 function scCloseModal(){

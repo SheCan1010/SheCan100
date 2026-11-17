@@ -152,7 +152,20 @@ function supportHint() {
   return mail ? `אפשר לפנות אלינו במייל: ${mail}` : "אפשר לפנות להנהלת האתר.";
 }
 
+// (update158) יומן קצר של ניסיונות שליחת מייל (בזיכרון) - מוצג ב-/deploy-check כדי לראות למה מייל "לא הגיע"
+// (למשל Resend שמסרב לשלוח לכתובות שאינן של בעלת החשבון כשהדומיין לא מאומת).
+const emailLog = [];
+function noteEmail(to, subject, ok, detail) {
+  const t = String(to || ""); const at = t.indexOf("@");
+  emailLog.unshift({ at: new Date().toISOString(), to: at > 1 ? t.slice(0, 2) + "***" + t.slice(at) : t, subject: String(subject || "").slice(0, 50), ok, detail: String(detail || "").slice(0, 240) });
+  if (emailLog.length > 20) emailLog.length = 20;
+}
 async function sendEmail(to, subject, html, attachments) {
+  const r = await sendEmailInner(to, subject, html, attachments);
+  noteEmail(to, subject, r.ok, r.ok ? "ok" : (r.detail || r.reason));
+  return r;
+}
+async function sendEmailInner(to, subject, html, attachments) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL || "SheCan <onboarding@resend.dev>";
   if (!apiKey) {
@@ -177,13 +190,14 @@ async function sendEmail(to, subject, html, attachments) {
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      console.warn("[email] Resend API error", res.status, await res.text().catch(() => ""));
-      return { ok: false, reason: "send_failed" };
+      const errText = await res.text().catch(() => "");
+      console.warn("[email] Resend API error", res.status, errText);
+      return { ok: false, reason: "send_failed", detail: `HTTP ${res.status} ${errText}` };
     }
     return { ok: true };
   } catch (e) {
     console.warn("[email] send threw", e.message);
-    return { ok: false, reason: "send_failed" };
+    return { ok: false, reason: "send_failed", detail: "threw: " + e.message };
   }
 }
 
@@ -601,6 +615,7 @@ function readBody(req) {
     req.on("end", () => {
       const params = new URLSearchParams(data);
       params.files = {};
+      params.filesAll = {};
       resolve(params);
     });
   });
@@ -624,6 +639,7 @@ function parseMultipart(req, contentType) {
       const buf = Buffer.concat(chunks);
       const fields = new URLSearchParams();
       const files = {};
+      const filesAll = {}; // (update157) כל הקבצים לפי שם שדה - לשדה אחד עם multiple
       let start = buf.indexOf(boundaryBuf);
       while (start !== -1) {
         const next = buf.indexOf(boundaryBuf, start + boundaryBuf.length);
@@ -643,6 +659,7 @@ function parseMultipart(req, contentType) {
             if (filenameMatch) {
               if (filenameMatch[1]) {
                 files[name] = { filename: filenameMatch[1], contentType: ctMatch ? ctMatch[1].trim() : "application/octet-stream", data: content };
+                (filesAll[name] = filesAll[name] || []).push(files[name]);
               }
             } else {
               fields.append(name, content.toString("utf8"));
@@ -652,6 +669,7 @@ function parseMultipart(req, contentType) {
         start = next;
       }
       fields.files = files;
+      fields.filesAll = filesAll;
       fields.tooBig = tooBig;
       resolve(fields);
     });
@@ -662,6 +680,18 @@ function parseMultipart(req, contentType) {
 // Server-side backstop for the maxlength attributes on free-text bio fields - a browser
 // maxlength is easy to bypass with a direct POST, so the real limit is enforced here.
 function clip(str, max) { return (str || "").slice(0, max); }
+
+// (update157) גלריה: שדה אחד עם multiple (בחירת כמה תמונות ביחד) + תאימות לשדות הישנים (gallery1..4)
+// שעדיין יכולים להגיע מדף שנטען לפני העדכון. עד 8 תמונות.
+const GALLERY_MAX_PHOTOS = 8;
+function readGalleryFiles(body, singleNames, multiName) {
+  const out = [];
+  const multi = (body.filesAll && body.filesAll[multiName]) || [];
+  for (const f of multi) if (f && f.data && f.data.length) out.push(f);
+  for (const n of singleNames) { const f = body.files && body.files[n]; if (f && f.data && f.data.length) out.push(f); }
+  return out.slice(0, GALLERY_MAX_PHOTOS);
+}
+const GALLERY_MULTI_NOTE = "אפשר לבחור כמה תמונות ביחד (לחיצה על Ctrl/⌘ או סימון כמה בגלריית הטלפון), עד 8";
 
 // שולף מספר גולמי ממחרוזת מחיר חופשית כמו "150 ₪" או "1,200 ש\"ח" - לשימוש בסינון לפי
 // מחיר מקסימלי בהשכרת שמלות (ר' GET /community/:type). מחזיר null אם אין ספרות בכלל.
@@ -1189,11 +1219,8 @@ function extraListingFormBlock(d, prefix, idx, listing) {
     <label>תחום<select name="${prefix}CategoryId${idx}" onchange="scUpdateSubcats(this, document.getElementById('${subSelId}'), '')"><option value="">בחרי תחום</option>${catOptions}</select></label>
     <label>תת-תחום (לא חובה)<select name="${prefix}SubcategoryId${idx}" id="${subSelId}"><option value="">בחרי קודם תחום</option>${subOptions}</select></label>
     <label>לוגו (לא חובה)<input type="file" name="${prefix}Logo${idx}" accept="image/*" data-sc-crop="1" /></label>
-    <label>תמונות להתרשמות (עד 4, לא חובה)
-    <input type="file" name="${prefix}Gallery1_${idx}" accept="image/*" style="margin-bottom:8px;" /></label>
-    <input type="file" name="${prefix}Gallery2_${idx}" accept="image/*" style="margin-bottom:8px;" />
-    <input type="file" name="${prefix}Gallery3_${idx}" accept="image/*" style="margin-bottom:8px;" />
-    <input type="file" name="${prefix}Gallery4_${idx}" accept="image/*" />
+    <label>תמונות להתרשמות (לא חובה - ${GALLERY_MULTI_NOTE})
+    <input type="file" name="${prefix}GalleryM_${idx}" accept="image/*" multiple /></label>
     ${nfPhotosNote()}
     <label>ספרי בכמה מילים על התחום הזה (עד 500 תווים)<textarea name="${prefix}Description${idx}" maxlength="500">${esc(l.description || "")}</textarea></label>
     <label>ההטבה בתחום הזה (עד 200 תווים) *<textarea name="${prefix}DealText${idx}" maxlength="200">${esc(l.dealText || "")}</textarea></label>
@@ -1215,8 +1242,8 @@ function readExtraListingFromBody(d, body, prefix, idx) {
   const businessName = (body.get(`${prefix}BusinessName${idx}`) || "").trim();
   const categoryId = body.get(`${prefix}CategoryId${idx}`) || "";
   if (!businessName || !categoryId) return null;
-  const galleryPhotos = [`${prefix}Gallery1_${idx}`, `${prefix}Gallery2_${idx}`, `${prefix}Gallery3_${idx}`, `${prefix}Gallery4_${idx}`]
-    .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
+  const galleryPhotos = readGalleryFiles(body, [`${prefix}Gallery1_${idx}`, `${prefix}Gallery2_${idx}`, `${prefix}Gallery3_${idx}`, `${prefix}Gallery4_${idx}`], `${prefix}GalleryM_${idx}`)
+    .map((file) => fileToDataUri(file, MAX_UPLOAD_BYTES))
     .filter(Boolean);
   return {
     id: db.nextId("listing"),
@@ -1251,8 +1278,8 @@ function applyExtraListingUpdate(d, body, prefix, listing) {
   }
   const newLogo = fileToDataUri(body.files[`${prefix}Logo`], MAX_UPLOAD_BYTES);
   if (newLogo) listing.logoDataUri = newLogo;
-  const newGallery = [`${prefix}Gallery1_`, `${prefix}Gallery2_`, `${prefix}Gallery3_`, `${prefix}Gallery4_`]
-    .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
+  const newGallery = readGalleryFiles(body, [`${prefix}Gallery1_`, `${prefix}Gallery2_`, `${prefix}Gallery3_`, `${prefix}Gallery4_`], `${prefix}GalleryM_`)
+    .map((file) => fileToDataUri(file, MAX_UPLOAD_BYTES))
     .filter(Boolean);
   if (newGallery.length) listing.galleryPhotos = newGallery;
   listing.description = clip(body.get(`${prefix}Description`), 500);
@@ -2749,13 +2776,280 @@ function route(method, pattern, handler) {
   routes.push({ method, regex: new RegExp("^" + regexStr + "$"), keys, handler });
 }
 
+// ===================== (update157) דרושות - לוח משרות =====================
+// עסקים (עם כרטיסייה באתר או בלי) מפרסמים משרה: תפקיד, תחום, עיר, תיאור, אופן יצירת קשר וגם תמונות.
+// כל משרה חדשה ממתינה לאישור המנהלת (פאנל "דרושות" בניהול) לפני שהיא עולה לאוויר, ופגה אחרי 45 יום.
+// למפרסמת יש קישור אישי (בלי סיסמה) לסגירת המשרה כשהתמלאה.
+// בנוסף: לקוחות יכולות לפרסם "מחפשת שירות" (kind="request") - מה הן מחפשות, תחום, עיר, תקציב ופרטים. הבקשה
+// מוצגת בלי פרטי קשר; רק עסק מחובר (עצמאית מאושרת) או מנהלת רואים טלפון/מייל ויכולים לפנות אליה.
+const JOB_TYPES = ["משרה מלאה", "משרה חלקית", "פרילנס / לפי פרויקט", "התמחות / התנדבות", "אחר"];
+const JOB_LIFETIME_DAYS = 45;
+const JOB_MAX_PHOTOS = 6;
+const jobRateMap = new Map();
+function isJobRateLimited(ip) {
+  const now = Date.now();
+  const recent = (jobRateMap.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
+  return recent.length >= 6;
+}
+function noteJobPosted(ip) {
+  const now = Date.now();
+  const recent = (jobRateMap.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
+  recent.push(now); jobRateMap.set(ip, recent);
+}
+function jobIsLive(j) {
+  return j && j.status === "approved" && !j.closedAt && (!j.expiresAt || new Date(j.expiresAt).getTime() > Date.now());
+}
+function jobKind(j) { return j && j.kind === "request" ? "request" : "job"; }
+function jobsTabsHtml(active) {
+  const tab = (href, label, on) => `<a href="${href}" class="btn btn-small ${on ? "" : "btn-outline"}">${label}</a>`;
+  return `<p style="text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">${tab("/jobs", "💼 דרושות (משרות)", active === "job")}${tab("/jobs/requests", "🔎 מחפשות שירות (בקשות מלקוחות)", active === "request")}</p>`;
+}
+function jobCardHtml(d, j) {
+  const photo = (j.photos && j.photos[0]) ? `<img src="${esc(j.photos[0])}" alt="" loading="lazy" style="width:100%;height:150px;object-fit:cover;border-radius:12px 12px 0 0;display:block;" />` : "";
+  const when = (() => { try { return new Date(j.approvedAt || j.createdAt).toLocaleDateString("he-IL", { timeZone: "Asia/Jerusalem", day: "numeric", month: "numeric" }); } catch (e) { return ""; } })();
+  return `<a class="panel" href="/jobs/${j.id}" style="display:block;padding:0;overflow:hidden;text-decoration:none;color:inherit;">
+    ${photo}
+    <div style="padding:14px 16px;">
+      <div style="font-size:18px;font-weight:800;color:var(--dark);margin-bottom:4px;">${esc(j.title)}</div>
+      <div class="muted" style="font-weight:700;">${jobKind(j) === "request" ? "🔎 מחפשת: " + esc((j.businessName || "").split(" ")[0]) : esc(j.businessName)}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+        ${j.categoryId ? `<span class="badge badge-outline">${esc(catName(d, j.categoryId))}</span>` : ""}
+        ${j.cityId ? `<span class="badge badge-outline">📍 ${esc(cityName(d, j.cityId))}</span>` : (j.remote ? `<span class="badge badge-outline">💻 מרחוק</span>` : "")}
+        ${j.jobType ? `<span class="badge badge-outline">${esc(j.jobType)}</span>` : ""}
+        ${j.budget ? `<span class="badge badge-outline">💰 ${esc(j.budget)}</span>` : ""}
+      </div>
+      ${when ? `<div class="muted" style="font-size:12px;margin-top:8px;">פורסם ב-${when}</div>` : ""}
+    </div></a>`;
+}
+
+function jobsListPage(kind) { return async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const catF = query.get("category") || "";
+  const cityRes = resolveCityFromBody(d, { get: (k) => (k === "cityId" ? query.get("cityId") : query.get("cityText")) || "" }, "cityText");
+  const cityF = cityRes.id;
+  const qF = (query.get("q") || "").trim().toLowerCase();
+  let jobs = (d.jobs || []).filter((j) => jobIsLive(j) && jobKind(j) === kind);
+  if (catF) jobs = jobs.filter((j) => j.categoryId === catF);
+  if (cityF) jobs = jobs.filter((j) => j.cityId === cityF || (j.remote && !j.cityId));
+  if (qF) jobs = jobs.filter((j) => `${j.title} ${j.businessName} ${j.description}`.toLowerCase().includes(qF));
+  jobs.sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
+  const catOpts = d.categories.map((c) => `<option value="${c.id}" ${catF === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const isReq = kind === "request";
+  const baseUrl = isReq ? "/jobs/requests" : "/jobs";
+  const body = `
+  <h1 class="section-title">${isReq ? "🔎 מחפשות שירות" : "💼 דרושות"}</h1>
+  ${jobsTabsHtml(kind)}
+  <p class="muted" style="text-align:center;max-width:560px;margin:0 auto 14px;">${isReq ? "לקוחות שמחפשות שירות או בעלת מקצוע, לפי תחום ועיר. את בעלת עסק ומתאימה למה שהן מחפשות? התחברי לחשבון העסק שלך ופני אליהן ישירות." : "משרות ועבודות מעסקים בקהילה, לפי תחום ועיר. יש לך עסק ואת מחפשת עובדת? אפשר לפרסם כאן בחינם."}</p>
+  <p style="text-align:center;"><a class="btn" href="/jobs/new${isReq ? "?kind=request" : ""}">${isReq ? "➕ פרסמי בקשה - מה את מחפשת" : "➕ פרסמי משרה"}</a></p>
+  <form method="get" action="${baseUrl}" class="panel" style="max-width:720px;margin:14px auto;display:grid;gap:10px;">
+    <label>תחום<select name="category"><option value="">כל התחומים</option>${catOpts}</select></label>
+    <label>עיר${cityAutocompleteHtml({ fieldName: "cityId", textName: "cityText", selectedId: cityF, selectedName: cityF ? cityName(d, cityF) : "", placeholder: "כל הארץ" })}</label>
+    <label>חיפוש חופשי<input type="text" name="q" value="${esc(query.get("q") || "")}" placeholder="למשל: מזכירה, מאפרת, עורכת וידאו" /></label>
+    <button class="btn" type="submit">סינון</button>
+  </form>
+  ${jobs.length ? `<div class="grid" style="margin-top:14px;">${jobs.map((j) => jobCardHtml(d, j)).join("")}</div>` : `<div class="panel" style="text-align:center;max-width:560px;margin:20px auto;"><p>${isReq ? "אין כרגע בקשות שמתאימות לסינון הזה." : "אין כרגע משרות שמתאימות לסינון הזה."}</p><p class="muted">אפשר לנקות את הסינון, או לפרסם בעצמך.</p></div>`}`;
+  sendHtml(res, 200, page({ title: isReq ? "מחפשות שירות" : "דרושות", session: ctx.session, body, query, description: isReq ? "לקוחות שמחפשות שירות בקהילת SheCan - בקשות לפי תחום ועיר." : "דרושות בקהילת SheCan - משרות ועבודות מעסקים של עצמאיות, לפי תחום ועיר.", canonicalUrl: `${getOrigin(req)}${baseUrl}` }));
+}; }
+route("GET", "/jobs", jobsListPage("job"));
+route("GET", "/jobs/requests", jobsListPage("request"));
+
+function jobFormBody(d, ctx, p, errMsg) {
+  const isReq = p.kind === "request";
+  const me = (ctx.session && ctx.session.role === "freelancer") ? d.freelancers.find((x) => x.id === ctx.session.id) : null;
+  const v = (k, fallback) => esc(p[k] !== undefined ? p[k] : (fallback || ""));
+  const catOpts = d.categories.map((c) => `<option value="${c.id}" ${p.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const typeOpts = JOB_TYPES.map((t) => `<option ${p.jobType === t ? "selected" : ""}>${esc(t)}</option>`).join("");
+  return `
+  <h1 class="section-title">${isReq ? "🔎 פרסום בקשה - מה את מחפשת" : "➕ פרסום משרה"}</h1>
+  ${errMsg ? `<div class="flash flash-err sc-notice-top" style="max-width:600px;margin:0 auto 12px;">${esc(errMsg)}</div>` : ""}
+  <form class="panel" method="post" action="/jobs/new" enctype="multipart/form-data" data-sc-draft="${isReq ? "job-req" : "job-new"}" style="max-width:600px;margin:0 auto;">
+    <input type="hidden" name="kind" value="${isReq ? "request" : "job"}" />
+    <p class="muted" style="margin-top:0;">${isReq ? `הבקשה עוברת בדיקה קצרה שלנו ואז מוצגת לעסקים באתר, פעילה ${JOB_LIFETIME_DAYS} יום. <strong>הטלפון והמייל שלך לא מוצגים לציבור</strong> - רק עסקים מחוברים רואים אותם ויכולים לפנות אלייך.` : `המשרה עוברת בדיקה קצרה שלנו לפני שהיא עולה לאוויר, ופעילה ${JOB_LIFETIME_DAYS} יום. ${me ? "את מחוברת - הכרטיסייה שלך תקושר למשרה." : "אפשר לפרסם גם בלי כרטיסייה באתר."}`}</p>
+    <div style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);opacity:0;pointer-events:none;top:-9999px;" aria-hidden="true"><input type="text" name="sc_hp_job" tabindex="-1" autocomplete="off" /></div>
+    <label>${isReq ? "מה את מחפשת? (כותרת)" : "מה התפקיד? (כותרת)"}<input type="text" name="title" maxlength="90" value="${v("title")}" required placeholder="${isReq ? "למשל: מאפרת לחתונה, מעצבת לוגו, צלמת לאירוע" : "למשל: דרושה מזכירה למשרד, מאפרת לאירועים"}" /></label>
+    <label>${isReq ? "השם שלך" : "שם העסק"}<input type="text" name="businessName" maxlength="80" value="${v("businessName", (!isReq && me) ? (me.businessName || me.name) : "")}" required /></label>
+    <label>תחום<select name="categoryId"><option value="">בחרי תחום</option>${catOpts}</select></label>
+    <label>עיר${cityAutocompleteHtml({ fieldName: "cityId", textName: "cityText", selectedId: p.cityId || (me ? me.cityId : ""), selectedName: (p.cityId || (me && me.cityId)) ? cityName(d, p.cityId || me.cityId) : "", placeholder: "עיר, למשל: רמת גן" })}</label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="remote" value="1" ${p.remote ? "checked" : ""} style="width:auto;" /> אפשר גם מרחוק</label>
+    ${isReq ? `<label>תקציב משוער (לא חובה)<input type="text" name="budget" maxlength="40" value="${v("budget")}" placeholder="למשל: עד 1,500 ₪" /></label>
+    <label>מתי צריך? (לא חובה)<input type="text" name="whenNeeded" maxlength="60" value="${v("whenNeeded")}" placeholder="למשל: 12.12, תוך חודש, גמיש" /></label>` : `<label>סוג המשרה<select name="jobType"><option value="">בחרי</option>${typeOpts}</select></label>`}
+    <label>${isReq ? "פירוט הבקשה - כמה שיותר פרטים (עד 1200 תווים)" : "תיאור המשרה והדרישות (עד 1200 תווים)"}<textarea name="description" maxlength="1200" required style="min-height:140px;" placeholder="${isReq ? "מה בדיוק את מחפשת, לאיזה אירוע/צורך, מיקום, סגנון, ציפיות..." : ""}">${v("description")}</textarea></label>
+    <label>${isReq ? "איך עסקים יפנו אלייך? (לא מוצג לציבור)" : "איך פונים אלייך?"}</label>
+    <label>טלפון / וואטסאפ<input type="tel" name="contactPhone" value="${v("contactPhone", (!isReq && me) ? me.phone : "")}" /></label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="contactWhatsapp" value="1" ${(p.contactWhatsapp || (me && me.hasWhatsapp && !p.title)) ? "checked" : ""} style="width:auto;" /> יש וואטסאפ במספר הזה</label>
+    <label>מייל<input type="email" name="contactEmail" value="${v("contactEmail", (!isReq && me) ? me.email : "")}" /></label>
+    <p class="muted" style="margin:-4px 0 6px;font-size:12.5px;">צריך להשאיר לפחות טלפון או מייל. הפרטים יוצגו למי שצופה במשרה.</p>
+    <label>תמונות (לא חובה - ${GALLERY_MULTI_NOTE.replace("עד 8", "עד " + JOB_MAX_PHOTOS)})
+    <input type="file" name="photos" accept="image/*" multiple /></label>
+    <button class="btn" type="submit" style="width:100%;margin-top:14px;">${isReq ? "שליחת הבקשה" : "שליחה לאישור"}</button>
+  </form>`;
+}
+
+route("GET", "/jobs/new", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  sendHtml(res, 200, page({ title: "פרסום משרה", session: ctx.session, body: jobFormBody(d, ctx, { kind: query.get("kind") === "request" ? "request" : "job" }, query.get("err") || ""), query }));
+});
+
+route("POST", "/jobs/new", async (req, res, params, query, ctx) => {
+  const body = await readBody(req);
+  const d = db.load();
+  const p = {};
+  p.kind = body.get("kind") === "request" ? "request" : "job";
+  ["budget", "whenNeeded"].forEach((k) => { p[k] = (body.get(k) || "").trim(); });
+  ["title", "businessName", "categoryId", "cityId", "jobType", "description", "contactPhone", "contactEmail"].forEach((k) => { p[k] = (body.get(k) || "").trim(); });
+  p.remote = body.get("remote") === "1"; p.contactWhatsapp = body.get("contactWhatsapp") === "1";
+  const fail = (msg) => sendHtml(res, 200, page({ title: "פרסום משרה", session: ctx.session, body: jobFormBody(d, ctx, p, msg + (Object.keys(body.files || {}).length ? " (התמונות לא נשמרו - צריך לצרף אותן שוב)" : "")), query: new URLSearchParams() }));
+  if ((body.get("sc_hp_job") || "").trim()) return redirect(res, "/jobs/thanks");
+  if (body.tooBig) return fail("התמונות ביחד גדולות מדי - נסי עם פחות תמונות או קטנות יותר.");
+  if (isJobRateLimited(getClientIp(req))) return fail("פורסמו הרבה משרות מהחיבור הזה בשעה האחרונה. נסי שוב מאוחר יותר.");
+  const cityRes = resolveCityFromBody(d, body);
+  if (cityRes.typed) return fail(`לא זיהינו את העיר "${cityRes.typed}" - בחרי אותה מהרשימה שנפתחת מתחת לשדה.`);
+  p.cityId = cityRes.id;
+  if (!p.title) return fail("צריך לכתוב כותרת למשרה.");
+  if (!p.businessName) return fail(p.kind === "request" ? "צריך לכתוב את השם שלך." : "צריך לכתוב שם עסק.");
+  if (!p.description) return fail("צריך לכתוב תיאור למשרה.");
+  if (!p.contactPhone && !p.contactEmail) return fail("צריך להשאיר טלפון או מייל כדי שיוכלו לפנות אלייך.");
+  if (p.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.contactEmail)) return fail("כתובת המייל לא נראית תקינה.");
+  const photos = readGalleryFiles(body, [], "photos").slice(0, JOB_MAX_PHOTOS).map((f) => fileToDataUri(f, MAX_UPLOAD_BYTES)).filter(Boolean);
+  const me = (p.kind === "job" && ctx.session && ctx.session.role === "freelancer") ? d.freelancers.find((x) => x.id === ctx.session.id) : null;
+  const id = db.nextId("job");
+  const closeToken = crypto.randomBytes(16).toString("hex");
+  d.jobs = d.jobs || [];
+  d.jobs.push({
+    id, kind: p.kind, budget: clip(p.budget, 40), whenNeeded: clip(p.whenNeeded, 60), title: clip(p.title, 90), businessName: clip(p.businessName, 80), categoryId: p.categoryId, cityId: p.cityId, remote: p.remote,
+    jobType: JOB_TYPES.includes(p.jobType) ? p.jobType : "", description: clip(p.description, 1200),
+    contactPhone: clip(p.contactPhone, 30), contactWhatsapp: p.contactWhatsapp && !!p.contactPhone, contactEmail: clip(p.contactEmail, 80),
+    photos, freelancerId: me ? me.id : null, closeToken,
+    status: "pending", createdAt: new Date().toISOString(), approvedAt: null, expiresAt: null, closedAt: null,
+  });
+  db.save();
+  noteJobPosted(getClientIp(req));
+  const admin = d.admins[0];
+  const notifyTo = d.settings.contactEmail || admin.email;
+  sendPushToUser(admin, { title: p.kind === "request" ? "בקשת לקוחה חדשה בדרושות" : "משרה חדשה ממתינה לאישור", body: `${p.title} - ${p.businessName}`, url: "/admin#jobs-admin" })
+    .then((pushed) => { if (!pushed) sendEmail(notifyTo, `${p.kind === "request" ? "בקשת לקוחה חדשה" : "משרה חדשה"} בדרושות ממתינה לאישור - ${p.title}`, `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(p.businessName)} פרסמה ${p.kind === "request" ? "בקשה" : "משרה"}: <strong>${esc(p.title)}</strong>.</p><p>אפשר לאשר אותה בפאנל הניהול, באזור "דרושות".</p></div>`).catch(() => {}); })
+    .catch(() => {});
+  if (p.contactEmail) {
+    const manage = `${getOrigin(req)}/jobs/close/${closeToken}`;
+    sendEmail(p.contactEmail, p.kind === "request" ? "קיבלנו את הבקשה שלך ב-SheCan - ממתינה לאישור" : "קיבלנו את המשרה שלך ב-SheCan - ממתינה לאישור", `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>קיבלנו את ${p.kind === "request" ? "הבקשה" : "המשרה"} "${esc(p.title)}". היא ממתינה לבדיקה, ותעלה לאוויר ברגע שתאושר.</p><p>${p.kind === "request" ? "כשמצאת מה שחיפשת" : "כשהמשרה תתמלא"}, אפשר לסגור אותה בקישור הזה: <a href="${esc(manage)}">${esc(manage)}</a></p></div>`).catch(() => {});
+  }
+  redirect(res, `/jobs/thanks?t=${closeToken}&k=${p.kind}`);
+});
+
+route("GET", "/jobs/thanks", async (req, res, params, query, ctx) => {
+  const t = query.get("t") || "";
+  const body = `<div class="panel" style="max-width:560px;margin:30px auto;text-align:center;line-height:1.8;">
+    <h2 style="margin-top:0;">✅ ${query.get("k") === "request" ? "הבקשה התקבלה!" : "המשרה התקבלה!"}</h2>
+    <p>${query.get("k") === "request" ? "היא ממתינה לבדיקה קצרה שלנו, ואז תוצג לעסקים - ועסקים מתאימים יפנו אלייך בטלפון או במייל." : "היא ממתינה לבדיקה קצרה שלנו, ותעלה לדף \"דרושות\" ברגע שתאושר."}</p>
+    ${/^[0-9a-f]{32}$/.test(t) ? `<p class="muted" style="font-size:13px;">שמרי את הקישור הזה - הוא מאפשר לסגור כשהמשרה התמלאה או כשמצאת מה שחיפשת:<br><a href="/jobs/close/${t}">/jobs/close/${t}</a></p>` : ""}
+    <p><a class="btn" href="${query.get("k") === "request" ? "/jobs/requests" : "/jobs"}">חזרה ללוח</a></p></div>`;
+  sendHtml(res, 200, page({ title: "התקבל", session: ctx.session, body, query }));
+});
+
+route("GET", "/jobs/close/:token", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const j = (d.jobs || []).find((x) => x.closeToken && x.closeToken === params.token);
+  if (!j) return redirect(res, `/jobs?err=${encodeURIComponent("הקישור לא תקין.")}`);
+  const body = `<div class="panel" style="max-width:560px;margin:30px auto;text-align:center;">
+    <h2 style="margin-top:0;">${j.closedAt ? "המשרה כבר סגורה" : "לסגור את המשרה?"}</h2>
+    <p><strong>${esc(j.title)}</strong> - ${esc(j.businessName)}</p>
+    ${j.closedAt ? "" : `<form method="post" action="/jobs/close/${esc(j.closeToken)}"><button class="btn" type="submit">כן, המשרה התמלאה - לסגור</button></form>`}</div>`;
+  sendHtml(res, 200, page({ title: "סגירת משרה", session: ctx.session, body, query }));
+});
+route("POST", "/jobs/close/:token", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const j = (d.jobs || []).find((x) => x.closeToken && x.closeToken === params.token);
+  if (!j) return redirect(res, `/jobs?err=${encodeURIComponent("הקישור לא תקין.")}`);
+  if (!j.closedAt) { j.closedAt = new Date().toISOString(); db.save(); }
+  redirect(res, `/jobs?ok=${encodeURIComponent("המשרה נסגרה. תודה!")}`);
+});
+
+route("GET", "/jobs/:id", async (req, res, params, query, ctx) => {
+  const d = db.load();
+  const j = (d.jobs || []).find((x) => x.id === params.id);
+  const isAdmin = ctx.session && ctx.session.role === "admin";
+  if (!j || (!jobIsLive(j) && !isAdmin)) {
+    const body = `<div class="panel" style="max-width:560px;margin:30px auto;text-align:center;"><h2 style="margin-top:0;">המשרה הזו כבר לא פעילה</h2><p class="muted">אולי היא התמלאה או שפג תוקפה.</p><p><a class="btn" href="/jobs">לכל המשרות</a></p></div>`;
+    return sendHtml(res, 404, page({ title: "דרושות", session: ctx.session, body, query }));
+  }
+  const f = j.freelancerId ? d.freelancers.find((x) => x.id === j.freelancerId && x.status === "approved" && x.active !== false) : null;
+  const phoneDigits = j.contactPhone ? waPhoneDigits(j.contactPhone) : "";
+  const isReq = jobKind(j) === "request";
+  const viewerIsBiz = !!(ctx.session && ctx.session.role === "freelancer" && d.freelancers.some((x) => x.id === ctx.session.id && x.status === "approved"));
+  const canSeeContact = !isReq || viewerIsBiz || isAdmin;
+  const body = `
+  <p style="max-width:720px;margin:10px auto;"><a href="${isReq ? "/jobs/requests" : "/jobs"}">${isReq ? "← לכל הבקשות" : "← לכל המשרות"}</a></p>
+  <div class="panel" style="max-width:720px;margin:0 auto;">
+    ${!jobIsLive(j) ? `<p class="flash flash-err">(מוצגת למנהלת בלבד - סטטוס: ${esc(j.status)}${j.closedAt ? ", סגורה" : ""})</p>` : ""}
+    <h1 style="margin:0 0 6px;font-size:26px;">${esc(j.title)}</h1>
+    <div class="muted" style="font-weight:700;">${isReq ? "🔎 מחפשת: " + esc(canSeeContact ? j.businessName : (j.businessName || "").split(" ")[0]) : esc(j.businessName)}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;">
+      ${j.budget ? `<span class="badge badge-outline">💰 ${esc(j.budget)}</span>` : ""}
+      ${j.whenNeeded ? `<span class="badge badge-outline">🗓 ${esc(j.whenNeeded)}</span>` : ""}
+      ${j.categoryId ? `<span class="badge badge-outline">${esc(catName(d, j.categoryId))}</span>` : ""}
+      ${j.cityId ? `<span class="badge badge-outline">📍 ${esc(cityName(d, j.cityId))}</span>` : ""}
+      ${j.remote ? `<span class="badge badge-outline">💻 אפשר מרחוק</span>` : ""}
+      ${j.jobType ? `<span class="badge badge-outline">${esc(j.jobType)}</span>` : ""}
+    </div>
+    ${(j.photos && j.photos.length) ? `<div class="gallery-scroll" style="margin:12px 0;">${j.photos.map((src) => zoomableImage(src, "", "gallery-thumb", j.photos)).join("")}</div>` : ""}
+    <p style="white-space:pre-wrap;line-height:1.8;">${esc(j.description)}</p>
+    <h3>${isReq ? "פנייה אליה" : "איך פונים?"}</h3>
+    ${canSeeContact ? `<div style="display:flex;gap:10px;flex-wrap:wrap;">
+      ${j.contactPhone ? `<a class="btn" href="tel:${esc(j.contactPhone)}">☎ ${esc(j.contactPhone)}</a>` : ""}
+      ${(j.contactPhone && j.contactWhatsapp) ? `<a class="btn btn-outline" href="https://wa.me/${esc(phoneDigits)}" target="_blank" rel="noopener">💬 וואטסאפ</a>` : ""}
+      ${j.contactEmail ? `<a class="btn btn-outline" href="mailto:${esc(j.contactEmail)}">✉️ ${esc(j.contactEmail)}</a>` : ""}
+      ${f ? `<a class="btn btn-outline" href="/freelancer/${f.id}">לכרטיסייה של העסק</a>` : ""}
+    </div>` : `<p class="muted">פרטי הקשר של הלקוחה מוצגים רק לעסקים מחוברים. את בעלת עסק? <a href="/login?role=freelancer&next=${encodeURIComponent("/jobs/" + j.id)}">כניסה לחשבון העסק</a> או <a href="/join">הצטרפות לאתר</a>.</p>`}
+  </div>`;
+  sendHtml(res, 200, page({ title: `${isReq ? "מחפשת" : "דרושה"}: ${j.title}`, session: ctx.session, body, query, description: clip(j.description, 150), canonicalUrl: `${getOrigin(req)}/jobs/${j.id}` }));
+});
+
+// ----- ניהול -----
+function jobsAdminPanelHtml(d) {
+  const all = d.jobs || [];
+  const pending = all.filter((j) => j.status === "pending");
+  const live = all.filter(jobIsLive);
+  const row = (j, actions) => `<div class="panel" style="background:var(--cream);">
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${(j.photos && j.photos[0]) ? `<img src="${esc(j.photos[0])}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:10px;" />` : ""}
+      <div style="flex:1;min-width:200px;"><span class="badge badge-outline">${jobKind(j) === "request" ? "🔎 בקשת לקוחה" : "💼 משרה"}</span> <strong>${esc(j.title)}</strong> <span class="muted">- ${esc(j.businessName)}</span>
+      <div class="muted" style="font-size:13px;">${j.categoryId ? esc(catName(d, j.categoryId)) + " · " : ""}${j.cityId ? esc(cityName(d, j.cityId)) + " · " : ""}${esc(j.jobType || "")}${j.freelancerId ? " · יש כרטיסייה" : " · בלי כרטיסייה"}</div>
+      <div class="muted" style="font-size:13px;">${j.contactPhone ? "☎ " + esc(j.contactPhone) + " " : ""}${j.contactEmail ? "✉️ " + esc(j.contactEmail) : ""}</div>
+      <p style="margin:6px 0 0;white-space:pre-wrap;font-size:14px;">${esc(clip(j.description, 400))}</p></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">${actions}<a class="btn btn-small btn-outline" href="/jobs/${j.id}" target="_blank" rel="noopener">👁 צפייה</a></div></div>`;
+  const post = (act, label, cls, confirmMsg) => (j) => `<form method="post" action="/admin/job/${j.id}/${act}"${confirmMsg ? ` onsubmit="return confirm('${confirmMsg}');"` : ""}><button class="btn btn-small ${cls}" type="submit">${label}</button></form>`;
+  const approveBtn = post("approve", "אישור", "", ""), rejectBtn = post("reject", "דחייה", "btn-outline", ""), closeBtn = post("close", "סגירה", "btn-outline", ""), delBtn = post("delete", "מחיקה", "btn-outline", "למחוק את המשרה לצמיתות?");
+  return `<div class="panel" id="jobs-admin" style="scroll-margin-top:90px;" data-badge="${pending.length}">
+    <h3>💼 דרושות ובקשות לקוחות - ממתינות (${pending.length})</h3>
+    ${pending.length ? pending.map((j) => row(j, approveBtn(j) + rejectBtn(j) + delBtn(j))).join("") : `<p class="muted">אין משרות שממתינות לאישור.</p>`}
+    <h4 style="margin-top:18px;">פעילות כרגע (${live.length})</h4>
+    ${live.length ? live.map((j) => row(j, closeBtn(j) + delBtn(j))).join("") : `<p class="muted">אין משרות פעילות כרגע.</p>`}
+  </div>`;
+}
+route("POST", "/admin/job/:id/:action", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const j = (d.jobs || []).find((x) => x.id === params.id);
+  if (!j) return redirect(res, `/admin?err=${encodeURIComponent("המשרה לא נמצאה.")}#jobs-admin`);
+  let msg = "";
+  if (params.action === "approve") { j.status = "approved"; j.approvedAt = new Date().toISOString(); j.expiresAt = new Date(Date.now() + JOB_LIFETIME_DAYS * 86400000).toISOString(); j.closedAt = null; msg = "המשרה אושרה ועלתה לדף דרושות."; }
+  else if (params.action === "reject") { j.status = "rejected"; msg = "המשרה נדחתה."; }
+  else if (params.action === "close") { j.closedAt = new Date().toISOString(); msg = "המשרה נסגרה."; }
+  else if (params.action === "delete") { d.jobs = d.jobs.filter((x) => x.id !== j.id); msg = "המשרה נמחקה."; }
+  else return redirect(res, "/admin");
+  db.save();
+  redirect(res, `/admin?ok=${encodeURIComponent(msg)}#jobs-admin`);
+});
+// ===================== /דרושות =====================
+
+
 // Bumped by hand every time an updated server.js is handed off, specifically so Sapir can
 // confirm a deploy actually picked up the newest code with one glance at /deploy-check in her
 // browser - instead of having to dig through Render's dashboard/logs each time to answer "did my
 // last upload actually go live?". Added after that exact question came up repeatedly in a row
 // (the magazine flipbook file, then this approval-email/attachment fix) and turned out, at least
 // once, to genuinely be the root cause (a real code fix that Render just hadn't deployed yet).
-const DEPLOY_MARKER = "update156 - עצמאית שנדחתה: הודעת כניסה נכונה + הפניה להרשמה מחדש, מייל דחייה ברור, ומייל הקבלה כבר לא נשמע כמו אישור. וגם (מ-update155) - עצמאית שנדחתה יכולה להירשם שוב עם אותו מייל (לא מקבלת יותר \"המייל כבר רשום\"). וגם (מ-update154) - בניהול: האזור \"מחכות לאישור שלך\" נפתח מעצמו כשיש הרשמה ממתינה (לפני כן הוא נשאר מקופל והיא לא נראתה). וגם (מ-update153) - דיסק מלא: האתר לא קורס כשאין מקום, ו-/deploy-check מראה מה תופס מקום בדיסק. וגם (מ-update152) - הגנת נתונים: כתיבה אטומית + גיבוי אוטומטי + שחזור עצמי של db.json פגום (מונע 502 מקובץ נתונים חתוך). וגם (מ-update151) - הגנה מקריסה: שגיאה לא צפויה באמצע ריצה נרשמת ביומן ולא מפילה את האתר (502). וגם (מ-update150) - תיקון בלבול בהרשמה: חלון הפתיחה (\"מצטרפת!\") רק סוגר את החלון ולא שולח הרשמה, והוא קפץ מחדש אחרי כל שגיאה והסתיר אותה. עכשיו הכפתור כתוב \"מעולה, ממלאת את הטופס\" וגולל לטופס, והחלון לא חוזר אחרי שגיאה. וגם (מ-update149) - מסך תודה ברור אחרי הרשמת עצמאית (/join/thanks): \"הכרטיס שלך נשלח לאישור\". וגם (מ-update148) - תיקון: הודעת שגיאה בהרשמה כבר לא נשארת מחוץ למסך (שחזור הגלילה דרס אותה, והטופס נראה כאילו \"לא קרה כלום\"). וגם (מ-update147) - יומן הרשמות בניהול: כל ניסיון הרשמה (עצמאית/לקוחה) והתוצאה שלו, כולל חסימות וקריסות. וגם (מ-update146) - תיקון דחוף בהרשמה: הגנת הספאם כבר לא חוסמת בשקט נרשמות אמיתיות (סופרת רק הרשמות שהצליחו, סף 25 בשעה, והודעה ברורה במקום \"הצלחה\" מזויפת), ושדה ה-honeypot שונה כדי שמילוי אוטומטי של הדפדפן לא יפסול הרשמה. וגם (מ-update145) - באזור האישי של העצמאית מוצגים עכשיו תמונת הפרופיל והלוגו שהועלו, עם הסבר איפה כל אחד מופיע. וגם (מ-update144) - האתר כבר לא קורס אם הקובץ cardVideo.js חסר בשרת. וגם (מ-update143) - 2026-11-15 - תיקון באג עדכון פרופיל (עיר שנראית בשדה נחשבה ריקה ונדרשה שוב), שמירת כל מה שהוקלד אחרי כל הודעת שגיאה (וגם תמונות שהועלו), הודעה מסבירה כשהמייל כבר רשום (כניסה / שכחתי סיסמה), וזיהוי מייל בלי תלות באותיות גדולות/קטנות. וגם (מ-update142) - 2026-11-15 - אזור חיפוש נקי יותר: תיבת \"נחפש בשבילך\" בדף הבית הצטמצמה לפס קטן, בחירת הרדיוס מופיעה רק אחרי בחירת מיקום, תצוגה/מיון עברו ל\"עוד אפשרויות\"; ושדות המספרים במחשבון התמחור ובמעקב החודשי עוצבו מחדש. וגם (מ-update141) - 2026-11-15 - סרטון לכרטיס שלי: קובייה חדשה ב\"המשרד שלי\" (/tools/card-video) - עצמאית יוצרת בלחיצה סרטון של הכרטיס שלה עם הג'ינגל (פעם בשבוע), תור של סרטון אחד בכל פעם, מייל עם קישור כשהסרטון מוכן, ופאנל הפעלה/כיבוי בניהול. דורש את החבילה ffmpeg-static (package.json) ואת הקובץ assets/jingle-shecan.mp3. וגם (מ-update140) - 2026-11-15 - האזור האישי של העצמאית מסודר באזורים נפתחים עם כותרות ברורות ומספר אדום להודעות חדשות (הודעות ופניות / פרופיל / חשיפה וקידום / ביקורות / חשבון), נפרד מ\"המשרד שלי\". וגם (מ-update139) - 2026-11-15 - תצוגת מובייל מסודרת: כרטיס הפרופיל ממורכז, ביקורות מסודרות (שם ודירוג בשורה, טקסט מתחת, תאריך), ותיקון תיבת \"נחפש בשבילך\" בחיפוש. וגם (מ-update138) - 2026-11-15 - \"המשרד שלי\" לעצמאיות (/business): מחשבון תמחור, מעקב חודשי, אבחון בריאות העסק, סטודיו תוכן AI, תזכורות מס, מעקב לידים, בקשת ביקורת בקליק, ועצמאית החודש בדף הבית. וגם (מ-update137) - 2026-11-14 - ליד חכם (תיבת \"נחפש בשבילך\" בדף הבית ובחיפוש) + שוק משנה בין עצמאיות בלוח השת\"פים. וגם (מ-update136) - 2026-11-14 - לוח שיתופי פעולה בין עצמאיות (/connect, כבוי עד שמדליקים בניהול) + חיפוש חכם משודרג (מודל בינוני, ראש פתוח, הרחבה אוטומטית) + הסרת התגים זמינה כרגע/מומלצת/שירות אונליין. וגם (מ-update135) - 2026-11-10 - החידה השבועית: עמוד חדש /riddle לשליחת פתרונות + תצוגת המפנקת של השבוע (שם, המתנה, וכפתור לכרטיסיה שלה) (פתוח ממוצאי שבת 18:30 עד ראשון 20:00, רק למייל רשום באתר) + נקודת קצה מאובטחת לבוט הקבוצה. וגם (מ-update134) - 7 דברים לפי בקשה מפורשת אחת גדולה: (1) מירוץ העצמאיות עבר מניסוח מבוסס-תאריך לניסוח מבוסס-יעד (700 מייסדות) בכל מקום שבו הוא מוזכר - הפופאפ 'ברוכה הבאה', הפאנל 'צרפי חברות' באזור האישי, הסטטוס האישי בתחרות ('הסטטוס שלך בתחרות' - referralStatusHtml קיבלה אפשרות goalLabel חדשה בנוסף ל-endDateLabel הקיים, בלי לגעת במירוץ הלקוחות שנשאר מבוסס-תאריך כמו שהיה), ועמוד ההסבר /race - כולם אומרים עכשיו במפורש שאנחנו במירוץ ל-700 עצמאיות מייסדות וברגע שמגיעים ליעד ההרשמה החינמית נסגרת ומתחילה הרשמה בתשלום. (2) מחירים למייסדות בדף ההרשמה: נוסף בלוק 'כמייסדת - את מקבלת הכל בלי לשלם' שמציג את מחירי המנוי הרגילים (SheCan Plus / SheCan Premium, ניתנים לעריכה בניהול תחת 'תשלום מעצמאיות' - ברירת מחדל 39/59 ₪ לחודש) מחוקים עם פס, מול '0 ₪' מודגש וגדול - גם בגוף העמוד וגם בפופאפ הפתיחה. (3) קבוצת SheCan - ערוץ שידור חדש ומשותף לכל העצמאיות: פאנל ניהול חדש ('קבוצת SheCan') עם כפתור פרסום, מתג שמאפשר/חוסם פרסום מצד עצמאיות (כבוי כברירת מחדל - רק את יכולה לפרסם), וטבלת הודעות עם 'מי ראתה' לכל הודעה; באזור האישי של העצמאיות נוסף פאנל מקביל להצגת/פרסום בקבוצה (לפי אותו מתג). (4) הודעה פרטית לכולן בשליחה אחת: פאנל ניהול חדש ('הודעה פרטית לכל העצמאיות') ששולח הודעה אישית (עם התראה+מייל, בדיוק כמו הודעה בודדת) לכל עצמאית מאושרת ופעילה בשליחה אחת, עם היסטוריית שידורים שמראה לכל שידור כמה קראו מתוך כמה ומי בדיוק (רשימה מלאה נפתחת). (5) פאנל ניהול חדש 'משפטי השראה בלבד' - מציג רק את הטקסט הגולמי (שאלה+תשובה) שכל עצמאית כתבה בסיפור ההשראה שלה, מקובץ לפי עצמאית, בלי תמונות/סטטוס/כפתורים; עצמאית שעדיין לא כתבה כלום לא מופיעה ברשימה בכלל. (6) הסרגל העליון (כולל הלוגו) נעלם אוטומטית בגלילה למטה במובייל בלבד (עד 720px) כדי לפנות מקום למסך, וחוזר בהדרגה (טרנזישן חצי שנייה) בגלילה למעלה - בדסקטופ הוא נשאר sticky כרגיל בלי שום שינוי. (7) בדיקת נגישות מגע במובייל (Playwright, רוחב 390px) על דף הבית/הרשמה/הטבות/מירוץ - הוגדל שטח הלחיצה (לא הגודל החזותי) של כמה כפתורים קטנים: כפתורי הסגירה 'X' בחלונות הקופצים, כפתורי מצב התצוגה בתוצאות חיפוש, כפתור הלייק על הטיפ השבועי, וכפתור החץ הקטן להצגת/הסתרת סיסמה. וגם (מ-update133) - 3 דברים לפי בקשה מפורשת: (1) תיקון באג משמעותי בדף הבית - המספרים הגדולים בבלוקי המירוץ היו מוצגים לרגע עם המספר האמיתי ואז 'קופצים' 2 אחורה לפני שהתחילו לעלות, מה שנראה שגוי - עכשיו הרינדור הראשוני כבר מציג את מספר ההתחלה, כך שהמספר תמיד רק עולה ולעולם לא קופץ אחורה. (2) פאנל ניהול חדש 'ניהול ההטבות' - טבלה עם כל עסק וההטבה הנוכחית שלו, טופס לעדכון ההטבה ישירות משם, וכפתור לשליחת הודעה לעצמאית - בלי לצאת מהניהול או לחפש אותה בטופס הכללי. (3) עמוד ההטבות הציבורי (/deals) שונה ל'ההטבות של YouCan' עם הסבר שאלו הטבות חברות המועדון; ברגע שמועדון YouCan מופעל בניהול (ולא לפני) מתווספת אוטומטית קופסת שיווק עם המחיר החודשי, מונה חי (מתעדכן כל 25 שניות) של מספר ההטבות הפעילות, והסבר שאפשר לממש כמה הטבות שרוצים מכל התחומים בתשלום חודשי אחד. וגם (מ-update132) - עוד חידוד לבלוקי המירוץ בדף הבית, לפי בקשה מפורשת: (1) מספר העצמאיות מודגש ובולט עוד יותר (גדול יותר מהמספר בבלוק הלקוחות). (2) המספרים הגדולים עוברים עכשיו אנימציית 'גלגל מסתובב' (odometer) בכל שינוי - גם באנימציית הכניסה בגלילה וגם ברענון החי - במקום שהספרות פשוט יוחלפו בבת אחת. (3) המילים 'היעד שלנו:' וגם קטע 'מירוץ ... יוצא לדרך/בעיצומו' מודגשים בצבע המותג. (4) הוסר המקף המיותר אחרי 'עצמאיות' בכותרת היעד של בלוק העצמאיות. (5) 'מובילה כרגע' בבלוק העצמאיות הפך לקישור לחיצה לפרופיל שלה. (6) הקישור התחתון בשני הבלוקים שונה מ'לפרטים על המירוץ' ל'ספרי לי עוד על המירוץ'. (7) בטבלת המובילות בבלוק הלקוחות מוצג רק השם הפרטי של כל לקוחה, בעיצוב מודגש יותר. וגם (מ-update131) - לפי בקשה מפורשת: עצמאית מחוברת (בכל מצב - גם אם עברה למצב לקוחה) רואה עכשיו את שני הקישורים האישיים שלה בו-זמנית בדף הבית - גם קישור השיתוף למירוץ העצמאיות וגם קישור השיתוף למירוץ הלקוחות (מכיוון שלכל עצמאית יש גם חשבון לקוחה תואם באותו מייל, מ-update120). לקוחה רגילה בלי חשבון עצמאית תואם ממשיכה לראות בבלוק העצמאיות הזמנה להתחברות כרגיל. וגם (מ-update130) - תיקון קטן: כותרת ה'יעד שלנו' בבלוק 'מרוץ העצמאיות' בדף הבית הזכירה גם את יעד הלקוחות (שאריות מהניסוח המקורי, מלפני שכל בלוק קיבל את המספר הגדול והממוקד שלו) - הוסר, ועכשיו כל בלוק מציג רק את היעד שרלוונטי אליו (עצמאיות בבלוק העצמאיות, לקוחות בבלוק הלקוחות). וגם (מ-update129) - חידוד עיצוב בלוקי המירוץ בדף הבית לפי בקשה מפורשת: (1) שני הבלוקים עברו למיקום חדש - מיד מתחת לתיבת החיפוש, מעל 'מה למצוא לך היום?' (במקום למטה ליד 'הקהילה שלנו במספרים' שנשאר במקומו הישן). (2) בכל בלוק מוצג עכשיו מספר גדול ובולט (המספר האמיתי של עצמאיות/לקוחות), מתחתיו כותרת היעד בגודל קריא, מתחת טקסט השיתוף והקישור האישי עצמו. (3) כששני המירוצים פעילים בו-זמנית הם מוצגים זה לצד זה (בדסקטופ רחב) ונערמים אחד מתחת לשני במובייל - כשרק אחד מהם פעיל הוא מוצג לבד ברוחב מלא. (4) המספר הגדול 'מתעורר לחיים' בכל פעם שמגיעים אליו בגלילה - מתחיל 2 פחות מהמספר האמיתי, אחרי 2 שניות עולה ספרה ואחרי עוד 3 שניות מגיע למספר האמיתי, כדי לשדר תחושת פעילות באתר. (5) המספרים גם מתעדכנים אוטומטית מהשרת (נקודת קצה חדשה /api/community-counts) כל 25 שניות בזמן שגולשים בדף הבית, בלי לרענן את העמוד. (6) הקישור הקטן לעמוד ההסבר שונה מ'מה זה המירוץ? לפרטים' ל'לפרטים על המירוץ ←'. וגם (מ-update128) - קונפטי חגיגי בבלוקי המירוץ בדף הבית: ברגע ששני בלוקי 'מרוץ העצמאיות'/'מרוץ הלקוחות' עברו מספר עגול (100, 200, 300...) מופיע תג 'כבר עברנו את ה-X!' בתוך הבלוק, ובגלילה עד לבלוק נורה אנימציית קונפטי קצרה בצבעי המותג. עובד אוטומטית לפי הספירה בפועל - לא דורש כלום מהניהול. וגם (מ-update127) - 4 עדכונים גדולים לפי בקשה מפורשת: (1) קודי VIP אישיים לחברות ומשפחה קרובה - בפאנל ניהול חדש ('קודי VIP אישיים') את יוצרת קוד ייחודי על שם מסוימת (קוד אוטומטי או מותאם אישית שלך), עם טבלה מסודרת של שם+קוד+סטטוס מימוש. הקוד ניתן להזנה בטופס ההצטרפות (/join) - ברגע שעצמאית מזינה קוד תקף היא פטורה לצמיתות מדמי ההצטרפות (paymentStatus הופך ישר ל-'פעיל'), והקוד ננעל לצמיתות לאותו חשבון בלבד ולא ניתן לשימוש חוזר על ידי אף אחת אחרת (גם לא אם תנסה להזין אותו שוב). יש גם שדה גיבוי באזור האישי שלה (רלוונטי רק אם תשלום נשאר ממתין אחרי שכבר אושרה). (2) שני פאנלים חדשים בניהול: 'עצמאיות וצפיות לפי תחום' (טבלה של כמות עצמאיות מאושרות + סה'כ צפיות בפרופילים, לכל תחום) ופאנל 'קישור לשיתוף עם מעקב מקור' הקיים נשאר כמו שהיה. (3) שני בלוקים חדשים בדף הבית, בנוסף לפאנל 'הקהילה שלנו במספרים' הקיים (לא במקומו) - בלוק 'מרוץ העצמאיות' (יעד 700+ עצמאיות, ניתן לעריכה בניהול) עם מי מובילה כרגע וקישור אישי לשיתוף (או כפתור התחברות כעצמאית אם לא מחוברת), ובלוק 'מרוץ הלקוחות' (יעד 1000 לקוחות, ניתן לעריכה) עם טבלת 4 המובילות וקישור אישי לשיתוף. שני הבלוקים מקושרים לעמוד הסבר קצר וחדש (/race) כדי שדף הבית עצמו יישאר קצר. שני הבלוקים מוצגים/מוסתרים לפי אותם מתגי הפעלה קיימים של כל תחרות (בפאנל 'הגדרות תחרויות הפניות' בניהול). (4) שינוי מבנה הפרס במרוץ ההפניות של העצמאיות - לפי בקשה מפורשת, 3 המקומות הראשונים (לא רק הראשונה) זוכות עכשיו ב'פרסום חינם' באתר: מקום 1 - חודש, מקום 2 - שבועיים, מקום 3 - שבוע. יש טופס חדש בפאנל 'מרוץ ההפניות של העצמאיות' בניהול לבחירת 3 המקומות, וזה מדליק אוטומטית את תכונת 'מודעה פעילה' הקיימת (התג 📣 שכבר מופיע בכל האתר) עם תאריך תפוגה אוטומטי לפי המקום - כשהתאריך עובר, המודעה נעלמת לבד בלי שתצטרכי לזכור לכבות אותה, בכל מקום שהיא מופיעה באתר (כרטיסיות, עמוד פרופיל, הדשבורד שלה, וגם הפאנל הצדדי של עסקים ממומנים). נבדק קצה-לקצה: יצירת קוד VIP, מימוש בהרשמה (כולל דחיית קוד לא תקף/כבר מומש), הענקת פרס פרסום חינם ל-3 מקומות ווידוא שהתג מופיע נכון בכל מקום, ווידוא שהתג נעלם אוטומטית אחרי תאריך התפוגה (כולל בפאנל הצדדי). וגם (מ-update126) - תיקון באג שדווח בסרטון: עצמאית שעברה למצב לקוחה ניסתה לכתוב המלצה, הקלידה טקסט, צירפה תמונה - ואז נתקלה בהודעת שגיאה 'צריך לכתוב כמה מילים על החוויה' למרות שכן כתבה טקסט. הסיבה הסבירה ביותר: בטלפונים ניידים רבים, פתיחת בורר התמונות של המכשיר (כדי לצרף תמונה לביקורת) גורמת לדפדפן לרענן את העמוד ברקע כדי לפנות זיכרון - וזה מוחק כל טקסט שכבר הוקלד בטופס, בלי שהמשתמשת שמה לב, עוד לפני שהיא לוחצת 'שליחה'. זו התנהגות של הדפדפן/מערכת ההפעלה ולא ניתן למנוע אותה בצד השרת - בדיקת הקוד בשרת אישרה שהלוגיקה שם תקינה ודוחה נכון רק המלצות שבאמת ריקות. הפתרון: כל טקסט שמוקלד בתיבת ההמלצה (גם בעמוד עסק וגם בעמוד '/reviews' הכללי) נשמר אוטומטית ובאופן שקוף ב-localStorage של הדפדפן בכל הקלדה; אם העמוד נטען מחדש בלי כוונה והתיבה ריקה, הטקסט חוזר אליה אוטומטית מהטיוטה השמורה. ברגע שההמלצה נשלחת בהצלחה (או אם כבר יש המלצה קיימת לעריכה), הטיוטה נמחקת כדי שלא תופיע שוב בטעות בביקור הבא. נבדק קצה-לקצה עם Playwright: הקלדה ואז רענון עמוד (סימולציה למקרה שדווח) - הטקסט חוזר נכון לתיבה; שליחה מוצלחת של המלצה - הטיוטה נמחקת ולא מופיעה שוב בביקור חוזר (מוצג נכון הטקסט הקיים של ההמלצה שכבר נשלחה); טופס ההמלצה הכללי בעמוד '/reviews' נבדק בנפרד ועובד באותה צורה. וגם (מ-update125) - עיצוב פס הסטטוסים כמו בווצאפ, לפי בקשה מפורשת: (1) רקע הפס הרבה יותר שקוף (היה כמעט אטום). (2) הטבעת סביב כל עיגול עכשיו דינמית - ירוק = יש עוד סטטוס של אותה עצמאית שעדיין לא נצפה בדפדפן הזה, אפור-בהיר = הכל כבר נצפה; אם יש לה כמה קבצים בו-זמנית, הטבעת מחולקת לפלחים (אחד לכל קובץ, עם פס לבן מפריד ביניהם) שכל אחד מתעדכן בנפרד ברגע שהיא צופה בו בפועל בתוך המציג - בדיוק כמו הסטורי המחולק של WhatsApp. פתיחת עיגול קופצת ישר לפריט הראשון שעדיין לא נצפה. מעקב הצפייה מקומי לדפדפן (localStorage, אותו מנגנון כמו הלייקים) ולא נשמר בשרת. נבדק ויזואלית עם צילומי מסך - טבעת ירוקה מלאה לפני צפייה, פלח נהיה אפור אחרי צפייה בפריט שלו, וכל הטבעת אפורה אחרי שנצפו כל הפריטים. וגם (מ-update124) - תיקון עיצוב: כפתור 'לתמיכה לחצי' (הכפתור הצף הקבוע בפינה הימנית-תחתונה) היה מסתיר חלק מהעיגולים של פס הסטטוסים (גם בגרסת 'תחתית' וגם בגרסת 'צד ימין') - עכשיו יש תמיד מרווח שמור בין הכפתור לפס, כך שהעיגולים לא נכנסים לשטח שלו יותר, בשני המיקומים. נבדק ויזואלית (צילום מסך) בשני המצבים אחרי התיקון. וגם (מ-update123) - (1) מעבר בין מצב לקוחה/עצמאית: כשעצמאית מחוברת כרגע כמצב לקוחה וממשיכה לקבל הודעות כעצמאית (הודעות צ'אט מלקוחות, הודעות מהנהלה) - עכשיו מופיע לה בתפריט העליון כפתור 'הודעות כעצמאית' עם מספר, שמעביר אותה בלחיצה אחת ישר לדשבורד שלה כדי לענות. בנוסף, בזירה - אם יש שאלה בתחום שלה שהיא עדיין לא ענתה עליה והיא כרגע מחוברת כלקוחה, מוצג לה 'זו שאלה בתחום שלך' עם כפתור מעבר מיידי למצב עצמאית שמחזיר אותה בדיוק לאותו עמוד כדי לענות (בלי לאבד את המקום). (2) שדרוג עצמי לרמת 'מומלצת': עצמאית ברמת 'בסיסית' יכולה עכשיו ללחוץ על כפתור באזור האישי שלה כדי לבקש שדרוג - הבקשה מופיעה בפאנל ייעודי חדש בניהול ('בקשות שדרוג לרמת מומלצת') שם מאשרים אחרי שסידרתן תשלום מולה (עדיין תהליך ידני, כמו כל תשלום אחר באתר כרגע). (3) תיקון עיצוב בעמוד המודליסטיות: כפתורי 'לצפייה בפרופיל' בכרטיסיות עכשיו תמיד מיושרים באותו גובה בשורה (לא קופצים למעלה/למטה לפי אורך הטקסט מעליהם), והטקסט ההסברי מעל הכרטיסיות קוצר וצומצם. וגם (מ-update122) - השלמות למועדון YouCan: (1) באזור האישי של הלקוחה (/account) נוסף פאנל 'מועדון YouCan' שמראה את הסטטוס שלה בזמן אמת - חברה פעילה (ועם תאריך הצטרפות), ממתינה לאישור, או לא חברה (עם כפתור הצטרפות) - מוצג רק כשהמועדון פעיל בניהול. (2) נוספה אפשרות ביטול עצמית ללקוחה (בעמוד /youcan/join, גם מקושר מהפאנל באזור האישי) - הביטול נכנס לתוקף מיידית. (3) נוספה מדיניות מועדון מפורשת: ביטול הוא סופי ולא מתחדש אוטומטית - כדי לחזור לחברות צריך להצטרף מחדש ולשלם מחדש. הטקסט הזה מוצג גם בטופס ההצטרפות עם צ'קבוקס אישור חובה (נשמר בתאריך על הלקוחה, youCanPolicyAgreedAt) וגם ליד כפתור הביטול לחברה פעילה. נבדק קצה-לקצה: בקשת הצטרפות בלי לסמן את הצ'קבוקס לא עוברת; עם הסימון - נשמר תאריך האישור, אישור ידני בניהול הופך לחברות פעילה, מופיע נכון בפאנל באזור האישי, וביטול עצמי מאפס את הסטטוס בחזרה למצב 'לא חברה' (מחייב תהליך הצטרפות ותשלום חדשים לחידוש). וגם (מ-update121) - (1) מועדון YouCan: אפשר להגביל את פעולת 'לצפייה בקוד קופון' בלבד (שאר האתר פתוח כרגיל) לחברות מועדון בתשלום (13 ש\"ח לחודש, ניתן לעריכה) - מתג הפעלה/כיבוי בניהול, כרגע (בלי סליקה מחוברת) זה תהליך ידני: לקוחה רואה הסבר קצר + הוראות תשלום (ביט/העברה, ממלאים בניהול) ושולחת בקשת הצטרפות שאת מאשרת ידנית; ברגע שיהיה חיבור סליקה אמיתי, מספיק להדביק קישור בניהול והכפתור יוביל ישר לשם. (2) סטטוסים 24 שעות לעצמאיות 'מומלצות': תמונה/סרטון שנעלם אוטומטית אחרי 24 שעות, עד 3 בו-זמנית, מוצג בעיגולים בפס קבוע באתר (תחתית או צד ימין - ניתן לבחירה/שינוי בניהול), עם לב, שיתוף, וכפתור מעבר לפרופיל; מתג הפעלה/כיבוי + פאנל פיקוח על כל הסטטוסים הפעילים בניהול. וגם (מ-update120): (1) פינת ההתייעצויות בזירה: נוסף מתג ניהול (פאנל 'פינת ההתייעצויות בזירה') להצגה/הסתרה שלה בכלל מהאתר הציבורי, בלי למחוק שום תוכן קיים - שימושי כדי להוריד אותה זמנית בזמן שמחכים לתשובת נטפרי. (2) חיבור אוטומטי בין חשבון עצמאית לחשבון לקוחה: מעכשיו כל עצמאית שנרשמת מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל/סיסמה), וגם כל העצמאיות הקיימות קיבלו את זה רטרואקטיבית - כדי שכפתור 'מעבר למצב לקוחה' תמיד יעבוד. בנוסף, בכל מקום באתר שבו רק לקוחה יכולה לפעול (כתיבת המלצה, שליחת הודעה, תגובה בזירה/בסיפורים/בקהילה) ועצמאית מחוברת מנסה - היא רואה עכשיו כפתור 'מעבר למצב לקוחה' שמעביר אותה בלחיצה אחת (בלי סיסמה) וחוזר אותה בדיוק לאותו מקום, במקום לשלוח אותה להתחבר מחדש מהתחלה. וגם (מ-update119): תיקון שני באגים בסיפור השראה השבועי: (1) תור הרוטציה האוטומטי עכשיו ממויין לפי מתי כל סיפור עצמו אושר (approvedAt), לא לפי מתי העצמאית שמאחוריו נרשמה לאתר - זה היה גורם לסיפורים להיראות 'לא לפי סדר'. (2) התאריך של 'הסיפור הבא יתעדכן ב-' עכשיו מציג גם שעה מדויקת (20:00) וגם מחושב באזור זמן ישראל במפורש, ולא רק תאריך לפי אזור הזמן של השרת (UTC ב-Render) - זה מה שגרם לתחושה שהסיפור 'לא התחלף' למרות שהתאריך המוצג כבר הגיע, כשבפועל השעה המדויקת פשוט עוד לא הגיעה. שימו לב: יום ההחלפה עצמו עדיין יכול לנחות בכל יום בשבוע אם משך הרוטציה בניהול (storyRotationDays) אינו כפולה של 7 - זה נשאר מכוון, לפי אישור מפורש. וגם (מ-update118): שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
+const DEPLOY_MARKER = "update159 - ניסוח חם וקצר להודעות לעצמאיות (אישור קבלה, דחייה, כניסה, כפילות מייל, איפוס סיסמה). וגם (מ-update158) - מובייל: הודעת שגיאה ברורה כשחסר שדה בהרשמה, חיווי שליחה והקטנת תמונות גדולות; שכחתי סיסמה גם ללקוחה שניסתה במסלול עצמאית; /deploy-check מראה מצב מיילים. וגם (מ-update157) - עמוד דרושות (משרות + בקשות לקוחות), עריכת פרטי עסק בניהול, בחירת כמה תמונות ביחד, ניקוי דף הבית, תצוגת נייד בינונית. וגם (מ-update156) - עצמאית שנדחתה: הודעת כניסה נכונה + הפניה להרשמה מחדש, מייל דחייה ברור, ומייל הקבלה כבר לא נשמע כמו אישור. וגם (מ-update155) - עצמאית שנדחתה יכולה להירשם שוב עם אותו מייל (לא מקבלת יותר \"המייל כבר רשום\"). וגם (מ-update154) - בניהול: האזור \"מחכות לאישור שלך\" נפתח מעצמו כשיש הרשמה ממתינה (לפני כן הוא נשאר מקופל והיא לא נראתה). וגם (מ-update153) - דיסק מלא: האתר לא קורס כשאין מקום, ו-/deploy-check מראה מה תופס מקום בדיסק. וגם (מ-update152) - הגנת נתונים: כתיבה אטומית + גיבוי אוטומטי + שחזור עצמי של db.json פגום (מונע 502 מקובץ נתונים חתוך). וגם (מ-update151) - הגנה מקריסה: שגיאה לא צפויה באמצע ריצה נרשמת ביומן ולא מפילה את האתר (502). וגם (מ-update150) - תיקון בלבול בהרשמה: חלון הפתיחה (\"מצטרפת!\") רק סוגר את החלון ולא שולח הרשמה, והוא קפץ מחדש אחרי כל שגיאה והסתיר אותה. עכשיו הכפתור כתוב \"מעולה, ממלאת את הטופס\" וגולל לטופס, והחלון לא חוזר אחרי שגיאה. וגם (מ-update149) - מסך תודה ברור אחרי הרשמת עצמאית (/join/thanks): \"הכרטיס שלך נשלח לאישור\". וגם (מ-update148) - תיקון: הודעת שגיאה בהרשמה כבר לא נשארת מחוץ למסך (שחזור הגלילה דרס אותה, והטופס נראה כאילו \"לא קרה כלום\"). וגם (מ-update147) - יומן הרשמות בניהול: כל ניסיון הרשמה (עצמאית/לקוחה) והתוצאה שלו, כולל חסימות וקריסות. וגם (מ-update146) - תיקון דחוף בהרשמה: הגנת הספאם כבר לא חוסמת בשקט נרשמות אמיתיות (סופרת רק הרשמות שהצליחו, סף 25 בשעה, והודעה ברורה במקום \"הצלחה\" מזויפת), ושדה ה-honeypot שונה כדי שמילוי אוטומטי של הדפדפן לא יפסול הרשמה. וגם (מ-update145) - באזור האישי של העצמאית מוצגים עכשיו תמונת הפרופיל והלוגו שהועלו, עם הסבר איפה כל אחד מופיע. וגם (מ-update144) - האתר כבר לא קורס אם הקובץ cardVideo.js חסר בשרת. וגם (מ-update143) - 2026-11-15 - תיקון באג עדכון פרופיל (עיר שנראית בשדה נחשבה ריקה ונדרשה שוב), שמירת כל מה שהוקלד אחרי כל הודעת שגיאה (וגם תמונות שהועלו), הודעה מסבירה כשהמייל כבר רשום (כניסה / שכחתי סיסמה), וזיהוי מייל בלי תלות באותיות גדולות/קטנות. וגם (מ-update142) - 2026-11-15 - אזור חיפוש נקי יותר: תיבת \"נחפש בשבילך\" בדף הבית הצטמצמה לפס קטן, בחירת הרדיוס מופיעה רק אחרי בחירת מיקום, תצוגה/מיון עברו ל\"עוד אפשרויות\"; ושדות המספרים במחשבון התמחור ובמעקב החודשי עוצבו מחדש. וגם (מ-update141) - 2026-11-15 - סרטון לכרטיס שלי: קובייה חדשה ב\"המשרד שלי\" (/tools/card-video) - עצמאית יוצרת בלחיצה סרטון של הכרטיס שלה עם הג'ינגל (פעם בשבוע), תור של סרטון אחד בכל פעם, מייל עם קישור כשהסרטון מוכן, ופאנל הפעלה/כיבוי בניהול. דורש את החבילה ffmpeg-static (package.json) ואת הקובץ assets/jingle-shecan.mp3. וגם (מ-update140) - 2026-11-15 - האזור האישי של העצמאית מסודר באזורים נפתחים עם כותרות ברורות ומספר אדום להודעות חדשות (הודעות ופניות / פרופיל / חשיפה וקידום / ביקורות / חשבון), נפרד מ\"המשרד שלי\". וגם (מ-update139) - 2026-11-15 - תצוגת מובייל מסודרת: כרטיס הפרופיל ממורכז, ביקורות מסודרות (שם ודירוג בשורה, טקסט מתחת, תאריך), ותיקון תיבת \"נחפש בשבילך\" בחיפוש. וגם (מ-update138) - 2026-11-15 - \"המשרד שלי\" לעצמאיות (/business): מחשבון תמחור, מעקב חודשי, אבחון בריאות העסק, סטודיו תוכן AI, תזכורות מס, מעקב לידים, בקשת ביקורת בקליק, ועצמאית החודש בדף הבית. וגם (מ-update137) - 2026-11-14 - ליד חכם (תיבת \"נחפש בשבילך\" בדף הבית ובחיפוש) + שוק משנה בין עצמאיות בלוח השת\"פים. וגם (מ-update136) - 2026-11-14 - לוח שיתופי פעולה בין עצמאיות (/connect, כבוי עד שמדליקים בניהול) + חיפוש חכם משודרג (מודל בינוני, ראש פתוח, הרחבה אוטומטית) + הסרת התגים זמינה כרגע/מומלצת/שירות אונליין. וגם (מ-update135) - 2026-11-10 - החידה השבועית: עמוד חדש /riddle לשליחת פתרונות + תצוגת המפנקת של השבוע (שם, המתנה, וכפתור לכרטיסיה שלה) (פתוח ממוצאי שבת 18:30 עד ראשון 20:00, רק למייל רשום באתר) + נקודת קצה מאובטחת לבוט הקבוצה. וגם (מ-update134) - 7 דברים לפי בקשה מפורשת אחת גדולה: (1) מירוץ העצמאיות עבר מניסוח מבוסס-תאריך לניסוח מבוסס-יעד (700 מייסדות) בכל מקום שבו הוא מוזכר - הפופאפ 'ברוכה הבאה', הפאנל 'צרפי חברות' באזור האישי, הסטטוס האישי בתחרות ('הסטטוס שלך בתחרות' - referralStatusHtml קיבלה אפשרות goalLabel חדשה בנוסף ל-endDateLabel הקיים, בלי לגעת במירוץ הלקוחות שנשאר מבוסס-תאריך כמו שהיה), ועמוד ההסבר /race - כולם אומרים עכשיו במפורש שאנחנו במירוץ ל-700 עצמאיות מייסדות וברגע שמגיעים ליעד ההרשמה החינמית נסגרת ומתחילה הרשמה בתשלום. (2) מחירים למייסדות בדף ההרשמה: נוסף בלוק 'כמייסדת - את מקבלת הכל בלי לשלם' שמציג את מחירי המנוי הרגילים (SheCan Plus / SheCan Premium, ניתנים לעריכה בניהול תחת 'תשלום מעצמאיות' - ברירת מחדל 39/59 ₪ לחודש) מחוקים עם פס, מול '0 ₪' מודגש וגדול - גם בגוף העמוד וגם בפופאפ הפתיחה. (3) קבוצת SheCan - ערוץ שידור חדש ומשותף לכל העצמאיות: פאנל ניהול חדש ('קבוצת SheCan') עם כפתור פרסום, מתג שמאפשר/חוסם פרסום מצד עצמאיות (כבוי כברירת מחדל - רק את יכולה לפרסם), וטבלת הודעות עם 'מי ראתה' לכל הודעה; באזור האישי של העצמאיות נוסף פאנל מקביל להצגת/פרסום בקבוצה (לפי אותו מתג). (4) הודעה פרטית לכולן בשליחה אחת: פאנל ניהול חדש ('הודעה פרטית לכל העצמאיות') ששולח הודעה אישית (עם התראה+מייל, בדיוק כמו הודעה בודדת) לכל עצמאית מאושרת ופעילה בשליחה אחת, עם היסטוריית שידורים שמראה לכל שידור כמה קראו מתוך כמה ומי בדיוק (רשימה מלאה נפתחת). (5) פאנל ניהול חדש 'משפטי השראה בלבד' - מציג רק את הטקסט הגולמי (שאלה+תשובה) שכל עצמאית כתבה בסיפור ההשראה שלה, מקובץ לפי עצמאית, בלי תמונות/סטטוס/כפתורים; עצמאית שעדיין לא כתבה כלום לא מופיעה ברשימה בכלל. (6) הסרגל העליון (כולל הלוגו) נעלם אוטומטית בגלילה למטה במובייל בלבד (עד 720px) כדי לפנות מקום למסך, וחוזר בהדרגה (טרנזישן חצי שנייה) בגלילה למעלה - בדסקטופ הוא נשאר sticky כרגיל בלי שום שינוי. (7) בדיקת נגישות מגע במובייל (Playwright, רוחב 390px) על דף הבית/הרשמה/הטבות/מירוץ - הוגדל שטח הלחיצה (לא הגודל החזותי) של כמה כפתורים קטנים: כפתורי הסגירה 'X' בחלונות הקופצים, כפתורי מצב התצוגה בתוצאות חיפוש, כפתור הלייק על הטיפ השבועי, וכפתור החץ הקטן להצגת/הסתרת סיסמה. וגם (מ-update133) - 3 דברים לפי בקשה מפורשת: (1) תיקון באג משמעותי בדף הבית - המספרים הגדולים בבלוקי המירוץ היו מוצגים לרגע עם המספר האמיתי ואז 'קופצים' 2 אחורה לפני שהתחילו לעלות, מה שנראה שגוי - עכשיו הרינדור הראשוני כבר מציג את מספר ההתחלה, כך שהמספר תמיד רק עולה ולעולם לא קופץ אחורה. (2) פאנל ניהול חדש 'ניהול ההטבות' - טבלה עם כל עסק וההטבה הנוכחית שלו, טופס לעדכון ההטבה ישירות משם, וכפתור לשליחת הודעה לעצמאית - בלי לצאת מהניהול או לחפש אותה בטופס הכללי. (3) עמוד ההטבות הציבורי (/deals) שונה ל'ההטבות של YouCan' עם הסבר שאלו הטבות חברות המועדון; ברגע שמועדון YouCan מופעל בניהול (ולא לפני) מתווספת אוטומטית קופסת שיווק עם המחיר החודשי, מונה חי (מתעדכן כל 25 שניות) של מספר ההטבות הפעילות, והסבר שאפשר לממש כמה הטבות שרוצים מכל התחומים בתשלום חודשי אחד. וגם (מ-update132) - עוד חידוד לבלוקי המירוץ בדף הבית, לפי בקשה מפורשת: (1) מספר העצמאיות מודגש ובולט עוד יותר (גדול יותר מהמספר בבלוק הלקוחות). (2) המספרים הגדולים עוברים עכשיו אנימציית 'גלגל מסתובב' (odometer) בכל שינוי - גם באנימציית הכניסה בגלילה וגם ברענון החי - במקום שהספרות פשוט יוחלפו בבת אחת. (3) המילים 'היעד שלנו:' וגם קטע 'מירוץ ... יוצא לדרך/בעיצומו' מודגשים בצבע המותג. (4) הוסר המקף המיותר אחרי 'עצמאיות' בכותרת היעד של בלוק העצמאיות. (5) 'מובילה כרגע' בבלוק העצמאיות הפך לקישור לחיצה לפרופיל שלה. (6) הקישור התחתון בשני הבלוקים שונה מ'לפרטים על המירוץ' ל'ספרי לי עוד על המירוץ'. (7) בטבלת המובילות בבלוק הלקוחות מוצג רק השם הפרטי של כל לקוחה, בעיצוב מודגש יותר. וגם (מ-update131) - לפי בקשה מפורשת: עצמאית מחוברת (בכל מצב - גם אם עברה למצב לקוחה) רואה עכשיו את שני הקישורים האישיים שלה בו-זמנית בדף הבית - גם קישור השיתוף למירוץ העצמאיות וגם קישור השיתוף למירוץ הלקוחות (מכיוון שלכל עצמאית יש גם חשבון לקוחה תואם באותו מייל, מ-update120). לקוחה רגילה בלי חשבון עצמאית תואם ממשיכה לראות בבלוק העצמאיות הזמנה להתחברות כרגיל. וגם (מ-update130) - תיקון קטן: כותרת ה'יעד שלנו' בבלוק 'מרוץ העצמאיות' בדף הבית הזכירה גם את יעד הלקוחות (שאריות מהניסוח המקורי, מלפני שכל בלוק קיבל את המספר הגדול והממוקד שלו) - הוסר, ועכשיו כל בלוק מציג רק את היעד שרלוונטי אליו (עצמאיות בבלוק העצמאיות, לקוחות בבלוק הלקוחות). וגם (מ-update129) - חידוד עיצוב בלוקי המירוץ בדף הבית לפי בקשה מפורשת: (1) שני הבלוקים עברו למיקום חדש - מיד מתחת לתיבת החיפוש, מעל 'מה למצוא לך היום?' (במקום למטה ליד 'הקהילה שלנו במספרים' שנשאר במקומו הישן). (2) בכל בלוק מוצג עכשיו מספר גדול ובולט (המספר האמיתי של עצמאיות/לקוחות), מתחתיו כותרת היעד בגודל קריא, מתחת טקסט השיתוף והקישור האישי עצמו. (3) כששני המירוצים פעילים בו-זמנית הם מוצגים זה לצד זה (בדסקטופ רחב) ונערמים אחד מתחת לשני במובייל - כשרק אחד מהם פעיל הוא מוצג לבד ברוחב מלא. (4) המספר הגדול 'מתעורר לחיים' בכל פעם שמגיעים אליו בגלילה - מתחיל 2 פחות מהמספר האמיתי, אחרי 2 שניות עולה ספרה ואחרי עוד 3 שניות מגיע למספר האמיתי, כדי לשדר תחושת פעילות באתר. (5) המספרים גם מתעדכנים אוטומטית מהשרת (נקודת קצה חדשה /api/community-counts) כל 25 שניות בזמן שגולשים בדף הבית, בלי לרענן את העמוד. (6) הקישור הקטן לעמוד ההסבר שונה מ'מה זה המירוץ? לפרטים' ל'לפרטים על המירוץ ←'. וגם (מ-update128) - קונפטי חגיגי בבלוקי המירוץ בדף הבית: ברגע ששני בלוקי 'מרוץ העצמאיות'/'מרוץ הלקוחות' עברו מספר עגול (100, 200, 300...) מופיע תג 'כבר עברנו את ה-X!' בתוך הבלוק, ובגלילה עד לבלוק נורה אנימציית קונפטי קצרה בצבעי המותג. עובד אוטומטית לפי הספירה בפועל - לא דורש כלום מהניהול. וגם (מ-update127) - 4 עדכונים גדולים לפי בקשה מפורשת: (1) קודי VIP אישיים לחברות ומשפחה קרובה - בפאנל ניהול חדש ('קודי VIP אישיים') את יוצרת קוד ייחודי על שם מסוימת (קוד אוטומטי או מותאם אישית שלך), עם טבלה מסודרת של שם+קוד+סטטוס מימוש. הקוד ניתן להזנה בטופס ההצטרפות (/join) - ברגע שעצמאית מזינה קוד תקף היא פטורה לצמיתות מדמי ההצטרפות (paymentStatus הופך ישר ל-'פעיל'), והקוד ננעל לצמיתות לאותו חשבון בלבד ולא ניתן לשימוש חוזר על ידי אף אחת אחרת (גם לא אם תנסה להזין אותו שוב). יש גם שדה גיבוי באזור האישי שלה (רלוונטי רק אם תשלום נשאר ממתין אחרי שכבר אושרה). (2) שני פאנלים חדשים בניהול: 'עצמאיות וצפיות לפי תחום' (טבלה של כמות עצמאיות מאושרות + סה'כ צפיות בפרופילים, לכל תחום) ופאנל 'קישור לשיתוף עם מעקב מקור' הקיים נשאר כמו שהיה. (3) שני בלוקים חדשים בדף הבית, בנוסף לפאנל 'הקהילה שלנו במספרים' הקיים (לא במקומו) - בלוק 'מרוץ העצמאיות' (יעד 700+ עצמאיות, ניתן לעריכה בניהול) עם מי מובילה כרגע וקישור אישי לשיתוף (או כפתור התחברות כעצמאית אם לא מחוברת), ובלוק 'מרוץ הלקוחות' (יעד 1000 לקוחות, ניתן לעריכה) עם טבלת 4 המובילות וקישור אישי לשיתוף. שני הבלוקים מקושרים לעמוד הסבר קצר וחדש (/race) כדי שדף הבית עצמו יישאר קצר. שני הבלוקים מוצגים/מוסתרים לפי אותם מתגי הפעלה קיימים של כל תחרות (בפאנל 'הגדרות תחרויות הפניות' בניהול). (4) שינוי מבנה הפרס במרוץ ההפניות של העצמאיות - לפי בקשה מפורשת, 3 המקומות הראשונים (לא רק הראשונה) זוכות עכשיו ב'פרסום חינם' באתר: מקום 1 - חודש, מקום 2 - שבועיים, מקום 3 - שבוע. יש טופס חדש בפאנל 'מרוץ ההפניות של העצמאיות' בניהול לבחירת 3 המקומות, וזה מדליק אוטומטית את תכונת 'מודעה פעילה' הקיימת (התג 📣 שכבר מופיע בכל האתר) עם תאריך תפוגה אוטומטי לפי המקום - כשהתאריך עובר, המודעה נעלמת לבד בלי שתצטרכי לזכור לכבות אותה, בכל מקום שהיא מופיעה באתר (כרטיסיות, עמוד פרופיל, הדשבורד שלה, וגם הפאנל הצדדי של עסקים ממומנים). נבדק קצה-לקצה: יצירת קוד VIP, מימוש בהרשמה (כולל דחיית קוד לא תקף/כבר מומש), הענקת פרס פרסום חינם ל-3 מקומות ווידוא שהתג מופיע נכון בכל מקום, ווידוא שהתג נעלם אוטומטית אחרי תאריך התפוגה (כולל בפאנל הצדדי). וגם (מ-update126) - תיקון באג שדווח בסרטון: עצמאית שעברה למצב לקוחה ניסתה לכתוב המלצה, הקלידה טקסט, צירפה תמונה - ואז נתקלה בהודעת שגיאה 'צריך לכתוב כמה מילים על החוויה' למרות שכן כתבה טקסט. הסיבה הסבירה ביותר: בטלפונים ניידים רבים, פתיחת בורר התמונות של המכשיר (כדי לצרף תמונה לביקורת) גורמת לדפדפן לרענן את העמוד ברקע כדי לפנות זיכרון - וזה מוחק כל טקסט שכבר הוקלד בטופס, בלי שהמשתמשת שמה לב, עוד לפני שהיא לוחצת 'שליחה'. זו התנהגות של הדפדפן/מערכת ההפעלה ולא ניתן למנוע אותה בצד השרת - בדיקת הקוד בשרת אישרה שהלוגיקה שם תקינה ודוחה נכון רק המלצות שבאמת ריקות. הפתרון: כל טקסט שמוקלד בתיבת ההמלצה (גם בעמוד עסק וגם בעמוד '/reviews' הכללי) נשמר אוטומטית ובאופן שקוף ב-localStorage של הדפדפן בכל הקלדה; אם העמוד נטען מחדש בלי כוונה והתיבה ריקה, הטקסט חוזר אליה אוטומטית מהטיוטה השמורה. ברגע שההמלצה נשלחת בהצלחה (או אם כבר יש המלצה קיימת לעריכה), הטיוטה נמחקת כדי שלא תופיע שוב בטעות בביקור הבא. נבדק קצה-לקצה עם Playwright: הקלדה ואז רענון עמוד (סימולציה למקרה שדווח) - הטקסט חוזר נכון לתיבה; שליחה מוצלחת של המלצה - הטיוטה נמחקת ולא מופיעה שוב בביקור חוזר (מוצג נכון הטקסט הקיים של ההמלצה שכבר נשלחה); טופס ההמלצה הכללי בעמוד '/reviews' נבדק בנפרד ועובד באותה צורה. וגם (מ-update125) - עיצוב פס הסטטוסים כמו בווצאפ, לפי בקשה מפורשת: (1) רקע הפס הרבה יותר שקוף (היה כמעט אטום). (2) הטבעת סביב כל עיגול עכשיו דינמית - ירוק = יש עוד סטטוס של אותה עצמאית שעדיין לא נצפה בדפדפן הזה, אפור-בהיר = הכל כבר נצפה; אם יש לה כמה קבצים בו-זמנית, הטבעת מחולקת לפלחים (אחד לכל קובץ, עם פס לבן מפריד ביניהם) שכל אחד מתעדכן בנפרד ברגע שהיא צופה בו בפועל בתוך המציג - בדיוק כמו הסטורי המחולק של WhatsApp. פתיחת עיגול קופצת ישר לפריט הראשון שעדיין לא נצפה. מעקב הצפייה מקומי לדפדפן (localStorage, אותו מנגנון כמו הלייקים) ולא נשמר בשרת. נבדק ויזואלית עם צילומי מסך - טבעת ירוקה מלאה לפני צפייה, פלח נהיה אפור אחרי צפייה בפריט שלו, וכל הטבעת אפורה אחרי שנצפו כל הפריטים. וגם (מ-update124) - תיקון עיצוב: כפתור 'לתמיכה לחצי' (הכפתור הצף הקבוע בפינה הימנית-תחתונה) היה מסתיר חלק מהעיגולים של פס הסטטוסים (גם בגרסת 'תחתית' וגם בגרסת 'צד ימין') - עכשיו יש תמיד מרווח שמור בין הכפתור לפס, כך שהעיגולים לא נכנסים לשטח שלו יותר, בשני המיקומים. נבדק ויזואלית (צילום מסך) בשני המצבים אחרי התיקון. וגם (מ-update123) - (1) מעבר בין מצב לקוחה/עצמאית: כשעצמאית מחוברת כרגע כמצב לקוחה וממשיכה לקבל הודעות כעצמאית (הודעות צ'אט מלקוחות, הודעות מהנהלה) - עכשיו מופיע לה בתפריט העליון כפתור 'הודעות כעצמאית' עם מספר, שמעביר אותה בלחיצה אחת ישר לדשבורד שלה כדי לענות. בנוסף, בזירה - אם יש שאלה בתחום שלה שהיא עדיין לא ענתה עליה והיא כרגע מחוברת כלקוחה, מוצג לה 'זו שאלה בתחום שלך' עם כפתור מעבר מיידי למצב עצמאית שמחזיר אותה בדיוק לאותו עמוד כדי לענות (בלי לאבד את המקום). (2) שדרוג עצמי לרמת 'מומלצת': עצמאית ברמת 'בסיסית' יכולה עכשיו ללחוץ על כפתור באזור האישי שלה כדי לבקש שדרוג - הבקשה מופיעה בפאנל ייעודי חדש בניהול ('בקשות שדרוג לרמת מומלצת') שם מאשרים אחרי שסידרתן תשלום מולה (עדיין תהליך ידני, כמו כל תשלום אחר באתר כרגע). (3) תיקון עיצוב בעמוד המודליסטיות: כפתורי 'לצפייה בפרופיל' בכרטיסיות עכשיו תמיד מיושרים באותו גובה בשורה (לא קופצים למעלה/למטה לפי אורך הטקסט מעליהם), והטקסט ההסברי מעל הכרטיסיות קוצר וצומצם. וגם (מ-update122) - השלמות למועדון YouCan: (1) באזור האישי של הלקוחה (/account) נוסף פאנל 'מועדון YouCan' שמראה את הסטטוס שלה בזמן אמת - חברה פעילה (ועם תאריך הצטרפות), ממתינה לאישור, או לא חברה (עם כפתור הצטרפות) - מוצג רק כשהמועדון פעיל בניהול. (2) נוספה אפשרות ביטול עצמית ללקוחה (בעמוד /youcan/join, גם מקושר מהפאנל באזור האישי) - הביטול נכנס לתוקף מיידית. (3) נוספה מדיניות מועדון מפורשת: ביטול הוא סופי ולא מתחדש אוטומטית - כדי לחזור לחברות צריך להצטרף מחדש ולשלם מחדש. הטקסט הזה מוצג גם בטופס ההצטרפות עם צ'קבוקס אישור חובה (נשמר בתאריך על הלקוחה, youCanPolicyAgreedAt) וגם ליד כפתור הביטול לחברה פעילה. נבדק קצה-לקצה: בקשת הצטרפות בלי לסמן את הצ'קבוקס לא עוברת; עם הסימון - נשמר תאריך האישור, אישור ידני בניהול הופך לחברות פעילה, מופיע נכון בפאנל באזור האישי, וביטול עצמי מאפס את הסטטוס בחזרה למצב 'לא חברה' (מחייב תהליך הצטרפות ותשלום חדשים לחידוש). וגם (מ-update121) - (1) מועדון YouCan: אפשר להגביל את פעולת 'לצפייה בקוד קופון' בלבד (שאר האתר פתוח כרגיל) לחברות מועדון בתשלום (13 ש\"ח לחודש, ניתן לעריכה) - מתג הפעלה/כיבוי בניהול, כרגע (בלי סליקה מחוברת) זה תהליך ידני: לקוחה רואה הסבר קצר + הוראות תשלום (ביט/העברה, ממלאים בניהול) ושולחת בקשת הצטרפות שאת מאשרת ידנית; ברגע שיהיה חיבור סליקה אמיתי, מספיק להדביק קישור בניהול והכפתור יוביל ישר לשם. (2) סטטוסים 24 שעות לעצמאיות 'מומלצות': תמונה/סרטון שנעלם אוטומטית אחרי 24 שעות, עד 3 בו-זמנית, מוצג בעיגולים בפס קבוע באתר (תחתית או צד ימין - ניתן לבחירה/שינוי בניהול), עם לב, שיתוף, וכפתור מעבר לפרופיל; מתג הפעלה/כיבוי + פאנל פיקוח על כל הסטטוסים הפעילים בניהול. וגם (מ-update120): (1) פינת ההתייעצויות בזירה: נוסף מתג ניהול (פאנל 'פינת ההתייעצויות בזירה') להצגה/הסתרה שלה בכלל מהאתר הציבורי, בלי למחוק שום תוכן קיים - שימושי כדי להוריד אותה זמנית בזמן שמחכים לתשובת נטפרי. (2) חיבור אוטומטי בין חשבון עצמאית לחשבון לקוחה: מעכשיו כל עצמאית שנרשמת מקבלת אוטומטית גם חשבון לקוחה תואם (אותו מייל/סיסמה), וגם כל העצמאיות הקיימות קיבלו את זה רטרואקטיבית - כדי שכפתור 'מעבר למצב לקוחה' תמיד יעבוד. בנוסף, בכל מקום באתר שבו רק לקוחה יכולה לפעול (כתיבת המלצה, שליחת הודעה, תגובה בזירה/בסיפורים/בקהילה) ועצמאית מחוברת מנסה - היא רואה עכשיו כפתור 'מעבר למצב לקוחה' שמעביר אותה בלחיצה אחת (בלי סיסמה) וחוזר אותה בדיוק לאותו מקום, במקום לשלוח אותה להתחבר מחדש מהתחלה. וגם (מ-update119): תיקון שני באגים בסיפור השראה השבועי: (1) תור הרוטציה האוטומטי עכשיו ממויין לפי מתי כל סיפור עצמו אושר (approvedAt), לא לפי מתי העצמאית שמאחוריו נרשמה לאתר - זה היה גורם לסיפורים להיראות 'לא לפי סדר'. (2) התאריך של 'הסיפור הבא יתעדכן ב-' עכשיו מציג גם שעה מדויקת (20:00) וגם מחושב באזור זמן ישראל במפורש, ולא רק תאריך לפי אזור הזמן של השרת (UTC ב-Render) - זה מה שגרם לתחושה שהסיפור 'לא התחלף' למרות שהתאריך המוצג כבר הגיע, כשבפועל השעה המדויקת פשוט עוד לא הגיעה. שימו לב: יום ההחלפה עצמו עדיין יכול לנחות בכל יום בשבוע אם משך הרוטציה בניהול (storyRotationDays) אינו כפולה של 7 - זה נשאר מכוון, לפי אישור מפורש. וגם (מ-update118): שיפור תצוגת הצפיות/דירוג (מ-update115): מספר הצפיות מוצג עכשיו גם על כרטיסיית העצמאית בתוצאות חיפוש/עיון (לפני שנכנסים לפרופיל), לא רק בעמוד הפרופיל עצמו; והציון המספרי של הדירוג מוצג כמספר שלם בלי נקודה כשהוא עגול (5 ולא 5.0), עשרוני רק כשצריך (4.7). שני השינויים כפופים לאותו מתג קיים בניהול. וגם (מ-update117): הגנת ספאם חכמה יותר בטופס 'צרי קשר' - חסימה לפי תוכן כפול במקום כמות גולמית בלבד. וגם (מ-update116): honeypot סמוי + כפתור מחיקה להודעות בניהול. וגם (מ-update114): פאנל ניהול 'עסקאות שדווחו'. וגם (מ-update113): התאמה למדיניות נטפרי - אישור ידני לתגובות בזירה; פאנל צפייה בהתכתבויות פרטיות; שדה מגדר עם נעילה אוטומטית לחשבון גבר. וגם (מ-update112): אישור חובה בהרשמה שהתוכן הפומבי גלוי לכלל הציבור. וגם (מ-update109-111): עוזרת AI לתמיכה + חיפוש חכם מבוסס AI - דורש ANTHROPIC_API_KEY ב-Render";
 route("GET", "/deploy-check", async (req, res) => {
   // Lists what's actually sitting in every plausible Playwright browser-cache location on disk
   // right now - a direct, no-guesswork answer to "did the chromium download actually succeed
@@ -2784,7 +3078,7 @@ route("GET", "/deploy-check", async (req, res) => {
     listDir("תיקייה חדשה בתוך node_modules/playwright-core", localBrowsersCore),
   ].join("\n\n");
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
-  res.end(`SheCan deploy marker: ${DEPLOY_MARKER}\nProcess started at: ${new Date(Date.now() - process.uptime() * 1000).toISOString()}\nChecked at: ${new Date().toISOString()}\nDB status: ${db.recovery.status}${db.recovery.note ? " - " + db.recovery.note : ""}\nDB write: ${db.recovery.writeError ? "FAILING - " + db.recovery.writeError : "ok"}\nDB path: ${db.DB_PATH}\n\n--- Disk ---\n${db.diskReport()}\n\n--- Playwright browser cache check ---\n${browserCacheReport}`);
+  res.end(`SheCan deploy marker: ${DEPLOY_MARKER}\nProcess started at: ${new Date(Date.now() - process.uptime() * 1000).toISOString()}\nChecked at: ${new Date().toISOString()}\nDB status: ${db.recovery.status}${db.recovery.note ? " - " + db.recovery.note : ""}\nEmail: ${process.env.RESEND_API_KEY ? "RESEND_API_KEY מוגדר" : "RESEND_API_KEY חסר - לא נשלחים מיילים בכלל!"} | from: ${process.env.RESEND_FROM_EMAIL || "SheCan <onboarding@resend.dev> (ברירת מחדל - Resend שולח ממנה רק לכתובת של בעלת החשבון)"}\nמיילים אחרונים (מאז ההפעלה האחרונה):\n${emailLog.length ? emailLog.map((e) => "  - " + e.at.slice(11, 19) + " " + (e.ok ? "OK  " : "FAIL") + " " + e.to + " | " + e.subject + (e.ok ? "" : " | " + e.detail)).join("\n") : "  (עוד לא נשלח מייל מאז ההפעלה)"}\nDB write: ${db.recovery.writeError ? "FAILING - " + db.recovery.writeError : "ok"}\nDB path: ${db.DB_PATH}\n\n--- Disk ---\n${db.diskReport()}\n\n--- Playwright browser cache check ---\n${browserCacheReport}`);
 });
 
 // ----- Netfree-mode pages (ר' mode.js) -----
@@ -2955,7 +3249,7 @@ route("GET", "/", async (req, res, params, query, ctx) => {
         <p class="hero-sub2">כל העסקים. כל התחומים. מקום אחד. SheCan</p>
       </section>
 
-      ${searchBarHtml(d, {})}
+      ${searchBarHtml(d, { noPopular: true })}
       ${leadBoxHtml(d, ctx, "home", query)}
 ${starOfMonthHtml(d, ctx)}
       ${homeStatusesHtml(d, ctx)}
@@ -3002,7 +3296,7 @@ ${starOfMonthHtml(d, ctx)}
       </div>
       </div>
 
-      ${shown.length ? `<h2 class="section-title">קצת מהעצמאיות שלנו</h2>${viewRowHtmlHome}<div class="grid" id="scCardsGrid" data-view="medium">${shown.map((f) => freelancerCard(f, d)).join("")}</div>` : ""}
+      <!-- (update157) הקטע "קצת מהעצמאיות שלנו" הוסר מדף הבית לפי בקשה -->
 
       ${siteReviews.length ? `<h2 class="section-title">מה אומרות עלינו</h2>${siteReviews.map(reviewCard).join("")}` : ""}
 
@@ -3218,7 +3512,7 @@ function searchBarHtml(d, o) {
       <button type="button" class="sc-s-pillbtn" id="scNearBtn" onclick="scNearMe()">📍 בסביבה שלי</button>
       ${o.fromId ? `<select class="sc-s-radius" name="radius" id="scRadius" aria-label="עד כמה רחוק">${SEARCH_RADIUS_CHOICES.map((r) => `<option value="${r}" ${r === radiusSel ? "selected" : ""}>${r === 0 ? "בלי הגבלת מרחק" : `עד ${r} ק״מ`}</option>`).join("")}</select>` : ""}
     </div>
-    <div class="sc-s-popular" aria-label="חיפושים נפוצים">${popularSearchChipsHtml(d, NF)}</div>
+    ${o.noPopular ? "" : `<div class="sc-s-popular" aria-label="חיפושים נפוצים">${popularSearchChipsHtml(d, NF)}</div>`}
     ${o.extraInner || ""}
   </form>`;
 }
@@ -7180,11 +7474,9 @@ function joinFormBody(d, { charging, refId, referrerFreelancer, businessNameData
     ${mode.isNetfree() ? "" : `<label>🌸 אינסטגרם (לא חובה)<input type="text" name="instagram" value="${esc(p.instagram || "")}" /></label>`}
     <label>🌸 קישור לתיק עבודות (לא חובה)<input type="text" name="portfolioUrl" value="${esc(p.portfolioUrl || "")}" placeholder="https://..." /></label>
     <label>🌸 לוגו (לא חובה אבל מומלץ)${filesNote}<input type="file" name="logo" id="joinLogoInput" accept="image/*" data-sc-crop="1" /></label>
-    <label>🌸 תמונות להתרשמות (עד 4, לא חובה)${mode.isNetfree() ? "" : " - יופיעו בגלריה קטנה בכרטיסייה שלך"}${filesNote}
-    <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
-    <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
-    <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
-    <input type="file" name="gallery4" accept="image/*" />
+    <label>🌸 תמונות להתרשמות (לא חובה)${mode.isNetfree() ? "" : " - יופיעו בגלריה קטנה בכרטיסייה שלך"}${filesNote}
+    <span class="muted" style="display:block;font-size:12.5px;font-weight:500;margin:2px 0 4px;">${GALLERY_MULTI_NOTE}</span>
+    <input type="file" name="galleryMulti" accept="image/*" multiple /></label>
     ${nfPhotosNote()}
     <label>🌸 תארי את השירות שאת נותנת (עד 500 תווים)<textarea name="description" maxlength="500" placeholder="כאן את מתארת את השירות שאת נותנת - מה את עושה ואיך את עוזרת ללקוחות שלך. כתבי בגוף ראשון, בצורה אישית וחמימה, כאילו את מספרת לחברה - זה מה שיזמין לקוחות לקרוא ולהתחבר אלייך.">${esc(p.description || "")}</textarea></label>
     <label>🌸 תני ללקוחות סיבה טובה לבחור בך (עד 200 תווים)</label>
@@ -7346,18 +7638,18 @@ route("GET", "/join/thanks", async (req, res, params, query, ctx) => {
   const body = `
   <div class="panel" style="max-width:560px;margin:28px auto;text-align:center;line-height:1.8;">
     <div style="font-size:54px;">🎉</div>
-    <h1 class="section-title" style="margin:4px 0 8px;">ההרשמה התקבלה!</h1>
-    <p style="font-size:19px;font-weight:700;">הכרטיס שלך נשלח לאישור ✅</p>
-    <p>אנחנו עוברות על הפרופיל שלך ומאשרות אותו בקרוב. ברגע שהוא מאושר הוא עולה באתר, ותוכלי להתחבר ולעדכן אותו.</p>
+    <h1 class="section-title" style="margin:4px 0 8px;">קיבלנו אותך!</h1>
+    <p style="font-size:19px;font-weight:700;">הכרטיס שלך אצלנו ומחכה לאישור 💛</p>
+    <p>תודה שבחרת להצטרף ל-SheCan. אנחנו עוברות על הכרטיס ומאשרות אותו בקרוב, ואז הוא עולה באתר.</p>
     <ol style="text-align:right;max-width:420px;margin:12px auto;padding-inline-start:22px;">
-      <li>הפרטים שמילאת הגיעו אלינו ושמורים.</li>
-      <li>נאשר את הכרטיס ונעדכן אותך (כדאי לבדוק גם בתיקיית הספאם).</li>
-      <li>אחרי האישור - מתחברות עם המייל והסיסמה שבחרת.</li>
+      <li>הכול נשמר אצלנו - <strong>אין צורך להירשם שוב</strong>.</li>
+      <li>ברגע שהכרטיס מאושר נשלח לך מייל (כדאי להציץ גם בתיקיית הספאם).</li>
+      <li>אז מתחברות עם המייל והסיסמה שבחרת, ואפשר לעדכן ולהוסיף תמונות.</li>
     </ol>
-    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px;"><a class="btn" href="/">לדף הבית</a><a class="btn btn-outline" href="/login?role=freelancer">כניסה</a></div>
-    <p class="muted" style="font-size:13px;margin:14px 0 0;">נרשמת עם מייל שכבר קיים אצלנו? תקבלי הודעה על זה בטופס עצמו.</p>
+    <p class="muted" style="font-size:14px;">עד האישור עדיין אי אפשר להתחבר, וזה בסדר גמור - אין שום תקלה 🌸</p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px;"><a class="btn" href="/">לדף הבית</a></div>
   </div>`;
-  sendHtml(res, 200, page({ title: "ההרשמה התקבלה", session: ctx.session, body, query }));
+  sendHtml(res, 200, page({ title: "קיבלנו אותך", session: ctx.session, body, query }));
 });
 
 route("POST", "/join", async (req, res, params, query, ctx) => {
@@ -7417,19 +7709,21 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   const joinEmail = (body.get("email") || "").trim();
   body.set("email", joinEmail);
   if (joinEmail && releaseRejectedEmail(d, joinEmail)) logRegAttempt("עצמאית", "הרשמה חוזרת אחרי דחייה - הרשומה הדחויה הועברה לארכיון והמייל שוחרר", joinEmail);
-  if (d.freelancers.find((f) => sameEmail(f.email, joinEmail))) {
+  const existingJoinF = d.freelancers.find((f) => sameEmail(f.email, joinEmail));
+  if (existingJoinF) {
     const eq = encodeURIComponent(joinEmail);
-    const notice = `<div class="panel sc-notice-top" style="max-width:560px;margin:24px auto 0;background:#fff7e6;border:1.5px solid #f0d9a8;text-align:right;line-height:1.7;">
-      <h3 style="margin-top:0;">💛 המייל הזה כבר רשום אצלנו - אין צורך להירשם שוב</h3>
-      <p>יכול להיות שכבר נרשמת בעבר (אולי לפני זמן מה, ואולי הפרופיל נפתח עבורך), ולכן המערכת מזהה את המייל. החדשות הטובות: <strong>הפרופיל שלך כבר קיים ואפשר להיכנס אליו ולעדכן אותו</strong>.</p>
-      <ol style="padding-inline-start:20px;margin:8px 0;">
-        <li>לחצי על <a href="/login?role=freelancer&email=${eq}" style="font-weight:800;text-decoration:underline;">כניסה לפרופיל שלי</a> והזיני את הסיסמה שבחרת בהרשמה.</li>
-        <li>לא זוכרת את הסיסמה? לחצי על <a href="/forgot-password?role=freelancer&email=${eq}" style="font-weight:800;text-decoration:underline;">שכחתי סיסמה</a> - נשלח אלייך מייל עם קישור לבחירת סיסמה חדשה. <strong>כדאי לבדוק גם בתיקיית הספאם / קידומי מכירות</strong>. בדרך כלל זה מגיע תוך דקה, ואז את מחוברת ויכולה לעדכן את הפרופיל, התמונות והפרטים.</li>
-      </ol>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;"><a class="btn" href="/login?role=freelancer&email=${eq}">כניסה לפרופיל שלי</a><a class="btn btn-outline" href="/forgot-password?role=freelancer&email=${eq}">שכחתי סיסמה</a></div>
-      <p class="muted" style="font-size:13px;margin-bottom:0;">רוצה להירשם עם מייל אחר? אפשר לתקן את המייל בטופס שלמטה (כל שאר הפרטים נשמרו).</p>
+    const isPendingF = existingJoinF.status === "pending";
+    const notice = isPendingF ? `<div class="panel sc-notice-top" style="max-width:560px;margin:24px auto 0;background:#fff7e6;border:1.5px solid #f0d9a8;text-align:right;line-height:1.7;">
+      <h3 style="margin-top:0;">💛 ההרשמה שלך כבר אצלנו!</h3>
+      <p>כבר קיבלנו כרטיס עם המייל הזה, והוא <strong>ממתין לאישור</strong> - אין צורך להירשם שוב. ברגע שהוא מאושר נשלח לך מייל, ואז אפשר להתחבר (כדאי להציץ גם בספאם).</p>
+      <p class="muted" style="font-size:13px;margin-bottom:0;">נרשמת בטעות עם מייל אחר? אפשר לתקן את המייל בטופס שלמטה, כל שאר הפרטים נשמרו.</p>
+    </div>` : `<div class="panel sc-notice-top" style="max-width:560px;margin:24px auto 0;background:#fff7e6;border:1.5px solid #f0d9a8;text-align:right;line-height:1.7;">
+      <h3 style="margin-top:0;">💛 כבר יש לך כרטיס אצלנו!</h3>
+      <p>המייל הזה כבר רשום, אז <strong>אין צורך להירשם שוב</strong> - אפשר להיכנס ולעדכן את הכרטיס, התמונות והפרטים.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;"><a class="btn" href="/login?role=freelancer&email=${eq}">כניסה לכרטיס שלי</a><a class="btn btn-outline" href="/forgot-password?role=freelancer&email=${eq}">שכחתי סיסמה</a></div>
+      <p class="muted" style="font-size:13px;margin-bottom:0;">לא זוכרת את הסיסמה? נשלח אלייך מייל לבחירת סיסמה חדשה, בדרך כלל תוך דקה (כדאי להציץ גם בספאם). רוצה להירשם עם מייל אחר? אפשר לתקן אותו בטופס שלמטה.</p>
     </div>`;
-    return rerenderWithError(d, "כבר יש חשבון עם האימייל הזה - נסי להתחבר במקום.", notice);
+    return rerenderWithError(d, isPendingF ? "הכרטיס שלך כבר אצלנו וממתין לאישור - אין צורך להירשם שוב 💛" : "כבר יש לך כרטיס אצלנו - אפשר להתחבר 💛", notice);
   }
   if (joinCityRes.typed) {
     return rerenderWithError(d, `לא זיהינו את העיר "${joinCityRes.typed}" - התחילי להקליד ובחרי אותה מהרשימה שנפתחת מתחת לשדה (או השאירי ריק אם את אונליין / מגיעה עד הלקוחה).`);
@@ -7485,8 +7779,8 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
     ? findFreelancerByBusinessNameLoose(d, body.get("howHeardBusinessName"))
     : null;
   const referredByFreelancerId = refFreelancer ? refFreelancer.id : (manualReferrer ? manualReferrer.id : null);
-  const galleryPhotos = ["gallery1", "gallery2", "gallery3", "gallery4"]
-    .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
+  const galleryPhotos = readGalleryFiles(body, ["gallery1", "gallery2", "gallery3", "gallery4"], "galleryMulti")
+    .map((file) => fileToDataUri(file, MAX_UPLOAD_BYTES))
     .filter(Boolean);
   const { categoryId, subcategoryId, subcategoryIds, wasCustomSubcategory } = resolveCategorySelection(d, body);
   recordSubcategorySuggestion(d, body, categoryId, id, body.get("businessName") || body.get("name") || "");
@@ -7555,11 +7849,12 @@ route("POST", "/join", async (req, res, params, query, ctx) => {
   // in hand for networking even before an admin gets to approve the profile itself.
   const newProfileUrl = `${getOrigin(req)}/freelancer/${id}`;
   const newQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(newProfileUrl)}`;
-  const welcomeEmailResult = await sendEmail(body.get("email"), "קיבלנו את הבקשה שלך ל-SheCan - הפרופיל ממתין לאישור",
+  const welcomeEmailResult = await sendEmail(body.get("email"), "קיבלנו אותך! הכרטיס שלך ב-SheCan ממתין לאישור 💛",
     `<div dir="rtl" style="font-family:Arial,sans-serif;">
       <p>היי ${esc(body.get("name") || "")},</p>
-      <p>תודה! קיבלנו את הבקשה שלך להצטרף ל-SheCan. <strong>הפרופיל עדיין לא פורסם ולא אושר</strong> - הוא ממתין לבדיקה, ונעדכן אותך במייל בנפרד אם הוא אושר או לא.</p>
-      <p>בינתיים, הנה קוד הקופון האישי שלך שכבר אפשר להתחיל לשתף:</p>
+      <p>איזה כיף שהצטרפת ל-SheCan! 💛 קיבלנו את הפרטים שלך, והכרטיס ממתין עכשיו לאישור שלנו.</p>
+      <p><strong>עד שהוא מאושר הוא עדיין לא מופיע באתר ואי אפשר להתחבר - וזה תקין לגמרי.</strong> נשלח לך מייל נפרד ברגע שהוא מאושר, ואין צורך להירשם שוב.</p>
+      <p>בינתיים הנה קוד הקופון האישי שלך, אפשר כבר להתחיל לשתף:</p>
       <p style="background:#f3ede8;padding:14px;border-radius:8px;font-size:20px;font-weight:800;text-align:center;">${esc(dealCode)}</p>
       <p>וגם קוד QR לכרטיסייה שלך, לנטוורקינג בשטח:</p>
       <p style="text-align:center;"><img src="${newQrUrl}" alt="QR לכרטיסייה שלך" width="200" height="200" /></p>
@@ -7696,10 +7991,10 @@ route("POST", "/login", async (req, res, params, query, ctx) => {
   }
   if (role === "freelancer" && user.status === "rejected") {
     // (update156) הרשומה נדחתה - לא "ממתינה". מפנים אותה להרשמה מחדש (ההרשמה מחדש משחררת את המייל הזה, ר' releaseRejectedEmail).
-    return redirect(res, `/join?err=${encodeURIComponent("הבקשה הקודמת להצטרפות לא אושרה. אפשר להירשם מחדש עכשיו עם אותו מייל - מלאי את הטופס מחדש.")}`);
+    return redirect(res, `/join?err=${encodeURIComponent("הכרטיס הקודם לא אושר, אבל אפשר להירשם שוב עם אותו מייל 💛 מלאי את הטופס מחדש ונבדוק שוב.")}`);
   }
   if (role === "freelancer" && user.status !== "approved") {
-    return rerenderLoginError("הכרטיס שלך נשלח ומחכה לאישור של המנהלת - עדיין אי אפשר להתחבר, ונשלח לך מייל ברגע שהוא יאושר.");
+    return rerenderLoginError("הכרטיס שלך אצלנו ומחכה לאישור 💛 עד שיאושר עדיין אי אפשר להתחבר, וזה בסדר גמור. נשלח לך מייל ברגע שהוא מאושר.");
   }
   if (role === "customer" && user.accountLocked) {
     return rerenderLoginError("החשבון שלך עדיין ממתין לבדיקה ידנית ולא ניתן להתחבר איתו כרגע. " + supportHint());
@@ -7739,13 +8034,33 @@ route("POST", "/forgot-password", async (req, res, params, query, ctx) => {
   const role = body.get("role") === "freelancer" ? "freelancer" : "customer";
   const email = (body.get("email") || "").trim();
   const d = db.load();
-  const list = role === "freelancer" ? d.freelancers : d.customers;
-  const user = list.find((u) => u.email === email) || list.find((u) => sameEmail(u.email, email));
+  const findIn = (r) => { const l = r === "freelancer" ? d.freelancers : d.customers; return l.find((u) => u.email === email) || l.find((u) => sameEmail(u.email, email)); };
+  let user = findIn(role);
+  let resetRole = role;
+  // (update158) לקוחה שלחצה "שכחתי סיסמה" במסלול של עצמאית (או להפך) - לא הייתה מקבלת שום דבר. עכשיו מוצאים את
+  // החשבון בתפקיד השני, שולחים לו קישור איפוס, ומסבירים במייל מה קרה. עצמאית שנדחתה מקבלת הסבר שאפשר להירשם מחדש.
+  let roleNote = "";
+  if (!user) {
+    const other = role === "freelancer" ? "customer" : "freelancer";
+    const u2 = findIn(other);
+    if (u2) {
+      user = u2; resetRole = other;
+      roleNote = other === "customer"
+        ? `<p style="background:#fff7e6;padding:10px;border-radius:8px;">שימי לב 💛 עם המייל הזה יש אצלנו חשבון <strong>לקוחה</strong> (לא חשבון עסק). הקישור שלמטה מאפס את הסיסמה שלו. אם רצית לפתוח כרטיס לעסק שלך, אפשר דרך "פרסמי את העסק שלך" באתר.</p>`
+        : `<p style="background:#fff7e6;padding:10px;border-radius:8px;">שימי לב 💛 עם המייל הזה יש אצלנו חשבון <strong>עצמאית</strong>. הקישור שלמטה מאפס את הסיסמה שלו.</p>`;
+    }
+  }
+  if (user && resetRole === "freelancer" && user.status === "rejected") {
+    roleNote += `<p style="background:#fff7e6;padding:10px;border-radius:8px;">הכרטיס הקודם לא אושר, אבל אפשר להירשם שוב עם אותו מייל דרך "פרסמי את העסק שלך" באתר 💛</p>`;
+  }
+  if (user && resetRole === "freelancer" && user.status === "pending") {
+    roleNote += `<p style="background:#fff7e6;padding:10px;border-radius:8px;">הכרטיס שלך עדיין ממתין לאישור, ולכן עדיין אי אפשר להתחבר - זה בסדר גמור 💛 נשלח לך מייל נפרד ברגע שהוא מאושר, והקישור שלמטה יהיה שימושי אז.</p>`;
+  }
   // Always show the same message, whether or not the email exists - avoids leaking
   // which addresses are registered.
-  const genericMsg = "אם האימייל הזה קיים אצלנו, שלחנו אליו קישור לאיפוס סיסמה. תבדקי גם בספאם ❤️";
+  const genericMsg = "אם המייל הזה רשום אצלנו, שלחנו אליו קישור לבחירת סיסמה חדשה 💛 כדאי להציץ גם בתיקיית הספאם.";
   if (user) {
-    const token = auth.createResetToken(role, user.id);
+    const token = auth.createResetToken(resetRole, user.id);
     const link = `${getOrigin(req)}/reset-password?token=${token}`;
     // The result is now actually checked (same pattern already used for the approval and
     // welcome emails) - per explicit request after a freelancer reported never receiving her
@@ -7754,13 +8069,13 @@ route("POST", "/forgot-password", async (req, res, params, query, ctx) => {
     // instead it's pushed straight to Sapir, the same push-first/email-fallback pattern used
     // for new-signup notifications, so she finds out and can fix/resend without waiting for
     // the freelancer to complain.
-    const resetEmailResult = await sendEmail(email, "איפוס סיסמה ל-SheCan",
-      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(user.name || "")},</p><p>קיבלנו בקשה לאפס את הסיסמה שלך ל-SheCan. הקישור הבא בתוקף לשעה אחת:</p><p><a href="${link}">${link}</a></p><p>אם לא ביקשת את זה, אפשר פשוט להתעלם מהמייל.</p></div>`
+    const resetEmailResult = await sendEmail(email, "הקישור לבחירת סיסמה חדשה ב-SheCan 💛",
+      `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.7;"><p>היי ${esc(user.name || "")},</p><p>ביקשת לבחור סיסמה חדשה ל-SheCan. לחצי על הקישור ובחרי סיסמה (הוא תקף שעה אחת):</p>${roleNote}<p><a href="${link}" style="font-weight:800;">בחירת סיסמה חדשה</a></p><p style="color:#777;font-size:13px;">לא ביקשת? אפשר להתעלם מהמייל, שום דבר לא ישתנה.</p></div>`
     ).catch(() => ({ ok: false, reason: "send_failed" }));
     if (!resetEmailResult.ok) {
       const notifyAdmin = d.admins[0];
       const notifyTo = d.settings.contactEmail || notifyAdmin.email;
-      const roleLabel = role === "freelancer" ? "עצמאית" : "לקוחה";
+      const roleLabel = resetRole === "freelancer" ? "עצמאית" : "לקוחה";
       sendPushToUser(notifyAdmin, { title: "מייל איפוס סיסמה נכשל", body: `${roleLabel} ${user.name || email} ניסתה לאפס סיסמה אבל המייל לא נשלח.`, url: "/admin" })
         .then((pushed) => { if (!pushed) sendEmail(notifyTo, "מייל איפוס סיסמה נכשל בשליחה",
           `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>${esc(roleLabel)} ${esc(user.name || "")} (${esc(email)}) ניסתה לאפס סיסמה, אבל שליחת המייל נכשלה.</p><p>כדאי לבדוק את הגדרות שירות המייל, ולוודא שכתובת המייל הרשומה שלה נכונה.</p></div>`
@@ -8706,11 +9021,8 @@ route("GET", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
     <p class="muted" style="margin-top:-4px;font-size:12.5px;">לא חובה. אחרי ששולחים, המשפט עובר בדיקה שלנו לפני שהוא יכול להופיע כטיפ השבועי בדף הבית - ואפשר לערוך אותו בחופשיות כל עוד הוא עוד לא עלה בתור.</p>
     `}
     ${(f.galleryPhotos && f.galleryPhotos.length) ? `<label>תמונות ההתרשמות שלך היום</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">${f.galleryPhotos.map((src) => `<img src="${src}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;" />`).join("")}</div>` : ""}
-    <label>תמונות להתרשמות חדשות (עד 4 - יחליפו את הקיימות אם תעלי, לא חובה)
-    <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
-    <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
-    <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
-    <input type="file" name="gallery4" accept="image/*" />
+    <label>תמונות להתרשמות חדשות (לא חובה - ${GALLERY_MULTI_NOTE}. התמונות שתבחרי יחליפו את הקיימות)
+    <input type="file" name="galleryMulti" accept="image/*" multiple /></label>
     ${nfPhotosNote()}
     <button class="btn" style="margin-top:14px;" type="submit">שמירה</button>
   </form>
@@ -9534,8 +9846,8 @@ route("POST", "/freelancer-dashboard", async (req, res, params, query, ctx) => {
   if (newPhoto) f.photoDataUri = newPhoto;
   const newLogo = takeImg("logo", "הלוגו");
   if (newLogo) f.logoDataUri = newLogo;
-  const newGallery = ["gallery1", "gallery2", "gallery3", "gallery4"]
-    .map((field, i) => takeImg(field, `תמונה ${i + 1} בגלריה`))
+  const newGallery = readGalleryFiles(body, ["gallery1", "gallery2", "gallery3", "gallery4"], "galleryMulti")
+    .map((file, i) => { const uri = fileToDataUri(file, MAX_UPLOAD_BYTES); if (!uri) skippedPhotos.push(`תמונה ${i + 1} בגלריה`); return uri; })
     .filter(Boolean);
   if (newGallery.length) f.galleryPhotos = newGallery;
   const uploadedAny = !!(newPhoto || newLogo || newGallery.length);
@@ -10838,11 +11150,14 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
           ${!f.dealText ? `<form method="post" action="/admin/freelancer/${f.id}/approve"><button class="btn btn-small" type="submit">אישור</button></form>` : ""}
           <form method="post" action="/admin/freelancer/${f.id}/reject"><button class="btn btn-small btn-outline" type="submit">דחייה</button></form>
+          <a class="btn btn-small btn-outline" href="/admin/freelancer/${f.id}/edit">✏️ עריכת פרטים</a>
           ${snoozeButtonHtml(`freelancer:${f.id}`, "freelancer", `עצמאית: ${f.businessName || f.name}`)}
           ${messageFreelancerButtonHtml(f.id, "ההצטרפות שלך ל-SheCan שממתינה לאישור", `newFreelancer-${f.id}`)}
         </div>
       </div>`).join("") : `<p class="muted">אין כרגע אף אחת שמחכה - הכל מעודכן.</p>`}
   </div>
+
+  ${jobsAdminPanelHtml(d)}
 
   <div class="panel" data-badge="${pendingReviews.length}">
     <h3>ביקורות שמחכות לעין שלך (${pendingReviews.length})</h3>
@@ -11660,7 +11975,7 @@ route("GET", "/admin", async (req, res, params, query, ctx) => {
         <td>${f.joinType === "founding" ? "מייסדת" : "רגילה"}</td><td>${esc(paymentStatusLabel(f.paymentStatus))}</td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-tier"><button class="btn btn-small ${f.tier === "premium" ? "" : "btn-outline"}" type="submit">${f.tier === "premium" ? "⭐ מומלצת" : "הפכי למומלצת"}</button></form></td>
         <td>${esc(f.dealCode || "-")}</td><td>${f.viewCount || 0}</td><td>${f.couponRevealCount || 0}</td><td>${dealsByFreelancer[f.id] || 0}</td>
-        <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a></td>
+        <td><a class="btn btn-small ${(f.logoDataUri || (f.galleryPhotos && f.galleryPhotos.length)) ? "" : "btn-outline"}" href="/admin/freelancer/${f.id}/photos">📷 תמונות</a> <a class="btn btn-small btn-outline" href="/admin/freelancer/${f.id}/edit">✏️ עריכת פרטים</a></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/resend-credentials" onsubmit="return confirm('זה ייצור סיסמה זמנית חדשה ל' + ${JSON.stringify(f.businessName || f.name)} + ' וישלח אותה במייל (הסיסמה הישנה שלה תפסיק לעבוד). להמשיך?');"><button class="btn btn-small btn-outline" type="submit">📧 שליחת פרטי התחברות</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-leading"><button class="btn btn-small ${f.isLeadingBusiness ? "" : "btn-outline"}" type="submit">${f.isLeadingBusiness ? "👑 נותנת חסות" : "הפכי לנותנת חסות"}</button></form></td>
         <td><form method="post" action="/admin/freelancer/${f.id}/toggle-ad"><button class="btn btn-small ${f.isAdvertised ? "" : "btn-outline"}" type="submit">${f.isAdvertised ? "📣 פעילה" : "הפעילי מודעה"}</button></form>${f.isAdvertised && f.isAdvertisedUntil ? `<div class="muted" style="font-size:11px;margin-top:2px;">פרס מרוץ - עד ${esc(f.isAdvertisedUntil)}</div>` : ""}</td>
@@ -13906,10 +14221,12 @@ route("POST", "/admin/freelancer/:id/reject", async (req, res, params, query, ct
   // (update156) מייל ברור לעצמאית שנדחתה: הכרטיס לא אושר + אפשר להירשם שוב (לפני כן קיבלה רק את מייל "קיבלנו את הפרופיל שלך" וחשבה שהכול תקין).
   if (f && wasPending && f.email) {
     const joinUrl = `${getOrigin(req)}/join`;
-    sendEmail(f.email, "עדכון לגבי ההצטרפות שלך ל-SheCan",
-      `<div dir="rtl" style="font-family:Arial,sans-serif;"><p>היי ${esc(f.name || "")},</p>
-      <p>עברנו על הפרופיל שנשלח ל-SheCan, וכרגע <strong>לא אישרנו אותו</strong> - הכרטיס לא יפורסם באתר.</p>
-      <p>אם תרצי, אפשר להירשם מחדש עם אותו מייל ולתקן את הפרטים: <a href="${esc(joinUrl)}">${esc(joinUrl)}</a></p></div>`
+    sendEmail(f.email, "עדכון קטן לגבי הכרטיס שלך ב-SheCan 💛",
+      `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.7;"><p>היי ${esc(f.name || "")},</p>
+      <p>תודה שהתעניינת ב-SheCan 💛 הפעם לא הצלחנו לאשר את הכרטיס שנשלח, ולכן הוא לא יופיע באתר.</p>
+      <p><strong>זה לא סוף הדרך</strong> - אפשר להירשם שוב עם אותו מייל בדיוק, לעדכן את הפרטים (תיאור, תמונות, תחום) ונבדוק שוב:</p>
+      <p><a href="${esc(joinUrl)}" style="font-weight:800;">להרשמה מחדש</a></p>
+      <p>אם משהו לא ברור, אפשר פשוט להשיב למייל הזה.</p></div>`
     ).catch(() => {});
   }
   redirect(res, `/admin?ok=${encodeURIComponent("נדחה." + (wasPending && f && f.email ? " נשלח לה מייל שהכרטיס לא אושר ושאפשר להירשם מחדש." : ""))}`);
@@ -13924,6 +14241,71 @@ route("POST", "/admin/freelancer/:id/reject", async (req, res, params, query, ct
 // photo/logo each get their own "הסרה" form, and every gallery photo gets its own removal
 // form (POST /admin/freelancer/:id/gallery/:idx/remove) so a single bad photo can be taken
 // down without having to re-upload the whole gallery.
+// (update157) עריכת כל פרטי העסק של עצמאית ע"י המנהלת (חוץ מתמונות - אלה בעמוד "תמונות"): שם, עסק, תחום,
+// עיר, טלפון, תיאור, קישורים, שנות ותק, אופן השירות. אותו מבנה שדות כמו הפרופיל שהיא עורכת בעצמה.
+route("GET", "/admin/freelancer/:id/edit", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  const catOpts = d.categories.map((c) => `<option value="${c.id}" ${f.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const body = `
+  <h1 class="section-title">עריכת פרטי העסק - ${esc(f.businessName || f.name)}</h1>
+  <p style="text-align:center;"><a href="/admin/freelancer/${f.id}/photos" class="btn btn-small btn-outline">📷 לתמונות</a> <a href="/freelancer/${f.id}" class="btn btn-small btn-outline" target="_blank" rel="noopener">👁 לכרטיס באתר</a> <a href="/admin" class="btn btn-small btn-outline">← חזרה לניהול</a></p>
+  <form class="panel" method="post" action="/admin/freelancer/${f.id}/edit" style="max-width:600px;margin:0 auto;">
+    <p class="muted" style="margin-top:0;">שינויים שנשמרים כאן מופיעים מיד בכרטיס שלה. המייל, ההטבה ומשפט ההשראה נערכים בטבלה בניהול.</p>
+    <label>שם העצמאית<input type="text" name="name" value="${esc(f.name || "")}" required /></label>
+    <label>שם העסק<input type="text" name="businessName" value="${esc(f.businessName || "")}" required /></label>
+    <label>תחום
+    <select name="categoryId" onchange="scUpdateSubcatCheckboxes(this, 'scAdminSubcatBox')"><option value="">בחרי תחום</option>${catOpts}</select></label>
+    <label>תת-תחום (אפשר לסמן כמה)</label>
+    <div id="scAdminSubcatBox" style="max-height:160px;overflow-y:auto;border:1px solid #ddd3c4;border-radius:8px;padding:10px;margin:-6px 0 6px;">${subcategoryCheckboxesHtml(d, f.categoryId, f.subcategoryIds && f.subcategoryIds.length ? f.subcategoryIds : (f.subcategoryId ? [f.subcategoryId] : []))}</div>
+    <label>עיר${cityAutocompleteHtml({ fieldName: "cityId", textName: "cityText", selectedId: f.cityId, selectedName: f.cityId ? cityName(d, f.cityId) : "" })}</label>
+    <label>טלפון<input type="tel" name="phone" value="${esc(f.phone || "")}" /></label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="hasWhatsapp" value="1" ${f.hasWhatsapp ? "checked" : ""} style="width:auto;" /> יש וואטסאפ במספר הזה</label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="offersOnline" value="1" ${f.offersOnline ? "checked" : ""} style="width:auto;" /> 💻 נותנת שירות אונליין</label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;"><input type="checkbox" name="offersHomeVisit" value="1" ${f.offersHomeVisit ? "checked" : ""} style="width:auto;" /> 🚗 מגיעה עד הבית של הלקוחה</label>
+    <label>אינסטגרם<input type="text" name="instagram" value="${esc(f.instagram || "")}" /></label>
+    <label>קישור לתיק עבודות<input type="text" name="portfolioUrl" value="${esc(f.portfolioUrl || "")}" placeholder="https://..." /></label>
+    <label>תיאור העסק (עד 500 תווים)<textarea name="description" maxlength="500" style="min-height:120px;">${esc(f.description || "")}</textarea></label>
+    <label>שנים בתחום
+    <select name="yearsInField"><option value="">לא צוין</option>${yearsInFieldOptionsHtml(f.yearsInField || "")}</select></label>
+    <button class="btn" type="submit" style="width:100%;margin-top:14px;">שמירה</button>
+  </form>`;
+  sendHtml(res, 200, page({ title: "עריכת פרטי עסק", session: ctx.session, body, query }));
+});
+
+route("POST", "/admin/freelancer/:id/edit", async (req, res, params, query, ctx) => {
+  if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
+  const body = await readBody(req);
+  const d = db.load();
+  const f = d.freelancers.find((x) => x.id === params.id);
+  if (!f) return redirect(res, `/admin?err=${encodeURIComponent("העצמאית לא נמצאה.")}`);
+  const back = (kind, msg) => redirect(res, `/admin/freelancer/${f.id}/edit?${kind}=${encodeURIComponent(msg)}`);
+  const businessName = (body.get("businessName") || "").trim();
+  if (!businessName) return back("err", "צריך שם עסק.");
+  const cityRes = resolveCityFromBody(d, body);
+  if (cityRes.typed) return back("err", `לא זיהינו את העיר "${cityRes.typed}" - בחרי אותה מהרשימה שנפתחת מתחת לשדה.`);
+  f.name = (body.get("name") || "").trim() || f.name;
+  f.businessName = businessName;
+  const cat = resolveCategorySelection(d, body);
+  if (cat.categoryId) {
+    f.categoryId = cat.categoryId; f.subcategoryId = cat.subcategoryId; f.subcategoryIds = cat.subcategoryIds;
+  }
+  f.cityId = cityRes.id || "";
+  f.phone = (body.get("phone") || "").trim();
+  f.hasWhatsapp = body.get("hasWhatsapp") === "1";
+  f.offersOnline = body.get("offersOnline") === "1";
+  f.offersHomeVisit = body.get("offersHomeVisit") === "1";
+  f.instagram = (body.get("instagram") || "").trim();
+  f.portfolioUrl = (body.get("portfolioUrl") || "").trim();
+  f.description = clip((body.get("description") || "").trim(), 500);
+  const years = body.get("yearsInField");
+  if (years) f.yearsInField = years; else if (years === "") f.yearsInField = "";
+  db.save();
+  back("ok", "הפרטים נשמרו ומופיעים עכשיו בכרטיס.");
+});
+
 route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx) => {
   if (!requireRole(ctx.session, "admin")) return redirect(res, "/login");
   const d = db.load();
@@ -13959,11 +14341,8 @@ route("GET", "/admin/freelancer/:id/photos", async (req, res, params, query, ctx
     <form method="post" action="/admin/freelancer/${f.id}/photos" enctype="multipart/form-data" style="margin-top:18px;">
       <label>תמונת פרופיל חדשה ${f.photoDataUri ? "(להחלפה)" : ""}<input type="file" name="photo" accept="image/*" /></label>
       <label>לוגו חדש ${f.logoDataUri ? "(להחלפה)" : ""}<input type="file" name="logo" accept="image/*" data-sc-crop="1" /></label>
-      <label style="margin-top:10px;">תמונות גלריה (עד 4 - העלאת תמונה כאן מחליפה את כל הגלריה הקיימת)
-      <input type="file" name="gallery1" accept="image/*" style="margin-bottom:8px;" /></label>
-      <input type="file" name="gallery2" accept="image/*" style="margin-bottom:8px;" />
-      <input type="file" name="gallery3" accept="image/*" style="margin-bottom:8px;" />
-      <input type="file" name="gallery4" accept="image/*" />
+      <label style="margin-top:10px;">תמונות גלריה (${GALLERY_MULTI_NOTE} - העלאה כאן מחליפה את כל הגלריה הקיימת)
+      <input type="file" name="galleryMulti" accept="image/*" multiple /></label>
       <button class="btn" style="margin-top:14px;width:100%;" type="submit">העלאה</button>
     </form>
     <p class="muted" style="margin-top:14px;"><a href="/admin">← חזרה לניהול</a></p>
@@ -14107,8 +14486,8 @@ route("POST", "/admin/freelancer/:id/photos", async (req, res, params, query, ct
   if (newPhoto) f.photoDataUri = newPhoto;
   const newLogo = fileToDataUri(body.files.logo, MAX_UPLOAD_BYTES);
   if (newLogo) f.logoDataUri = newLogo;
-  const newGallery = ["gallery1", "gallery2", "gallery3", "gallery4"]
-    .map((field) => fileToDataUri(body.files[field], MAX_UPLOAD_BYTES))
+  const newGallery = readGalleryFiles(body, ["gallery1", "gallery2", "gallery3", "gallery4"], "galleryMulti")
+    .map((file) => fileToDataUri(file, MAX_UPLOAD_BYTES))
     .filter(Boolean);
   if (newGallery.length) f.galleryPhotos = newGallery;
   db.save();
