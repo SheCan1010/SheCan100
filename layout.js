@@ -1546,6 +1546,43 @@ form .field{margin-bottom:6px;}
 .sc-join-fold>summary,.sc-join-more>summary{cursor:pointer;list-style:none;font-weight:800;font-size:14.5px;color:var(--accent);padding:9px 14px;border:1px dashed #cdbfae;border-radius:12px;background:var(--white);text-align:center;}
 .sc-join-fold>summary::-webkit-details-marker,.sc-join-more>summary::-webkit-details-marker{display:none;}
 .sc-join-fold[open]>summary,.sc-join-more[open]>summary{margin-bottom:12px;}
+/* (update160) הרשמה פשוטה ונוחה בטלפון: תיבות סימון גדולות, שורה שלמה ללחיצה, כפתור שליחה גדול */
+.sc-chk{display:flex;align-items:center;gap:12px;font-weight:600;font-size:15.5px;line-height:1.45;margin:8px 0 0;padding:11px 12px;border:1.5px solid #e5d9c6;border-radius:12px;background:var(--white);cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.sc-chk input[type=checkbox]{width:28px;height:28px;min-width:28px;flex:none;margin:0;accent-color:var(--rose-dark);cursor:pointer;}
+.sc-chk:has(input:checked){border-color:var(--rose-dark);background:#fff4f1;}
+.sc-chk-consent{align-items:flex-start;margin-top:18px;padding:14px;background:var(--cream);border:2px solid var(--rose-dark);font-weight:700;}
+.sc-chk-consent input[type=checkbox]{width:32px;height:32px;min-width:32px;margin-top:2px;}
+.sc-join-submit{min-height:54px;font-size:19px !important;font-weight:800;background:var(--accent) !important;border-color:var(--accent) !important;color:#fff !important;}
+.sc-autosave-note{margin:0 0 6px;font-size:13px;color:var(--gray);text-align:center;line-height:1.5;}
+.referral-source-choice label input[type=radio]{width:22px;height:22px;vertical-align:middle;margin-inline-end:6px;accent-color:var(--rose-dark);}
+.sc-join-more>summary{min-height:44px;display:flex;align-items:center;justify-content:center;}
+@media (max-width:720px){
+  #scWelcomeModal{display:none !important;}
+  #scJoinForm{padding:16px 14px;}
+  #scJoinForm label{margin-top:12px;}
+  #scJoinForm input[type=text],#scJoinForm input[type=email],#scJoinForm input[type=password],#scJoinForm input[type=tel],#scJoinForm select{font-size:16px;min-height:46px;}
+}
+.sc-s-viewwrap{margin:10px 0 2px;}
+.sc-s-viewwrap .sc-s-view{margin:0 auto;padding:8px 10px;background:var(--cream);border-radius:14px;}
+.sc-s-viewwrap .sc-s-view .view-btn{min-height:36px;padding:6px 9px;font-size:13px;}
+.sc-s-viewwrap .sc-s-view{padding:8px 6px;}
+.sc-s-viewwrap .sc-s-view{gap:5px;width:100%;box-sizing:border-box;}
+.sc-s-viewwrap .sc-s-sort{max-width:150px;}
+@media (max-width:720px){
+  #scCardsGrid[data-view="compact"]{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  #scCardsGrid[data-view="compact"] .card-photo{height:120px;}
+  #scCardsGrid[data-view="compact"] .card-body{padding:8px 9px;gap:2px;}
+  #scCardsGrid[data-view="compact"] .card-name{font-size:14.5px;line-height:1.25;}
+  #scCardsGrid[data-view="compact"] .card-field{display:block;font-size:12px;font-weight:700;color:var(--gray);margin:0;}
+}
+@media (max-width:400px){
+  #scJoinForm{padding:14px 10px;}
+  .sc-chk{gap:10px;padding:10px;font-size:14.5px;}
+  .sc-chk-consent{padding:12px 10px;font-size:14px;line-height:1.5;}
+  .sc-chk input[type=checkbox]{width:26px;height:26px;min-width:26px;}
+  .sc-chk-consent input[type=checkbox]{width:30px;height:30px;min-width:30px;}
+}
+.sc-modal-overlay{z-index:800 !important;}
 
 
 /* ===== כרטיסיית עצמאית ממוקדת (2026-11-01) ===== */
@@ -2382,6 +2419,85 @@ document.addEventListener("DOMContentLoaded", function () {
     form.insertBefore(note, form.firstChild);
   });
 });
+
+// ---- (update160) שמירה אוטומטית של טופס ההרשמה: כל שדה (חוץ מסיסמה וקבצים) נשמר בדפדפן תוך כדי
+// הקלדה ובכל יציאה מהעמוד, ונמחק רק אחרי שההרשמה באמת הצליחה (עמוד /join/thanks). אם הטלפון
+// כיבה את הדפדפן, אם הרשת נפלה או שהעמוד נטען מחדש - כשחוזרים לטופס הכול מחכה. הכול עטוף ב-try
+// כדי שגלישה פרטית/חסימת אחסון לא תשבור את הטופס.
+(function () {
+  var KEY = "scJoinDraft2";
+  var MAX_AGE = 7 * 24 * 3600 * 1000;
+  if (location.pathname === "/join/thanks") { try { localStorage.removeItem(KEY); } catch (e) {} return; }
+  document.addEventListener("DOMContentLoaded", function () {
+    var form = document.getElementById("scJoinForm");
+    if (!form || !form.hasAttribute("data-sc-joindraft")) return;
+    function snap() {
+      var out = [];
+      Array.prototype.forEach.call(form.elements, function (el) {
+        if (!el.name || el.disabled || el.name === "sc_hp_note") return;
+        var t = (el.type || "").toLowerCase();
+        if (t === "file" || t === "password" || t === "submit" || t === "button") return;
+        out.push({ n: el.name, v: el.value, c: !!el.checked, k: (t === "checkbox" || t === "radio") ? 1 : 0 });
+      });
+      return out;
+    }
+    function hasContent(f) {
+      return f.some(function (x) { return x.k ? x.c : (x.v && x.n !== "ref"); });
+    }
+    function save() {
+      try {
+        var f = snap();
+        if (!hasContent(f)) return;
+        localStorage.setItem(KEY, JSON.stringify({ ts: Date.now(), f: f }));
+      } catch (e) {}
+    }
+    // שחזור - רק כשזה לא ניסיון חוזר אחרי שגיאה (אז השרת כבר החזיר את הערכים) ורק לשדות ריקים
+    if (!form.hasAttribute("data-sc-retry")) {
+      var data = null;
+      try { data = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
+      if (data && data.f && Date.now() - data.ts < MAX_AGE && hasContent(data.f)) {
+        var els = Array.prototype.slice.call(form.elements);
+        var restored = false;
+        data.f.forEach(function (x) {
+          if (x.k) return;
+          var el = els.filter(function (e) { return e.name === x.n && e.type !== "checkbox" && e.type !== "radio" && e.type !== "file" && e.type !== "password"; })[0];
+          if (!el || el.value || !x.v) return;
+          el.value = x.v;
+          restored = true;
+          if (el.tagName === "SELECT") { try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch (e) {} }
+        });
+        els = Array.prototype.slice.call(form.elements);
+        data.f.forEach(function (x) {
+          if (!x.k || !x.c) return;
+          els.forEach(function (e) {
+            if (e.name === x.n && (e.type === "checkbox" || e.type === "radio") && e.value === x.v && !e.checked) { e.checked = true; restored = true; }
+          });
+        });
+        // פתיחת האזור "עוד פרטים" אם נשמרו בו פרטים
+        if (restored) {
+          Array.prototype.forEach.call(form.querySelectorAll("details.sc-join-more"), function (dt) {
+            var filled = Array.prototype.some.call(dt.querySelectorAll("input,textarea,select"), function (e) {
+              if (e.type === "hidden" || e.type === "file") return false;
+              return (e.type === "checkbox" || e.type === "radio") ? e.checked : !!e.value;
+            });
+            if (filled) dt.open = true;
+          });
+          var note = document.createElement("div");
+          note.setAttribute("style", "background:#fff7e6;border:1.5px solid #f0d9a8;border-radius:12px;padding:10px 14px;margin:0 0 12px;font-size:14px;line-height:1.6;");
+          note.innerHTML = "✏️ <strong>החזרנו לך את מה שכבר מילאת</strong> - נשאר רק להקליד סיסמה ולשלוח. 💛";
+          var first = form.querySelector(".sc-autosave-note");
+          if (first && first.parentNode) first.parentNode.insertBefore(note, first.nextSibling);
+        }
+      }
+    }
+    var tm = null;
+    function later() { clearTimeout(tm); tm = setTimeout(save, 400); }
+    form.addEventListener("input", later);
+    form.addEventListener("change", later);
+    window.addEventListener("pagehide", save);
+    document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") save(); });
+  });
+})();
 
 // ---- Logo cropper: any <input type="file" data-sc-crop="1"> (freelancer logo uploads, on
 // every form that has one - join, dashboard edit, admin on-behalf-of, extra-listing panels)
@@ -3416,11 +3532,11 @@ function scLiveFilter(){
 // /search results view-mode switcher (מורחבת/בינונית/קומפקטית) - remembers her last choice
 // in this browser via localStorage, so it stays put next time she searches, not just for
 // this one page load.
-var SC_RESULTS_VIEW_KEY = "scResultsView2"; // (update157) מפתח חדש: מנקה את "מצומצמת" שנשמרה אוטומטית אצל מבקרות בנייד
-function scSetResultsView(mode){
+var SC_RESULTS_VIEW_KEY = "scResultsView3"; // (update157) מפתח חדש: מנקה את "מצומצמת" שנשמרה אוטומטית אצל מבקרות בנייד
+function scSetResultsView(mode, noSave){
   var grid = document.getElementById("scCardsGrid");
   if (grid) grid.setAttribute("data-view", mode);
-  try { localStorage.setItem(SC_RESULTS_VIEW_KEY, mode); } catch (e) {}
+  if (!noSave) { try { localStorage.setItem(SC_RESULTS_VIEW_KEY, mode); } catch (e) {} }
   var btns = document.querySelectorAll(".view-btn");
   for (var i = 0; i < btns.length; i++) {
     var isActive = btns[i].getAttribute("data-view-mode") === mode;
@@ -3434,11 +3550,17 @@ function scInitResultsView(){
   try { saved = localStorage.getItem(SC_RESULTS_VIEW_KEY); } catch (e) {}
   // (update157) בנייד ברירת המחדל היא תצוגה בינונית ("רגילה"), עם אפשרות לצמצם או להרחיב בכפתורי "תצוגה"
   if (saved) scSetResultsView(saved);
+  // (update161) בטלפון ברירת המחדל מצומצמת - 2 כרטיסים בשורה (בלי לשמור אותה כבחירה של המשתמשת)
+  else if (window.matchMedia && window.matchMedia("(max-width:720px)").matches) scSetResultsView("compact", true);
 }
 function scCloseModal(){
   var overlay = document.getElementById("scWelcomeModal");
   if (overlay) overlay.remove();
+  try { sessionStorage.setItem("scWelcomeSeen", "1"); } catch (e) {}
 }
+document.addEventListener("DOMContentLoaded", function () {
+  try { if (sessionStorage.getItem("scWelcomeSeen")) { var m = document.getElementById("scWelcomeModal"); if (m) m.remove(); } } catch (e) {}
+});
 function scEsc(s){
   var d = document.createElement("div");
   d.innerText = s || "";
